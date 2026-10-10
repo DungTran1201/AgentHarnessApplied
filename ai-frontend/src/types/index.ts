@@ -113,4 +113,19 @@ export interface SSEMetricEvent {
   };
 }
 
+export interface DiscordConnectionDetails {
+  connected: boolean;
+  discord_id: string | null;
+  discord_username: string | null;
+  avatar_url: string | null;
+}
+
+export interface UserConnectionsResponse {
+  has_password: boolean;
+  connections: {
+    discord: DiscordConnectionDetails;
+  };
+}
+
+
 

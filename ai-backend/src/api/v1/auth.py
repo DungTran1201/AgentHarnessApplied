@@ -10,7 +10,8 @@ from src.core.security import (
     create_access_token,
     get_current_user,
     generate_oauth_state,
-    verify_oauth_state
+    verify_oauth_state,
+    parse_oauth_state
 )
 from src.core.discord_oauth import (
     get_discord_authorization_url,
@@ -162,7 +163,7 @@ async def get_me(current_user: dict = Depends(get_current_user)):
 @auth_router.get("/discord/login")
 async def discord_login():
     """Khởi tạo luồng xác thực Discord OAuth2, tạo state HMAC-SHA256 và đặt cookie (OP-016, BR-016, SEC-008)."""
-    state = generate_oauth_state()
+    state = generate_oauth_state(action="login")
     auth_url = get_discord_authorization_url(state)
     redirect_resp = RedirectResponse(url=auth_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
     redirect_resp.set_cookie(
@@ -175,6 +176,34 @@ async def discord_login():
         path="/"
     )
     return redirect_resp
+
+@auth_router.get("/discord/link")
+async def discord_link(response: Response, current_user: dict = Depends(get_current_user)):
+    """Khởi tạo luồng liên kết tài khoản Discord cho người dùng đã đăng nhập (OP-026, FR-040, BR-016, SEC-008, SEC-011)."""
+    user_id = current_user["id"]
+    # Kiểm tra nếu tài khoản hiện tại đã có liên kết Discord từ trước
+    user_record = query_one("SELECT discord_id FROM users WHERE id = ?", (user_id,))
+    if user_record and user_record.get("discord_id"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tài khoản người dùng hiện tại đã có liên kết Discord từ trước."
+        )
+
+    state = generate_oauth_state(action="link", user_id=user_id)
+    auth_url = get_discord_authorization_url(state)
+    response.set_cookie(
+        key="oauth_state",
+        value=state,
+        httponly=True,
+        secure=False,
+        samesite="lax",
+        max_age=600,
+        path="/"
+    )
+    return {
+        "authorization_url": auth_url,
+        "state": state
+    }
 
 @auth_router.get("/discord/simulate-consent")
 async def discord_simulate_consent(state: str):
@@ -234,7 +263,7 @@ async def discord_simulate_consent(state: str):
             <h2 style="margin-top:0;">🤖 AI-Chan Assistant</h2>
             <p style="color:#b5bac1; font-size:14px; margin-bottom: 24px;">Ứng dụng muốn truy cập tên người dùng, avatar và địa chỉ email đã xác minh của bạn.</p>
             <a href="/api/v1/auth/discord/callback?code=mock_code_12345&state={state}" class="btn btn-auth">Phê Duyệt Ủy Quyền (Authorize)</a>
-            <a href="/api/v1/auth/discord/callback?error=access_denied" class="btn btn-cancel">Hủy Bỏ (Cancel)</a>
+            <a href="/api/v1/auth/discord/callback?error=access_denied&state={state}" class="btn btn-cancel">Hủy Bỏ (Cancel)</a>
         </div>
     </body>
     </html>
@@ -248,24 +277,36 @@ async def discord_callback(
     state: Optional[str] = None,
     error: Optional[str] = None
 ):
-    """Tiếp nhận ủy quyền Discord OAuth2, kiểm tra CSRF state, liên kết/tạo tài khoản và cấp JWT (OP-017, BR-016, BR-017, BR-018)."""
+    """Tiếp nhận ủy quyền Discord OAuth2, phân luồng đăng nhập (action=login) hoặc liên kết (action=link) (OP-017, OP-027, BR-016, BR-025, SEC-011)."""
+    state_info = parse_oauth_state(state)
+    is_link_action = state_info.get("action") == "link"
+    link_user_id = state_info.get("user_id")
+
+    def error_redirect(err_code: str):
+        if is_link_action:
+            resp = RedirectResponse(url=f"/settings?tab=connections&error={err_code}", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+        else:
+            resp = RedirectResponse(url=f"/login?error={err_code}", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+        resp.delete_cookie(key="oauth_state", path="/")
+        return resp
+
     # 1. Người dùng bấm Hủy trên cổng Discord
     if error:
-        return RedirectResponse(url="/login?error=oauth_cancelled", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+        return error_redirect("oauth_cancelled")
 
     if not code or not state:
-        return RedirectResponse(url="/login?error=invalid_state", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+        return error_redirect("invalid_state")
 
     # 2. Kiểm tra tính hợp lệ và thời hạn chuỗi state (BR-016, SEC-008)
     cookie_state = request.cookies.get("oauth_state")
     if not verify_oauth_state(state, cookie_state):
-        return RedirectResponse(url="/login?error=invalid_state", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+        return error_redirect("invalid_state")
 
     # 3. Trao đổi lấy Discord Access Token
     token_data = await exchange_code_for_discord_token(code)
     access_token = token_data.get("access_token")
     if not access_token:
-        return RedirectResponse(url="/login?error=discord_exchange_failed", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+        return error_redirect("discord_exchange_failed")
 
     # 4. Trích xuất hồ sơ người dùng từ Discord (@me)
     profile = await fetch_discord_user_profile(access_token)
@@ -276,11 +317,36 @@ async def discord_callback(
 
     # 5. Kiểm soát email verified từ Discord (BR-017)
     if not email or not verified:
-        return RedirectResponse(url="/login?error=unverified_email", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+        return error_redirect("unverified_email")
 
     email_clean = email.lower().strip()
 
-    # 6. Kiểm tra CSDL: Tra cứu theo discord_id trước
+    # 6. PHÂN NHÁNH: XỬ LÝ LIÊN KẾT TÀI KHOẢN (action = "link") (FR-040, BR-025)
+    if is_link_action and link_user_id:
+        current_target_user = query_one("SELECT id, email, status FROM users WHERE id = ?", (link_user_id,))
+        if not current_target_user or current_target_user.get("status") != "ACTIVE":
+            return error_redirect("user_not_found")
+
+        # Kiểm tra bất biến 1-1 (BR-025): Discord ID đã liên kết với tài khoản khác chưa?
+        conflict_user = query_one("SELECT id, email FROM users WHERE discord_id = ? AND id != ?", (discord_id, link_user_id))
+        if conflict_user:
+            return error_redirect("discord_already_linked")
+
+        # Cập nhật liên kết tài khoản Discord
+        execute_commit(
+            """
+            UPDATE users
+            SET discord_id = ?, discord_username = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (discord_id, discord_username, link_user_id)
+        )
+
+        redirect_resp = RedirectResponse(url="/settings?tab=connections&status=linked_success", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+        redirect_resp.delete_cookie(key="oauth_state", path="/")
+        return redirect_resp
+
+    # 7. PHÂN NHÁNH: XỬ LÝ ĐĂNG NHẬP / ĐĂNG KÝ (action = "login") (FR-027, FR-028, BR-017, BR-018)
     user = query_one("SELECT id, email, full_name, status FROM users WHERE discord_id = ?", (discord_id,))
     if user:
         user_id = user["id"]
@@ -314,7 +380,7 @@ async def discord_callback(
                 (user_id, email_clean, full_name, discord_id, discord_username)
             )
 
-    # 7. Cấp phát phiên làm việc qua HttpOnly JWT Cookie (ADR-002, SEC-004)
+    # 8. Cấp phát phiên làm việc qua HttpOnly JWT Cookie (ADR-002, SEC-004)
     jwt_token = create_access_token(user_id=user_id, email=email_clean)
 
     redirect_resp = RedirectResponse(url="/chat", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
