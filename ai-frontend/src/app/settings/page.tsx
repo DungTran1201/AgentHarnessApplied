@@ -1807,30 +1807,51 @@ export default function SettingsPage() {
               {/* Right: Actions */}
               <div>
                 {connectionsData?.connections?.discord?.connected ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!connectionsData.has_password) return;
-                      setUnlinkPassword('');
-                      setUnlinkError('');
-                      setShowUnlinkModal(true);
-                    }}
-                    disabled={!connectionsData.has_password}
-                    style={{
-                      padding: '8px 16px',
-                      borderRadius: 'var(--radius-sm)',
-                      background: connectionsData.has_password ? 'rgba(239, 68, 68, 0.1)' : 'rgba(255, 255, 255, 0.05)',
-                      border: connectionsData.has_password ? '1px solid rgba(239, 68, 68, 0.35)' : '1px solid var(--border-subtle)',
-                      color: connectionsData.has_password ? '#f87171' : 'var(--text-muted)',
-                      fontSize: '0.85rem',
-                      fontWeight: 600,
-                      cursor: connectionsData.has_password ? 'pointer' : 'not-allowed',
-                      transition: 'all 0.2s ease',
-                      opacity: connectionsData.has_password ? 1 : 0.6
-                    }}
-                  >
-                    Hủy liên kết
-                  </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Link
+                      href="/bot/discord"
+                      id="btn-settings-goto-bot"
+                      style={{
+                        padding: '8px 16px',
+                        borderRadius: 'var(--radius-sm)',
+                        background: 'rgba(88, 101, 242, 0.18)',
+                        border: '1px solid rgba(88, 101, 242, 0.45)',
+                        color: '#fff',
+                        fontSize: '0.85rem',
+                        fontWeight: 600,
+                        textDecoration: 'none',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6
+                      }}
+                    >
+                      🤖 Quản lý Bot ↗
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!connectionsData.has_password) return;
+                        setUnlinkPassword('');
+                        setUnlinkError('');
+                        setShowUnlinkModal(true);
+                      }}
+                      disabled={!connectionsData.has_password}
+                      style={{
+                        padding: '8px 16px',
+                        borderRadius: 'var(--radius-sm)',
+                        background: connectionsData.has_password ? 'rgba(239, 68, 68, 0.1)' : 'rgba(255, 255, 255, 0.05)',
+                        border: connectionsData.has_password ? '1px solid rgba(239, 68, 68, 0.35)' : '1px solid var(--border-subtle)',
+                        color: connectionsData.has_password ? '#f87171' : 'var(--text-muted)',
+                        fontSize: '0.85rem',
+                        fontWeight: 600,
+                        cursor: connectionsData.has_password ? 'pointer' : 'not-allowed',
+                        transition: 'all 0.2s ease',
+                        opacity: connectionsData.has_password ? 1 : 0.6
+                      }}
+                    >
+                      Hủy liên kết
+                    </button>
+                  </div>
                 ) : (
                   <button
                     type="button"

@@ -7,6 +7,7 @@ export interface Message {
   timestamp: number;
   tokens?: number;
   model?: string;
+  source?: 'WEB' | 'DISCORD';
   status?: 'pending' | 'streaming' | 'completed' | 'error';
 }
 
@@ -125,6 +126,58 @@ export interface UserConnectionsResponse {
   connections: {
     discord: DiscordConnectionDetails;
   };
+}
+
+export interface DiscordBotConfig {
+  id: string;
+  user_id: string;
+  scope: 'USER_DM' | 'GUILD';
+  guild_id: string | null;
+  guild_name: string | null;
+  channel_id: string | null;
+  active_model_id: string | null;
+  trigger_mode: 'MENTION' | 'PREFIX' | 'SLASH_COMMAND';
+  custom_prefix: string;
+  system_prompt: string;
+  max_tokens_per_response: number;
+  is_enabled: boolean;
+  sync_to_web: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface DiscordGuildItem {
+  id: string;
+  name: string;
+  icon: string | null;
+  owner: boolean;
+  permissions: number;
+  has_admin_rights: boolean;
+  has_bot: boolean;
+}
+
+export interface DiscordBotTestDispatchResponse {
+  success: boolean;
+  query: string;
+  reply: string;
+  model_used: string;
+  model_name: string;
+  provider: string;
+  is_fallback: boolean;
+  latency_ms: number;
+  tokens_used: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
+  remaining_quota: {
+    daily_token_limit: number;
+    daily_tokens_used: number;
+    percent_used: number;
+    reset_at: string;
+  };
+  web_synced: boolean;
+  conversation_id: string | null;
 }
 
 

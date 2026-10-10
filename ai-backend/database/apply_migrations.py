@@ -81,12 +81,32 @@ def run_migration():
                 conn.commit()
                 print(f"Applied 006 migration successfully to {db_path.name}.")
 
+        # 7. Apply 007_discord_bot_management.sql
+        migration_007_file = MIGRATIONS_DIR / "007_discord_bot_management.sql"
+        if migration_007_file.exists():
+            print(f"Executing {migration_007_file.name} on {db_path.name}...")
+            with open(migration_007_file, "r", encoding="utf-8") as f:
+                cur.executescript(f.read())
+            conn.commit()
+            print(f"Applied 007 migration successfully to {db_path.name}.")
+
+        # 8. Check and add source column to messages table (FR-047)
+        msg_cols = [c[1] for c in cur.execute("PRAGMA table_info(messages)").fetchall()]
+        if "source" not in msg_cols:
+            print(f"Adding source column to messages in {db_path.name}...")
+            cur.execute("ALTER TABLE messages ADD COLUMN source VARCHAR(20) DEFAULT 'WEB'")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_source ON messages(source)")
+            conn.commit()
+
         # Verify tables
         tables = [r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
         print(f"Tables in {db_path.name}: {tables}")
         if "api_metric_logs" in tables and "user_quotas" in tables:
             quota_count = cur.execute("SELECT COUNT(*) FROM user_quotas").fetchone()[0]
             print(f"Total user quotas in {db_path.name}: {quota_count}")
+        if "discord_bot_configs" in tables:
+            bot_cfg_count = cur.execute("SELECT COUNT(*) FROM discord_bot_configs").fetchone()[0]
+            print(f"Total discord bot configs in {db_path.name}: {bot_cfg_count}")
             
         conn.close()
 
