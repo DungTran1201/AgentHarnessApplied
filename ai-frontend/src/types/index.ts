@@ -180,5 +180,97 @@ export interface DiscordBotTestDispatchResponse {
   conversation_id: string | null;
 }
 
+// ==============================================================================
+// VISUAL PIPELINE & MODEL BINDING TYPES (CR-010, FR-048..FR-052)
+// ==============================================================================
+
+export type PipelineNodeType = 'discord_ingress' | 'model_binding' | 'transform_filter' | 'discord_egress';
+
+export type PipelineState = 'STOPPED' | 'RUNNING' | 'PAUSED';
+
+export interface PipelineNodeConfig {
+  model_id?: string;
+  system_prompt?: string;
+  temperature?: number;
+  max_tokens?: number;
+  lowercase?: boolean;
+  strip?: boolean;
+  prefix_filter?: string;
+  wrap_markdown?: boolean;
+  send_typing?: boolean;
+  description?: string;
+  [key: string]: any;
+}
+
+export interface PipelineNode {
+  id: string;
+  node_type: PipelineNodeType;
+  label: string;
+  position_x: number;
+  position_y: number;
+  config: PipelineNodeConfig;
+}
+
+export interface PipelineEdge {
+  id: string;
+  source_node_id: string;
+  target_node_id: string;
+  source_handle?: string;
+  target_handle?: string;
+}
+
+export interface DiscordPresenceInfo {
+  status: 'online' | 'idle' | 'invisible';
+  color: 'green' | 'amber' | 'grey';
+  label: string;
+}
+
+export interface BotPipeline {
+  id: string;
+  user_id: string;
+  guild_id?: string | null;
+  name: string;
+  state: PipelineState;
+  viewport_x: number;
+  viewport_y: number;
+  viewport_zoom: number;
+  is_valid: boolean;
+  nodes: PipelineNode[];
+  edges: PipelineEdge[];
+  presence?: DiscordPresenceInfo;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface StepTrace {
+  node_id: string;
+  node_type: PipelineNodeType;
+  label: string;
+  duration_ms: number;
+  output_preview: string;
+  status: string;
+}
+
+export interface PipelineSimulationResponse {
+  execution_id: string;
+  status: string;
+  state: PipelineState;
+  output_text: string;
+  model_used: string;
+  tokens_consumed: number;
+  pipeline_overhead_ms: number;
+  llm_latency_ms: number;
+  step_traces: StepTrace[];
+}
+
+export interface PipelineDAGValidationResponse {
+  is_valid: boolean;
+  cycle_detected: boolean;
+  cycle_path: string[];
+  topo_order: string[];
+  errors: string[];
+  validation_time_ms: number;
+}
+
 
 

@@ -98,6 +98,15 @@ def run_migration():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_source ON messages(source)")
             conn.commit()
 
+        # 9. Apply 008_visual_pipeline_and_model_binding.sql (CR-010)
+        migration_008_file = MIGRATIONS_DIR / "008_visual_pipeline_and_model_binding.sql"
+        if migration_008_file.exists():
+            print(f"Executing {migration_008_file.name} on {db_path.name}...")
+            with open(migration_008_file, "r", encoding="utf-8") as f:
+                cur.executescript(f.read())
+            conn.commit()
+            print(f"Applied 008 migration successfully to {db_path.name}.")
+
         # Verify tables
         tables = [r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
         print(f"Tables in {db_path.name}: {tables}")
@@ -107,9 +116,13 @@ def run_migration():
         if "discord_bot_configs" in tables:
             bot_cfg_count = cur.execute("SELECT COUNT(*) FROM discord_bot_configs").fetchone()[0]
             print(f"Total discord bot configs in {db_path.name}: {bot_cfg_count}")
+        if "bot_pipelines" in tables:
+            pipe_count = cur.execute("SELECT COUNT(*) FROM bot_pipelines").fetchone()[0]
+            print(f"Total bot pipelines in {db_path.name}: {pipe_count}")
             
         conn.close()
 
 if __name__ == "__main__":
     run_migration()
+
 
