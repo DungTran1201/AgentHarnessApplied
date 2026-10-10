@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { AgentModel, ModelSearchResponse } from '@/types';
+import { AgentModel, ModelSearchResponse, UserConnectionsResponse } from '@/types';
 
 interface UserProfile {
   id: string;
@@ -18,6 +18,8 @@ interface UserProfile {
   status: string;
   created_at: string;
   last_login_at?: string;
+  discord_id?: string;
+  discord_username?: string;
 }
 
 interface UserStats {
@@ -28,13 +30,22 @@ interface UserStats {
 export default function SettingsPage() {
   const router = useRouter();
 
-  // Active tab state: 'profile' | 'security' | 'preferences' | 'models'
-  const [activeTab, setActiveTab] = useState<'profile' | 'security' | 'preferences' | 'models'>('profile');
+  // Active tab state: 'profile' | 'security' | 'preferences' | 'connections' | 'models'
+  const [activeTab, setActiveTab] = useState<'profile' | 'security' | 'preferences' | 'connections' | 'models'>('profile');
 
   // User data
   const [user, setUser] = useState<UserProfile | null>(null);
   const [stats, setStats] = useState<UserStats>({ total_conversations: 0, total_messages: 0 });
   const [loadingInitial, setLoadingInitial] = useState(true);
+
+  // Tab 4: Connections state (FR-040, FR-041, FR-042, BR-025, BR-026, BR-027)
+  const [connectionsData, setConnectionsData] = useState<UserConnectionsResponse | null>(null);
+  const [loadingConnections, setLoadingConnections] = useState(false);
+  const [linkingDiscord, setLinkingDiscord] = useState(false);
+  const [showUnlinkModal, setShowUnlinkModal] = useState(false);
+  const [unlinkPassword, setUnlinkPassword] = useState('');
+  const [unlinking, setUnlinking] = useState(false);
+  const [unlinkError, setUnlinkError] = useState('');
 
   // Notifications
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -105,6 +116,11 @@ export default function SettingsPage() {
   const [confirmArchiveModel, setConfirmArchiveModel] = useState<AgentModel | null>(null);
   const [archivingModelId, setArchivingModelId] = useState<string | null>(null);
 
+  // Permanent Delete Modal state (FR-043, OP-030, BR-028, BR-029, BR-030, UX-010)
+  const [confirmDeleteModel, setConfirmDeleteModel] = useState<AgentModel | null>(null);
+  const [deleteConfirmInput, setDeleteConfirmInput] = useState<string>('');
+  const [isDeletingPermanent, setIsDeletingPermanent] = useState<boolean>(false);
+
   const showToast = (type: 'success' | 'error', message: string) => {
     setToast({ type, message });
     setTimeout(() => setToast(null), 4000);
@@ -148,16 +164,101 @@ export default function SettingsPage() {
     fetchProfile();
   }, [router]);
 
-  // Read URL query parameter ?tab=models on mount
+  const fetchConnections = async () => {
+    try {
+      setLoadingConnections(true);
+      const res = await fetch('/api/v1/users/me/connections');
+      if (res.ok) {
+        const data: UserConnectionsResponse = await res.json();
+        setConnectionsData(data);
+      }
+    } catch (err) {
+      console.error('Failed to load connections:', err);
+    } finally {
+      setLoadingConnections(false);
+    }
+  };
+
+  // Read URL query parameter ?tab=... & status/error notifications on mount
   useEffect(() => {
+    fetchConnections();
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const tabParam = params.get('tab');
-      if (tabParam === 'models' || tabParam === 'security' || tabParam === 'preferences' || tabParam === 'profile') {
+      const statusParam = params.get('status');
+      const errorParam = params.get('error');
+
+      if (tabParam === 'models' || tabParam === 'security' || tabParam === 'preferences' || tabParam === 'profile' || tabParam === 'connections') {
         setActiveTab(tabParam as any);
+      }
+
+      if (statusParam === 'linked_success') {
+        showToast('success', '✓ Liên kết tài khoản Discord thành công!');
+        fetchConnections();
+      } else if (errorParam === 'discord_already_linked') {
+        showToast('error', '⚠️ Tài khoản Discord này đã được liên kết với một tài khoản AI-Chan khác (BR-025).');
+      } else if (errorParam === 'invalid_state') {
+        showToast('error', '⚠️ Yêu cầu liên kết không hợp lệ hoặc đã hết hạn (BR-016). Vui lòng thử lại.');
+      } else if (errorParam === 'oauth_cancelled') {
+        showToast('error', 'Bạn đã hủy quá trình ủy quyền liên kết Discord.');
+      }
+
+      // Clean query params from URL bar
+      if (statusParam || errorParam) {
+        const newUrl = tabParam ? `/settings?tab=${tabParam}` : '/settings';
+        window.history.replaceState({}, '', newUrl);
       }
     }
   }, []);
+
+  const handleLinkDiscord = async () => {
+    setLinkingDiscord(true);
+    try {
+      const res = await fetch('/api/v1/auth/discord/link');
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || 'Không thể khởi tạo liên kết Discord.');
+      }
+      if (data.authorization_url) {
+        window.location.href = data.authorization_url;
+      }
+    } catch (err: any) {
+      showToast('error', err.message || 'Lỗi khởi tạo liên kết Discord.');
+      setLinkingDiscord(false);
+    }
+  };
+
+  const handleUnlinkDiscord = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!unlinkPassword) {
+      setUnlinkError('Vui lòng nhập mật khẩu xác nhận.');
+      return;
+    }
+    setUnlinking(true);
+    setUnlinkError('');
+    try {
+      const res = await fetch('/api/v1/users/me/discord', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: unlinkPassword })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || 'Hủy liên kết không thành công.');
+      }
+      showToast('success', data.message || 'Hủy liên kết Discord thành công!');
+      setShowUnlinkModal(false);
+      setUnlinkPassword('');
+      fetchConnections();
+      if (user) {
+        setUser({ ...user, discord_id: undefined } as any);
+      }
+    } catch (err: any) {
+      setUnlinkError(err.message || 'Lỗi khi hủy liên kết.');
+    } finally {
+      setUnlinking(false);
+    }
+  };
 
   const fetchModels = async (searchQ?: string) => {
     try {
@@ -407,6 +508,42 @@ export default function SettingsPage() {
       showToast('error', err.message || 'Lỗi khi lưu trữ mô hình.');
     } finally {
       setArchivingModelId(null);
+    }
+  };
+
+  // FR-043: Xóa vĩnh viễn mô hình khỏi hệ thống (OP-030, BR-028, BR-029, BR-030, UX-010)
+  const handlePermanentDeleteModel = async (model: AgentModel) => {
+    if (model.is_default) {
+      showToast('error', 'Không thể xóa mô hình mặc định của hệ thống (BR-028).');
+      return;
+    }
+    if (model.status === 'ACTIVE') {
+      showToast('error', 'Mô hình đang hoạt động (ACTIVE). Vui lòng chuyển trạng thái sang Tắt hoặc Lưu trữ trước (BR-029).');
+      return;
+    }
+    if (deleteConfirmInput.trim() !== model.id) {
+      showToast('error', 'Mã định danh xác nhận không khớp (BR-030).');
+      return;
+    }
+    setIsDeletingPermanent(true);
+    try {
+      const res = await fetch(`/api/v1/models/${model.id}/permanent`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmation_name: deleteConfirmInput.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || 'Không thể xóa vĩnh viễn mô hình.');
+      }
+      showToast('success', `🗑️ ${data.message || 'Đã xóa vĩnh viễn mô hình thành công.'}`);
+      setConfirmDeleteModel(null);
+      setDeleteConfirmInput('');
+      await fetchModels();
+    } catch (err: any) {
+      showToast('error', err.message || 'Lỗi khi xóa vĩnh viễn mô hình.');
+    } finally {
+      setIsDeletingPermanent(false);
     }
   };
 
@@ -948,6 +1085,37 @@ export default function SettingsPage() {
           >
             ⚙️ Tùy chọn giao diện
           </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('connections')}
+            style={{
+              padding: '10px 18px',
+              borderRadius: 'var(--radius-sm) var(--radius-sm) 0 0',
+              background: activeTab === 'connections' ? 'var(--bg-active)' : 'transparent',
+              border: 'none',
+              borderBottom: activeTab === 'connections' ? '2px solid var(--accent-primary)' : '2px solid transparent',
+              color: activeTab === 'connections' ? '#fff' : 'var(--text-secondary)',
+              fontWeight: activeTab === 'connections' ? 600 : 500,
+              fontSize: '0.92rem',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            🔗 Tài khoản liên kết
+            {connectionsData?.connections?.discord?.connected && (
+              <span style={{
+                width: '7px',
+                height: '7px',
+                borderRadius: '50%',
+                background: '#10b981',
+                display: 'inline-block'
+              }} />
+            )}
+          </button>
+
 
           <button
             type="button"
@@ -1496,7 +1664,211 @@ export default function SettingsPage() {
         )}
 
         {/* ============================================================ */}
-        {/* TAB 4: QUẢN LÝ MODELS & AGENTS (FR-021 TO FR-026, FR-035..39)*/}
+        {/* TAB 4: QUẢN LÝ TÀI KHOẢN LIÊN KẾT (CONNECTIONS)               */}
+        {/* ============================================================ */}
+        {activeTab === 'connections' && (
+          <div style={{
+            background: 'var(--bg-card)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-lg)',
+            padding: '2rem',
+            backdropFilter: 'blur(16px)'
+          }}>
+            <div style={{ marginBottom: '1.75rem' }}>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                🔗 Quản Lý Tài Khoản Liên Kết (Social Connections)
+              </h2>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginTop: '4px' }}>
+                Liên kết các tài khoản mạng xã hội để đăng nhập một chạm nhanh chóng và tăng cường bảo mật định danh (FR-040, FR-041, FR-042).
+              </p>
+            </div>
+
+            {/* Lockout Prevention Guard Banner (BR-026) */}
+            {connectionsData?.connections?.discord?.connected && !connectionsData?.has_password && (
+              <div style={{
+                background: 'rgba(245, 158, 11, 0.08)',
+                border: '1px solid rgba(245, 158, 11, 0.35)',
+                borderRadius: 'var(--radius-md)',
+                padding: '16px 20px',
+                marginBottom: '1.5rem',
+                display: 'flex',
+                gap: '14px',
+                alignItems: 'flex-start'
+              }}>
+                <div style={{ fontSize: '1.5rem', lineHeight: 1 }}>⚠️</div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, color: '#f59e0b', fontSize: '0.95rem', marginBottom: '4px' }}>
+                    Chốt chặn bảo vệ: Tài khoản chưa có mật khẩu độc lập (BR-026)
+                  </div>
+                  <div style={{ color: '#d1d5db', fontSize: '0.85rem', lineHeight: 1.5 }}>
+                    Tài khoản của bạn được khởi tạo ban đầu thông qua Discord và chưa từng thiết lập mật khẩu đăng nhập.
+                    Để ngăn ngừa nguy cơ mất quyền truy cập tài khoản vĩnh viễn, tính năng Hủy liên kết tạm thời bị khóa.
+                    Vui lòng tạo mật khẩu tại mục <strong>Bảo mật & Đăng nhập</strong> trước khi hủy liên kết.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('security')}
+                    style={{
+                      marginTop: '10px',
+                      background: 'rgba(245, 158, 11, 0.2)',
+                      border: '1px solid rgba(245, 158, 11, 0.4)',
+                      color: '#fbbf24',
+                      padding: '6px 14px',
+                      borderRadius: 'var(--radius-sm)',
+                      fontSize: '0.82rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px'
+                    }}
+                  >
+                    🔒 Đến mục Đổi & Đặt mật khẩu ngay →
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Discord Connection Card */}
+            <div style={{
+              background: 'rgba(255, 255, 255, 0.02)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-md)',
+              padding: '1.5rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: '1.25rem'
+            }}>
+              {/* Left: Discord Icon + Info */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                <div style={{
+                  width: '52px',
+                  height: '52px',
+                  borderRadius: '12px',
+                  background: '#5865F2',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#ffffff',
+                  boxShadow: '0 4px 14px rgba(88, 101, 242, 0.35)'
+                }}>
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.929 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.893.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/>
+                  </svg>
+                </div>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <h3 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0 }}>Discord</h3>
+                    {connectionsData?.connections?.discord?.connected ? (
+                      <span style={{
+                        padding: '3px 8px',
+                        borderRadius: 'var(--radius-full)',
+                        background: 'rgba(16, 185, 129, 0.15)',
+                        border: '1px solid rgba(16, 185, 129, 0.3)',
+                        color: '#10b981',
+                        fontSize: '0.75rem',
+                        fontWeight: 600
+                      }}>
+                        ✓ Đã liên kết
+                      </span>
+                    ) : (
+                      <span style={{
+                        padding: '3px 8px',
+                        borderRadius: 'var(--radius-full)',
+                        background: 'rgba(255, 255, 255, 0.06)',
+                        border: '1px solid var(--border-subtle)',
+                        color: 'var(--text-muted)',
+                        fontSize: '0.75rem'
+                      }}>
+                        Chưa liên kết
+                      </span>
+                    )}
+                  </div>
+
+                  {connectionsData?.connections?.discord?.connected ? (
+                    <div style={{ marginTop: '4px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                      Tài khoản: <strong style={{ color: '#fff' }}>@{connectionsData.connections.discord.discord_username || 'Discord User'}</strong>
+                      {connectionsData.connections.discord.discord_id && (
+                        <span style={{ marginLeft: '8px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                          (ID: {connectionsData.connections.discord.discord_id})
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <div style={{ marginTop: '4px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                      Ủy quyền nhận diện tài khoản Discord để đăng nhập và đồng bộ huy hiệu.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Right: Actions */}
+              <div>
+                {connectionsData?.connections?.discord?.connected ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!connectionsData.has_password) return;
+                      setUnlinkPassword('');
+                      setUnlinkError('');
+                      setShowUnlinkModal(true);
+                    }}
+                    disabled={!connectionsData.has_password}
+                    style={{
+                      padding: '8px 16px',
+                      borderRadius: 'var(--radius-sm)',
+                      background: connectionsData.has_password ? 'rgba(239, 68, 68, 0.1)' : 'rgba(255, 255, 255, 0.05)',
+                      border: connectionsData.has_password ? '1px solid rgba(239, 68, 68, 0.35)' : '1px solid var(--border-subtle)',
+                      color: connectionsData.has_password ? '#f87171' : 'var(--text-muted)',
+                      fontSize: '0.85rem',
+                      fontWeight: 600,
+                      cursor: connectionsData.has_password ? 'pointer' : 'not-allowed',
+                      transition: 'all 0.2s ease',
+                      opacity: connectionsData.has_password ? 1 : 0.6
+                    }}
+                  >
+                    Hủy liên kết
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleLinkDiscord}
+                    disabled={linkingDiscord}
+                    style={{
+                      padding: '9px 18px',
+                      borderRadius: 'var(--radius-sm)',
+                      background: '#5865F2',
+                      border: 'none',
+                      color: '#ffffff',
+                      fontSize: '0.88rem',
+                      fontWeight: 600,
+                      cursor: linkingDiscord ? 'not-allowed' : 'pointer',
+                      boxShadow: '0 4px 14px rgba(88, 101, 242, 0.35)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      transition: 'all 0.2s ease'
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!linkingDiscord) (e.currentTarget as HTMLElement).style.backgroundColor = '#4752C4';
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!linkingDiscord) (e.currentTarget as HTMLElement).style.backgroundColor = '#5865F2';
+                    }}
+                  >
+                    <span>🔗</span>
+                    <span>{linkingDiscord ? 'Đang chuyển hướng...' : 'Liên kết Discord'}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ============================================================ */}
+        {/* TAB 5: QUẢN LÝ MODELS & AGENTS (FR-021 TO FR-026, FR-035..39)*/}
         {/* ============================================================ */}
         {activeTab === 'models' && (
           <div style={{
@@ -2044,33 +2416,79 @@ export default function SettingsPage() {
                           </button>
                         </div>
 
-                        {/* Set As Default Button */}
-                        {!m.is_default && !isArchived && (
+                        {/* Action Row 3: Set Default (Active only) & Permanent Delete (FR-043, OP-030, BR-028, BR-029) */}
+                        <div style={{ display: 'flex', gap: '8px', marginTop: '2px' }}>
+                          {!m.is_default && !isArchived && (
+                            <button
+                              type="button"
+                              onClick={() => handleSetDefaultModel(m)}
+                              disabled={isSettingDef || m.status !== 'ACTIVE'}
+                              title={m.status !== 'ACTIVE' ? 'Chỉ có thể đặt mô hình đang ACTIVE làm mặc định' : 'Thiết lập làm mô hình mặc định cho các phiên chat mới'}
+                              style={{
+                                flex: 1,
+                                padding: '6px 10px',
+                                borderRadius: 'var(--radius-sm)',
+                                background: m.status === 'ACTIVE' ? 'rgba(245, 158, 11, 0.1)' : 'rgba(255,255,255,0.03)',
+                                border: m.status === 'ACTIVE' ? '1px solid rgba(245, 158, 11, 0.3)' : '1px solid var(--border-subtle)',
+                                color: m.status === 'ACTIVE' ? '#fbbf24' : 'var(--text-muted)',
+                                fontSize: '0.78rem',
+                                fontWeight: 600,
+                                cursor: (isSettingDef || m.status !== 'ACTIVE') ? 'not-allowed' : 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '6px'
+                              }}
+                            >
+                              <span>⭐</span>
+                              <span>{isSettingDef ? 'Đang đặt...' : 'Đặt mặc định'}</span>
+                            </button>
+                          )}
+
+                          {/* Permanent Removal Button (FR-043, OP-030, BR-028, BR-029, UX-010) */}
                           <button
                             type="button"
-                            onClick={() => handleSetDefaultModel(m)}
-                            disabled={isSettingDef || m.status !== 'ACTIVE'}
-                            title={m.status !== 'ACTIVE' ? 'Chỉ có thể đặt mô hình đang ACTIVE làm mặc định' : 'Thiết lập làm mô hình mặc định cho các phiên chat mới'}
+                            onClick={() => {
+                              if (m.is_default) {
+                                showToast('error', 'Không thể xóa mô hình mặc định của hệ thống (BR-028).');
+                                return;
+                              }
+                              if (m.status === 'ACTIVE') {
+                                showToast('error', 'Mô hình đang hoạt động (ACTIVE). Vui lòng Tạm dừng hoặc Lưu trữ trước khi xóa vĩnh viễn (BR-029).');
+                                return;
+                              }
+                              setConfirmDeleteModel(m);
+                              setDeleteConfirmInput('');
+                            }}
+                            disabled={m.is_default || m.status === 'ACTIVE'}
+                            title={
+                              m.is_default
+                                ? 'Không thể xóa mô hình mặc định của hệ thống (BR-028)'
+                                : m.status === 'ACTIVE'
+                                ? 'Mô hình đang hoạt động (ACTIVE). Vui lòng tạm dừng hoặc lưu trữ trước khi xóa (BR-029)'
+                                : 'Xóa vĩnh viễn mô hình khỏi hệ thống (FR-043, OP-030)'
+                            }
                             style={{
-                              width: '100%',
-                              padding: '6px 12px',
+                              flex: (!m.is_default && !isArchived) ? 1 : undefined,
+                              width: (!m.is_default && !isArchived) ? undefined : '100%',
+                              padding: '6px 10px',
                               borderRadius: 'var(--radius-sm)',
-                              background: m.status === 'ACTIVE' ? 'rgba(245, 158, 11, 0.1)' : 'rgba(255,255,255,0.03)',
-                              border: m.status === 'ACTIVE' ? '1px solid rgba(245, 158, 11, 0.3)' : '1px solid var(--border-subtle)',
-                              color: m.status === 'ACTIVE' ? '#fbbf24' : 'var(--text-muted)',
+                              background: (m.is_default || m.status === 'ACTIVE') ? 'rgba(255,255,255,0.02)' : 'rgba(225, 29, 72, 0.1)',
+                              border: (m.is_default || m.status === 'ACTIVE') ? '1px solid rgba(255,255,255,0.06)' : '1px solid rgba(225, 29, 72, 0.3)',
+                              color: (m.is_default || m.status === 'ACTIVE') ? 'var(--text-muted)' : '#f43f5e',
                               fontSize: '0.78rem',
                               fontWeight: 600,
-                              cursor: (isSettingDef || m.status !== 'ACTIVE') ? 'not-allowed' : 'pointer',
+                              cursor: (m.is_default || m.status === 'ACTIVE') ? 'not-allowed' : 'pointer',
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
                               gap: '6px'
                             }}
                           >
-                            <span>⭐</span>
-                            <span>{isSettingDef ? 'Đang thiết lập...' : 'Đặt làm mô hình mặc định'}</span>
+                            <span>🗑️</span>
+                            <span>Xóa vĩnh viễn</span>
                           </button>
-                        )}
+                        </div>
                       </div>
                     </div>
                   );
@@ -2581,6 +2999,261 @@ export default function SettingsPage() {
                 </div>
               </div>
             )}
+
+            {/* ============================================================ */}
+            {/* MODAL 4: XÁC NHẬN GỠ BỎ VĨNH VIỄN MÔ HÌNH (FR-043, OP-030, BR-030, UX-010) */}
+            {/* ============================================================ */}
+            {confirmDeleteModel && (
+              <div style={{
+                position: 'fixed',
+                inset: 0,
+                background: 'rgba(0, 0, 0, 0.8)',
+                backdropFilter: 'blur(8px)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 1000,
+                padding: '1rem'
+              }}>
+                <div style={{
+                  background: '#0f172a',
+                  border: '1px solid rgba(239, 68, 68, 0.4)',
+                  borderRadius: 'var(--radius-lg)',
+                  padding: '2rem',
+                  maxWidth: '480px',
+                  width: '100%',
+                  boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.9)'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '1rem' }}>
+                    <span style={{ fontSize: '1.6rem' }}>⚠️</span>
+                    <h3 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#f87171' }}>
+                      Xác Nhận Xóa Vĩnh Viễn Mô Hình
+                    </h3>
+                  </div>
+
+                  <p style={{ fontSize: '0.88rem', color: '#cbd5e1', lineHeight: 1.6, marginBottom: '1rem' }}>
+                    Bạn đang chuẩn bị xóa vĩnh viễn mô hình <strong style={{ color: '#fff' }}>{confirmDeleteModel.name}</strong> khỏi cơ sở dữ liệu hệ thống.
+                  </p>
+
+                  <div style={{
+                    padding: '10px 14px',
+                    borderRadius: 'var(--radius-sm)',
+                    background: 'rgba(239, 68, 68, 0.1)',
+                    border: '1px solid rgba(239, 68, 68, 0.25)',
+                    fontSize: '0.8rem',
+                    color: '#fca5a5',
+                    lineHeight: 1.5,
+                    marginBottom: '1.25rem'
+                  }}>
+                    🚨 <strong>Cảnh báo (BR-029, ADR-011):</strong> Hành động này không thể hoàn tác. Bản ghi cấu hình mô hình sẽ bị xóa vĩnh viễn. Tuy nhiên, toàn bộ lịch sử tin nhắn trò chuyện và dữ liệu log tài nguyên trước đây vẫn được bảo tồn trọn vẹn dưới dạng văn bản tĩnh.
+                  </div>
+
+                  <div style={{ marginBottom: '1.5rem' }}>
+                    <label style={{ display: 'block', fontSize: '0.82rem', color: '#94a3b8', marginBottom: '8px' }}>
+                      Để xác nhận, vui lòng nhập chính xác mã định danh <code style={{ color: '#f43f5e', background: 'rgba(244, 63, 94, 0.15)', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>{confirmDeleteModel.id}</code>:
+                    </label>
+                    <input
+                      type="text"
+                      value={deleteConfirmInput}
+                      onChange={(e) => setDeleteConfirmInput(e.target.value)}
+                      placeholder={`Nhập ${confirmDeleteModel.id}`}
+                      style={{
+                        width: '100%',
+                        padding: '10px 14px',
+                        borderRadius: 'var(--radius-sm)',
+                        background: 'rgba(0,0,0,0.4)',
+                        border: deleteConfirmInput.trim() === confirmDeleteModel.id ? '1px solid #22c55e' : '1px solid var(--border-subtle)',
+                        color: '#fff',
+                        fontSize: '0.88rem',
+                        fontFamily: 'var(--font-mono)',
+                        outline: 'none',
+                        transition: 'border-color 0.2s'
+                      }}
+                      autoFocus
+                    />
+                    {deleteConfirmInput && deleteConfirmInput.trim() !== confirmDeleteModel.id && (
+                      <span style={{ display: 'block', color: '#f87171', fontSize: '0.75rem', marginTop: '6px' }}>
+                        Mã xác nhận chưa trùng khớp với định danh mô hình.
+                      </span>
+                    )}
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setConfirmDeleteModel(null);
+                        setDeleteConfirmInput('');
+                      }}
+                      style={{
+                        padding: '8px 16px',
+                        borderRadius: 'var(--radius-sm)',
+                        background: 'rgba(255,255,255,0.06)',
+                        border: '1px solid var(--border-subtle)',
+                        color: '#fff',
+                        fontSize: '0.85rem',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Hủy bỏ
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handlePermanentDeleteModel(confirmDeleteModel)}
+                      disabled={isDeletingPermanent || deleteConfirmInput.trim() !== confirmDeleteModel.id}
+                      style={{
+                        padding: '8px 20px',
+                        borderRadius: 'var(--radius-sm)',
+                        background: (deleteConfirmInput.trim() === confirmDeleteModel.id && !isDeletingPermanent) ? '#dc2626' : 'rgba(220, 38, 38, 0.3)',
+                        border: 'none',
+                        color: (deleteConfirmInput.trim() === confirmDeleteModel.id && !isDeletingPermanent) ? '#fff' : 'rgba(255,255,255,0.4)',
+                        fontSize: '0.85rem',
+                        fontWeight: 600,
+                        cursor: (deleteConfirmInput.trim() === confirmDeleteModel.id && !isDeletingPermanent) ? 'pointer' : 'not-allowed',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px'
+                      }}
+                    >
+                      {isDeletingPermanent ? 'Đang xóa...' : 'Xác nhận xóa vĩnh viễn'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Modal Re-authentication for Discord Unlink (BR-027, CTRL-010) */}
+        {showUnlinkModal && (
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0, 0, 0, 0.75)',
+            backdropFilter: 'blur(6px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10000,
+            padding: '1.5rem'
+          }}>
+            <div style={{
+              width: '100%',
+              maxWidth: '440px',
+              background: '#1a1d26',
+              border: '1px solid rgba(239, 68, 68, 0.3)',
+              borderRadius: 'var(--radius-lg)',
+              padding: '2rem',
+              boxShadow: '0 20px 50px rgba(0, 0, 0, 0.6)',
+              animation: 'fadeIn 0.2s ease'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '1rem' }}>
+                <div style={{
+                  width: '36px',
+                  height: '36px',
+                  borderRadius: '50%',
+                  background: 'rgba(239, 68, 68, 0.15)',
+                  color: '#ef4444',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '1.1rem'
+                }}>
+                  🔒
+                </div>
+                <h3 style={{ fontSize: '1.15rem', fontWeight: 700, margin: 0, color: '#fff' }}>
+                  Xác nhận Hủy Liên Kết Discord
+                </h3>
+              </div>
+
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', lineHeight: 1.5, marginBottom: '1.25rem' }}>
+                Bạn sẽ không thể sử dụng Discord để đăng nhập vào tài khoản này sau khi hủy.
+                Để đảm bảo an toàn, vui lòng nhập mật khẩu tài khoản của bạn để xác thực (BR-027).
+              </p>
+
+              {unlinkError && (
+                <div style={{
+                  padding: '10px 14px',
+                  borderRadius: 'var(--radius-sm)',
+                  background: 'rgba(239, 68, 68, 0.12)',
+                  border: '1px solid rgba(239, 68, 68, 0.3)',
+                  color: '#f87171',
+                  fontSize: '0.85rem',
+                  marginBottom: '1rem'
+                }}>
+                  ⚠️ {unlinkError}
+                </div>
+              )}
+
+              <form onSubmit={handleUnlinkDiscord}>
+                <div style={{ marginBottom: '1.25rem' }}>
+                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '6px' }}>
+                    Mật khẩu hiện tại
+                  </label>
+                  <input
+                    type="password"
+                    autoFocus
+                    required
+                    placeholder="Nhập mật khẩu tài khoản..."
+                    value={unlinkPassword}
+                    onChange={(e) => setUnlinkPassword(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      borderRadius: 'var(--radius-sm)',
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      border: '1px solid var(--border-subtle)',
+                      color: '#fff',
+                      fontSize: '0.92rem'
+                    }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowUnlinkModal(false);
+                      setUnlinkPassword('');
+                      setUnlinkError('');
+                    }}
+                    disabled={unlinking}
+                    style={{
+                      padding: '8px 16px',
+                      borderRadius: 'var(--radius-sm)',
+                      background: 'var(--bg-hover)',
+                      border: '1px solid var(--border-subtle)',
+                      color: 'var(--text-secondary)',
+                      fontSize: '0.88rem',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Hủy bỏ
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={unlinking}
+                    style={{
+                      padding: '8px 18px',
+                      borderRadius: 'var(--radius-sm)',
+                      background: '#dc2626',
+                      border: 'none',
+                      color: '#fff',
+                      fontWeight: 600,
+                      fontSize: '0.88rem',
+                      cursor: unlinking ? 'not-allowed' : 'pointer',
+                      opacity: unlinking ? 0.7 : 1,
+                      boxShadow: '0 4px 14px rgba(220, 38, 38, 0.35)'
+                    }}
+                  >
+                    {unlinking ? 'Đang xác thực...' : 'Xác nhận Hủy liên kết'}
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
         )}
       </div>
