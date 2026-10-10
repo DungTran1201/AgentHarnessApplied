@@ -37,6 +37,10 @@ class UpdatePreferencesRequest(BaseModel):
     theme_preference: Optional[str] = Field(None, description="DARK, LIGHT, hoặc SYSTEM")
     language_preference: Optional[str] = Field(None, description="vi hoặc en")
 
+class UnlinkDiscordRequest(BaseModel):
+    password: str = Field(..., min_length=1, description="Mật khẩu hiện tại để xác thực lại")
+
+
 
 # ------------------------------------------------------------------------------
 # 5.1 GET /api/v1/users/me (FR-015, UC-010)
@@ -336,3 +340,90 @@ async def update_preferences(
         "theme_preference": updated["theme_preference"],
         "language_preference": updated["language_preference"]
     }
+
+
+# ------------------------------------------------------------------------------
+# 5.7 DELETE /api/v1/users/me/discord (FR-041, UC-USER-008, BR-026, BR-027, OP-028)
+# ------------------------------------------------------------------------------
+@users_router.delete("/me/discord")
+async def unlink_discord(
+    req: UnlinkDiscordRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """Hủy liên kết tài khoản Discord với chốt chặn an toàn (BR-026) và tái xác thực mật khẩu (BR-027, SEC-006, CTRL-010)."""
+    user_id = current_user["id"]
+
+    # 1. Truy vấn bản ghi người dùng tươi từ CSDL
+    user_record = query_one(
+        "SELECT id, hashed_password, discord_id FROM users WHERE id = ?",
+        (user_id,)
+    )
+    if not user_record or not user_record.get("discord_id"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tài khoản hiện tại chưa liên kết với Discord."
+        )
+
+    # 2. Chốt chặn chống khóa tài khoản (BR-026): Bắt buộc tài khoản phải có mật khẩu độc lập
+    if not user_record.get("hashed_password"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Không thể hủy liên kết Discord vì tài khoản chưa thiết lập mật khẩu đăng nhập. Vui lòng thiết lập mật khẩu trong mục Bảo mật trước để tránh mất quyền truy cập tài khoản (BR-026)."
+        )
+
+    # 3. Xác thực lại mật khẩu hiện tại (BR-027, SEC-006, CTRL-010)
+    if not verify_password(req.password, user_record["hashed_password"]):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Mật khẩu xác nhận không chính xác."
+        )
+
+    # 4. Gỡ bỏ liên kết Discord an toàn
+    execute_commit(
+        """
+        UPDATE users
+        SET discord_id = NULL, discord_username = NULL, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (user_id,)
+    )
+
+    return {
+        "message": "Hủy liên kết tài khoản Discord thành công.",
+        "discord_id": None,
+        "discord_username": None
+    }
+
+
+# ------------------------------------------------------------------------------
+# 5.8 GET /api/v1/users/me/connections (FR-042, UX-009, SCR-005, OP-029)
+# ------------------------------------------------------------------------------
+@users_router.get("/me/connections")
+async def get_connections(current_user: dict = Depends(get_current_user)):
+    """Lấy danh sách các tài khoản mạng xã hội liên kết và trạng thái mật khẩu của người dùng hiện tại."""
+    user_id = current_user["id"]
+    user_record = query_one(
+        "SELECT id, hashed_password, discord_id, discord_username FROM users WHERE id = ?",
+        (user_id,)
+    )
+    if not user_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Không tìm thấy người dùng."
+        )
+
+    has_password = bool(user_record.get("hashed_password"))
+    is_discord_connected = bool(user_record.get("discord_id"))
+
+    return {
+        "has_password": has_password,
+        "connections": {
+            "discord": {
+                "connected": is_discord_connected,
+                "discord_id": user_record.get("discord_id"),
+                "discord_username": user_record.get("discord_username"),
+                "avatar_url": None
+            }
+        }
+    }
+

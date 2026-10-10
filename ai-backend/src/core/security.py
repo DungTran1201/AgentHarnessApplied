@@ -111,16 +111,31 @@ async def get_current_user(request: Request) -> Dict:
 
     return user
 
-def generate_oauth_state() -> str:
-    """Sinh chuỗi state ngẫu nhiên kèm timestamp và chữ ký HMAC-SHA256 (BR-016, SEC-008)."""
+def generate_oauth_state(action: str = "login", user_id: Optional[str] = None) -> str:
+    """Sinh chuỗi state ngẫu nhiên kèm timestamp, action, user_id và chữ ký HMAC-SHA256 (BR-016, SEC-008, SEC-011)."""
     import hmac
     import hashlib
     import secrets
     nonce = secrets.token_hex(16)
     ts = int(time.time())
-    data = f"{nonce}:{ts}"
+    uid = user_id or ""
+    data = f"{nonce}:{ts}:{action}:{uid}"
     signature = hmac.new(settings.SECRET_KEY.encode(), data.encode(), hashlib.sha256).hexdigest()
     return f"{data}:{signature}"
+
+def parse_oauth_state(state: Optional[str]) -> dict:
+    """Trích xuất action và user_id từ state string."""
+    if not state:
+        return {"action": "login", "user_id": None}
+    parts = state.split(":")
+    if len(parts) == 3:
+        # Legacy format: nonce:ts:signature
+        return {"action": "login", "user_id": None}
+    elif len(parts) == 5:
+        # Extended format: nonce:ts:action:user_id:signature
+        nonce, ts_str, action, uid, sig = parts
+        return {"action": action, "user_id": uid if uid else None}
+    return {"action": "login", "user_id": None}
 
 def verify_oauth_state(received_state: Optional[str], cookie_state: Optional[str]) -> bool:
     """Kiểm tra khớp cookie, tính toàn vẹn chữ ký HMAC và hạn sử dụng <= 10 phút (BR-016, SEC-008)."""
@@ -129,18 +144,25 @@ def verify_oauth_state(received_state: Optional[str], cookie_state: Optional[str
     if not received_state or not cookie_state or received_state != cookie_state:
         return False
     parts = received_state.split(":")
-    if len(parts) != 3:
+    if len(parts) == 3:
+        nonce, ts_str, signature = parts
+        expected_data = f"{nonce}:{ts_str}"
+    elif len(parts) == 5:
+        nonce, ts_str, action, uid, signature = parts
+        expected_data = f"{nonce}:{ts_str}:{action}:{uid}"
+    else:
         return False
-    nonce, ts_str, signature = parts
+
     try:
         ts = int(ts_str)
     except ValueError:
         return False
+
     now = time.time()
     # Kiểm tra thời hạn 10 phút (600 giây) và không lệch thời gian tương lai > 10s
     if (now - ts > 600) or (now < ts - 10):
         return False
-    expected_data = f"{nonce}:{ts_str}"
+
     expected_sig = hmac.new(settings.SECRET_KEY.encode(), expected_data.encode(), hashlib.sha256).hexdigest()
     return hmac.compare_digest(signature, expected_sig)
 
