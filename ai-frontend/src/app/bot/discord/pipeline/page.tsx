@@ -33,9 +33,9 @@ const NODE_TEMPLATES: Record<
     label: 'Discord Ingress',
     description: 'Bắt tin nhắn & sự kiện từ Discord Server',
     icon: '💬',
-    gradient: 'from-indigo-600/30 to-blue-600/30',
-    border: 'border-indigo-500/50',
-    accent: '#6366f1',
+    gradient: 'linear-gradient(135deg, rgba(88, 101, 242, 0.25) 0%, rgba(59, 130, 246, 0.25) 100%)',
+    border: '#5865F2',
+    accent: '#5865F2',
     defaultConfig: { description: 'Lắng nghe tin nhắn từ Discord' }
   },
   model_binding: {
@@ -43,8 +43,8 @@ const NODE_TEMPLATES: Record<
     label: 'AI Model Binding',
     description: 'Chỉ định mô hình AI & Persona System Prompt',
     icon: '🧠',
-    gradient: 'from-purple-600/30 to-pink-600/30',
-    border: 'border-purple-500/50',
+    gradient: 'linear-gradient(135deg, rgba(168, 85, 247, 0.25) 0%, rgba(236, 72, 153, 0.25) 100%)',
+    border: '#a855f7',
     accent: '#a855f7',
     defaultConfig: {
       model_id: 'gemini-3.8-flash',
@@ -58,8 +58,8 @@ const NODE_TEMPLATES: Record<
     label: 'Transform Filter',
     description: 'Tiền xử lý text, làm sạch & lọc từ khóa',
     icon: '⚡',
-    gradient: 'from-cyan-600/30 to-teal-600/30',
-    border: 'border-cyan-500/50',
+    gradient: 'linear-gradient(135deg, rgba(6, 182, 212, 0.25) 0%, rgba(20, 184, 166, 0.25) 100%)',
+    border: '#06b6d4',
     accent: '#06b6d4',
     defaultConfig: { lowercase: false, strip: true, max_length: 2000 }
   },
@@ -68,8 +68,8 @@ const NODE_TEMPLATES: Record<
     label: 'Discord Egress',
     description: 'Định dạng Markdown & gửi phản hồi về Discord',
     icon: '🚀',
-    gradient: 'from-emerald-600/30 to-green-600/30',
-    border: 'border-emerald-500/50',
+    gradient: 'linear-gradient(135deg, rgba(16, 185, 129, 0.25) 0%, rgba(34, 197, 94, 0.25) 100%)',
+    border: '#10b981',
     accent: '#10b981',
     defaultConfig: { wrap_markdown: true, send_typing: true }
   }
@@ -280,8 +280,8 @@ export default function DiscordPipelineCanvasPage() {
       id: newId,
       node_type: type,
       label: template.label,
-      position_x: Math.round(-pan.x / zoom + 280 + Math.random() * 80),
-      position_y: Math.round(-pan.y / zoom + 180 + Math.random() * 80),
+      position_x: Math.round(-pan.x / zoom + 260 + Math.random() * 80),
+      position_y: Math.round(-pan.y / zoom + 160 + Math.random() * 80),
       config: { ...template.defaultConfig }
     };
     setNodes(prev => [...prev, newNode]);
@@ -303,7 +303,7 @@ export default function DiscordPipelineCanvasPage() {
     setConnectingSourceId(sourceId);
     const sourceNode = nodes.find(n => n.id === sourceId);
     if (sourceNode) {
-      setMousePos({ x: sourceNode.position_x + 220, y: sourceNode.position_y + 40 });
+      setMousePos({ x: sourceNode.position_x + 240, y: sourceNode.position_y + 44 });
     }
   };
 
@@ -314,7 +314,6 @@ export default function DiscordPipelineCanvasPage() {
       return;
     }
 
-    // Kiểm tra trùng lặp cạnh nối
     const exists = edges.some(
       e => e.source_node_id === connectingSourceId && e.target_node_id === targetId
     );
@@ -421,14 +420,13 @@ export default function DiscordPipelineCanvasPage() {
       const data: PipelineSimulationResponse = await res.json();
       if (res.ok) {
         setSimResult(data);
-        // Hiệu ứng particle chạy qua từng node
         if (data.step_traces && data.step_traces.length > 0) {
           data.step_traces.forEach((st, idx) => {
             setTimeout(() => {
               setActiveSimNodeId(st.node_id);
             }, idx * 400);
           });
-          setTimeout(() => setActiveSimNodeId(null), data.step_traces.length * 400 + 300);
+          setTimeout(() => setActiveSimNodeId(null), data.step_traces.length * 400 + 400);
         }
         showToast('success', 'Mô phỏng hoàn tất thành công!');
       } else {
@@ -459,10 +457,10 @@ export default function DiscordPipelineCanvasPage() {
 
   // Tính toán tọa độ đường cong Bezier
   const calculateBezierPath = (sourceNode: PipelineNode, targetNode: PipelineNode) => {
-    const x1 = sourceNode.position_x + 220;
-    const y1 = sourceNode.position_y + 45;
+    const x1 = sourceNode.position_x + 240;
+    const y1 = sourceNode.position_y + 44;
     const x2 = targetNode.position_x;
-    const y2 = targetNode.position_y + 45;
+    const y2 = targetNode.position_y + 44;
     const dx = Math.abs(x2 - x1) * 0.5;
     return `M ${x1} ${y1} C ${x1 + Math.max(dx, 40)} ${y1}, ${x2 - Math.max(dx, 40)} ${y2}, ${x2} ${y2}`;
   };
@@ -471,10 +469,28 @@ export default function DiscordPipelineCanvasPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#070b12] flex items-center justify-center text-slate-300">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-10 h-10 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-          <p className="text-sm font-medium">Đang tải không gian Canvas Pipeline...</p>
+      <div style={{
+        minHeight: '100vh',
+        width: '100vw',
+        background: '#070b14',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: '#94a3b8',
+        fontFamily: 'var(--font-sans)'
+      }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px' }}>
+          <div style={{
+            width: '42px',
+            height: '42px',
+            border: '4px solid rgba(99, 102, 241, 0.2)',
+            borderTopColor: '#6366f1',
+            borderRadius: '50%',
+            animation: 'pipelinePing 1s infinite linear'
+          }} />
+          <p style={{ fontSize: '0.9rem', fontWeight: 500, letterSpacing: '0.02em' }}>
+            Đang tải không gian Canvas Pipeline...
+          </p>
         </div>
       </div>
     );
@@ -482,71 +498,176 @@ export default function DiscordPipelineCanvasPage() {
 
   return (
     <div
-      className="flex flex-col h-screen w-screen overflow-hidden bg-[#070b12] text-slate-100 select-none font-sans"
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100vh',
+        width: '100vw',
+        overflow: 'hidden',
+        background: '#070b14',
+        color: '#f8fafc',
+        fontFamily: 'var(--font-sans)',
+        userSelect: 'none'
+      }}
       onMouseMove={handleNodeDragMove}
       onMouseUp={handleNodeMouseUp}
     >
       {/* Toast Notification */}
       {toast && (
         <div
-          className={`fixed top-5 right-5 z-50 px-4 py-3 rounded-xl shadow-2xl backdrop-blur-md flex items-center gap-3 transition-all duration-300 border ${
-            toast.type === 'success'
-              ? 'bg-emerald-950/80 border-emerald-500/50 text-emerald-200'
+          style={{
+            position: 'fixed',
+            top: '20px',
+            right: '24px',
+            zIndex: 9999,
+            padding: '12px 20px',
+            borderRadius: '12px',
+            backdropFilter: 'blur(16px)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            border: toast.type === 'success'
+              ? '1px solid rgba(16, 185, 129, 0.4)'
               : toast.type === 'error'
-              ? 'bg-rose-950/80 border-rose-500/50 text-rose-200'
-              : 'bg-indigo-950/80 border-indigo-500/50 text-indigo-200'
-          }`}
+              ? '1px solid rgba(239, 68, 68, 0.4)'
+              : '1px solid rgba(99, 102, 241, 0.4)',
+            background: toast.type === 'success'
+              ? 'rgba(6, 78, 59, 0.9)'
+              : toast.type === 'error'
+              ? 'rgba(127, 29, 29, 0.9)'
+              : 'rgba(30, 27, 75, 0.9)',
+            color: 'white',
+            boxShadow: '0 10px 25px rgba(0,0,0,0.4)',
+            fontSize: '0.88rem',
+            fontWeight: 500
+          }}
         >
-          <span>{toast.type === 'success' ? '✓' : toast.type === 'error' ? '⚠️' : 'ℹ️'}</span>
-          <p className="text-sm font-medium">{toast.message}</p>
+          <span style={{ fontSize: '1.1rem' }}>
+            {toast.type === 'success' ? '✓' : toast.type === 'error' ? '⚠️' : 'ℹ️'}
+          </span>
+          <p style={{ margin: 0 }}>{toast.message}</p>
         </div>
       )}
 
-      {/* TOPBAR NAVIGATION & LIFECYCLE CONTROLS */}
-      <header className="h-16 border-b border-slate-800 bg-[#0c121e]/90 backdrop-blur-md px-6 flex items-center justify-between z-30">
-        {/* Left: Brand & Back to Discord Settings */}
-        <div className="flex items-center gap-4">
+      {/* TOPBAR NAVIGATION & 3-STATE LIFECYCLE CONTROLS */}
+      <header style={{
+        height: '64px',
+        borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+        background: 'rgba(11, 16, 29, 0.95)',
+        backdropFilter: 'blur(20px)',
+        padding: '0 24px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        zIndex: 50,
+        flexShrink: 0
+      }}>
+        {/* Left Section: Back link, Title input, DAG status */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <Link
             href="/bot/discord"
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-xs font-semibold text-slate-300 transition-all border border-slate-700/50"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '8px 14px',
+              borderRadius: '10px',
+              background: 'rgba(255, 255, 255, 0.06)',
+              color: '#cbd5e1',
+              fontSize: '0.82rem',
+              fontWeight: 600,
+              textDecoration: 'none',
+              border: '1px solid rgba(255, 255, 255, 0.1)',
+              transition: 'all 0.2s'
+            }}
           >
-            ← Trở về Quản lý Bot
+            ← Quay lại Quản lý Bot
           </Link>
-          <div className="h-5 w-px bg-slate-800" />
-          <div className="flex items-center gap-2">
-            <span className="text-xl">⚡</span>
+
+          <div style={{ width: '1px', height: '22px', background: 'rgba(255, 255, 255, 0.1)' }} />
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '1.25rem' }}>⚡</span>
             <input
               type="text"
               value={pipelineName}
               onChange={e => setPipelineName(e.target.value)}
-              className="bg-transparent hover:bg-slate-800/40 focus:bg-slate-800/80 px-2 py-1 rounded text-sm font-bold text-white border border-transparent focus:border-indigo-500/50 outline-none w-56"
+              style={{
+                background: 'rgba(255, 255, 255, 0.04)',
+                border: '1px solid transparent',
+                borderRadius: '8px',
+                padding: '6px 12px',
+                color: '#ffffff',
+                fontSize: '0.92rem',
+                fontWeight: 700,
+                outline: 'none',
+                width: '230px',
+                transition: 'border-color 0.2s'
+              }}
+              onFocus={e => e.target.style.borderColor = '#6366f1'}
+              onBlur={e => e.target.style.borderColor = 'transparent'}
             />
           </div>
-          {/* Real-time DAG Status Pill */}
+
+          {/* DAG Validity Indicator */}
           <div
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${
-              isValidDAG
-                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-                : 'bg-rose-500/10 border-rose-500/30 text-rose-400 animate-pulse'
-            }`}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '4px 12px',
+              borderRadius: '9999px',
+              fontSize: '0.78rem',
+              fontWeight: 600,
+              background: isValidDAG ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.15)',
+              color: isValidDAG ? '#10b981' : '#f87171',
+              border: isValidDAG ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(239, 68, 68, 0.4)'
+            }}
+            className={!isValidDAG ? 'anim-pulse-red' : ''}
           >
-            <span className={`w-2 h-2 rounded-full ${isValidDAG ? 'bg-emerald-400' : 'bg-rose-400'}`} />
-            {isValidDAG ? 'DAG Hợp Lệ' : 'Phát hiện Chu Trình / Lỗi'}
+            <span style={{
+              width: '8px',
+              height: '8px',
+              borderRadius: '50%',
+              background: isValidDAG ? '#10b981' : '#ef4444'
+            }} />
+            {isValidDAG ? 'DAG Hợp Lệ' : 'Chu Trình / Lỗi DAG'}
           </div>
         </div>
 
-        {/* Center: 3-State Lifecycle Controller & Presence Badge (STATE-001, BR-036, BR-038) */}
-        <div className="flex items-center gap-3 bg-slate-900/90 border border-slate-800 p-1.5 rounded-2xl shadow-inner">
-          <div className="flex items-center gap-1">
+        {/* Center Section: 3-State Lifecycle Switch & Discord Presence */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px',
+          background: 'rgba(7, 11, 20, 0.9)',
+          border: '1px solid rgba(255, 255, 255, 0.1)',
+          padding: '4px 6px',
+          borderRadius: '16px',
+          boxShadow: 'inset 0 2px 4px rgba(0, 0, 0, 0.4)'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
             {/* RUNNING BUTTON */}
             <button
               onClick={() => handleChangeState('RUNNING')}
               disabled={stateUpdating}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                pipelineState === 'RUNNING'
-                  ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30 scale-105'
-                  : 'text-slate-400 hover:text-emerald-300 hover:bg-slate-800'
-              }`}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '6px 14px',
+                borderRadius: '10px',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: '0.8rem',
+                fontWeight: 700,
+                transition: 'all 0.25s',
+                background: pipelineState === 'RUNNING'
+                  ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)'
+                  : 'transparent',
+                color: pipelineState === 'RUNNING' ? '#ffffff' : '#94a3b8',
+                boxShadow: pipelineState === 'RUNNING' ? '0 0 16px rgba(16, 185, 129, 0.45)' : 'none'
+              }}
               title="Khởi chạy: Bot lắng nghe và phản hồi trên Discord (Trạng thái Xanh lá)"
             >
               <span>▶</span> RUNNING
@@ -556,11 +677,23 @@ export default function DiscordPipelineCanvasPage() {
             <button
               onClick={() => handleChangeState('PAUSED')}
               disabled={stateUpdating}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                pipelineState === 'PAUSED'
-                  ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/30 scale-105'
-                  : 'text-slate-400 hover:text-amber-300 hover:bg-slate-800'
-              }`}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '6px 14px',
+                borderRadius: '10px',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: '0.8rem',
+                fontWeight: 700,
+                transition: 'all 0.25s',
+                background: pipelineState === 'PAUSED'
+                  ? 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)'
+                  : 'transparent',
+                color: pipelineState === 'PAUSED' ? '#ffffff' : '#94a3b8',
+                boxShadow: pipelineState === 'PAUSED' ? '0 0 16px rgba(245, 158, 11, 0.45)' : 'none'
+              }}
               title="Tạm dừng: Bot tự động thông báo tạm dừng nhận tin (Trạng thái Vàng cam)"
             >
               <span>⏸</span> PAUSED
@@ -570,59 +703,104 @@ export default function DiscordPipelineCanvasPage() {
             <button
               onClick={() => handleChangeState('STOPPED')}
               disabled={stateUpdating}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                pipelineState === 'STOPPED'
-                  ? 'bg-slate-700 text-white shadow-lg shadow-slate-700/30 scale-105'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-              }`}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '6px 14px',
+                borderRadius: '10px',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: '0.8rem',
+                fontWeight: 700,
+                transition: 'all 0.25s',
+                background: pipelineState === 'STOPPED'
+                  ? 'linear-gradient(135deg, #475569 0%, #334155 100%)'
+                  : 'transparent',
+                color: pipelineState === 'STOPPED' ? '#ffffff' : '#94a3b8',
+                boxShadow: pipelineState === 'STOPPED' ? '0 0 12px rgba(100, 116, 139, 0.3)' : 'none'
+              }}
               title="Dừng hoạt động: Ngắt kết nối Discord Bot (Trạng thái Xám)"
             >
               <span>⏹</span> STOPPED
             </button>
           </div>
 
-          <div className="h-4 w-px bg-slate-800 mx-1" />
+          <div style={{ width: '1px', height: '18px', background: 'rgba(255, 255, 255, 0.12)' }} />
 
           {/* Discord Presence Indicator */}
-          <div className="flex items-center gap-2 pr-2 text-xs">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', paddingRight: '10px', fontSize: '0.8rem' }}>
             <span
-              className={`w-3 h-3 rounded-full border-2 border-slate-900 ${
-                pipelineState === 'RUNNING'
-                  ? 'bg-emerald-400 animate-pulse'
+              style={{
+                width: '10px',
+                height: '10px',
+                borderRadius: '50%',
+                background: pipelineState === 'RUNNING'
+                  ? '#10b981'
                   : pipelineState === 'PAUSED'
-                  ? 'bg-amber-400'
-                  : 'bg-slate-500'
-              }`}
+                  ? '#f59e0b'
+                  : '#64748b',
+                boxShadow: pipelineState === 'RUNNING'
+                  ? '0 0 8px #10b981'
+                  : pipelineState === 'PAUSED'
+                  ? '0 0 8px #f59e0b'
+                  : 'none'
+              }}
+              className={pipelineState === 'RUNNING' ? 'anim-pulse-green' : ''}
             />
-            <span className="text-slate-300 font-medium hidden md:inline">
+            <span style={{ color: '#cbd5e1', fontWeight: 500 }}>
               Bot Discord:{' '}
-              <strong
-                className={
-                  pipelineState === 'RUNNING'
-                    ? 'text-emerald-400'
-                    : pipelineState === 'PAUSED'
-                    ? 'text-amber-400'
-                    : 'text-slate-400'
-                }
-              >
+              <strong style={{
+                color: pipelineState === 'RUNNING'
+                  ? '#10b981'
+                  : pipelineState === 'PAUSED'
+                  ? '#f59e0b'
+                  : '#94a3b8'
+              }}>
                 {pipelineState === 'RUNNING' ? 'Online' : pipelineState === 'PAUSED' ? 'Idle' : 'Offline'}
               </strong>
             </span>
           </div>
         </div>
 
-        {/* Right: Actions (Simulate, History, Save) */}
-        <div className="flex items-center gap-3">
+        {/* Right Section: Simulate, History, Save */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <button
             onClick={() => setShowSimulateModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 text-xs font-bold transition-all"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '8px 16px',
+              borderRadius: '10px',
+              background: 'rgba(168, 85, 247, 0.15)',
+              color: '#d8b4fe',
+              border: '1px solid rgba(168, 85, 247, 0.35)',
+              fontSize: '0.82rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              transition: 'all 0.2s'
+            }}
           >
             <span>🎯</span> Chạy Thử Nghiệm
           </button>
 
           <button
             onClick={handleOpenHistory}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-bold transition-all"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '8px 14px',
+              borderRadius: '10px',
+              background: 'rgba(255, 255, 255, 0.06)',
+              color: '#cbd5e1',
+              border: '1px solid rgba(255, 255, 255, 0.1)',
+              fontSize: '0.82rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              transition: 'all 0.2s'
+            }}
           >
             <span>📋</span> Lịch Sử
           </button>
@@ -630,54 +808,126 @@ export default function DiscordPipelineCanvasPage() {
           <button
             onClick={handleSavePipeline}
             disabled={saving}
-            className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white shadow-md shadow-indigo-500/20 text-xs font-bold transition-all disabled:opacity-50"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '8px 20px',
+              borderRadius: '10px',
+              background: 'linear-gradient(135deg, #6366f1 0%, #a855f7 100%)',
+              color: '#ffffff',
+              border: 'none',
+              fontSize: '0.82rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              boxShadow: '0 4px 15px rgba(99, 102, 241, 0.35)',
+              opacity: saving ? 0.6 : 1,
+              transition: 'all 0.2s'
+            }}
           >
             <span>{saving ? '⏳' : '💾'}</span> {saving ? 'Đang Lưu...' : 'Lưu Pipeline'}
           </button>
         </div>
       </header>
 
-      {/* MAIN WORKSPACE: CANVAS + LEFT TOOLBOX + RIGHT INSPECTOR */}
-      <div className="flex-1 relative overflow-hidden flex">
-        {/* LEFT TOOLBOX (N8N STYLE PALETTE) */}
-        <aside className="w-64 border-r border-slate-800/80 bg-[#0a0f19]/90 backdrop-blur-md p-4 flex flex-col gap-4 z-20">
+      {/* MAIN WORKSPACE: PALETTE + CANVAS + INSPECTOR */}
+      <div style={{ display: 'flex', flex: 1, position: 'relative', overflow: 'hidden' }}>
+        {/* LEFT TOOLBOX PALETTE */}
+        <aside style={{
+          width: '270px',
+          background: 'rgba(11, 16, 29, 0.95)',
+          backdropFilter: 'blur(20px)',
+          borderRight: '1px solid rgba(255, 255, 255, 0.08)',
+          padding: '20px 16px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '16px',
+          zIndex: 30,
+          flexShrink: 0
+        }}>
           <div>
-            <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1">
+            <h2 style={{
+              fontSize: '0.75rem',
+              fontWeight: 800,
+              textTransform: 'uppercase',
+              letterSpacing: '0.08em',
+              color: '#94a3b8',
+              margin: '0 0 4px 0'
+            }}>
               Thư Viện Khối (Palette)
             </h2>
-            <p className="text-[11px] text-slate-500">
+            <p style={{ fontSize: '0.75rem', color: '#64748b', margin: 0, lineHeight: 1.4 }}>
               Nhấn để thêm khối chức năng vào không gian luồng
             </p>
           </div>
 
-          <div className="flex flex-col gap-2.5 overflow-y-auto pr-1">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', overflowY: 'auto' }}>
             {Object.values(NODE_TEMPLATES).map(tmpl => (
               <div
                 key={tmpl.type}
                 onClick={() => handleAddNode(tmpl.type)}
-                className={`p-3 rounded-xl border bg-slate-900/60 hover:bg-slate-800/80 cursor-pointer transition-all duration-200 border-slate-800 hover:border-indigo-500/50 hover:shadow-lg group`}
+                style={{
+                  padding: '12px 14px',
+                  borderRadius: '12px',
+                  background: 'rgba(17, 24, 39, 0.7)',
+                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '6px'
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.borderColor = tmpl.border;
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                  e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)';
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
+                  e.currentTarget.style.transform = 'translateY(0)';
+                  e.currentTarget.style.background = 'rgba(17, 24, 39, 0.7)';
+                }}
               >
-                <div className="flex items-center gap-2.5 mb-1.5">
-                  <span className="text-lg p-1.5 rounded-lg bg-slate-800 group-hover:scale-110 transition-transform">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div style={{
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '8px',
+                    background: tmpl.gradient,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '1.1rem'
+                  }}>
                     {tmpl.icon}
-                  </span>
+                  </div>
                   <div>
-                    <h3 className="text-xs font-bold text-slate-200 group-hover:text-white">
+                    <h3 style={{ fontSize: '0.82rem', fontWeight: 700, color: '#f8fafc', margin: 0 }}>
                       {tmpl.label}
                     </h3>
                   </div>
                 </div>
-                <p className="text-[11px] text-slate-400 leading-relaxed">{tmpl.description}</p>
+                <p style={{ fontSize: '0.74rem', color: '#94a3b8', margin: 0, lineHeight: 1.4 }}>
+                  {tmpl.description}
+                </p>
               </div>
             ))}
           </div>
 
-          {/* Quick Guide & DAG Invariants */}
-          <div className="mt-auto p-3 rounded-xl bg-slate-900/40 border border-slate-800/60 text-[11px] text-slate-400 space-y-1.5">
-            <div className="font-semibold text-slate-300 flex items-center gap-1">
+          {/* Architecture Constraints Checklist */}
+          <div style={{
+            marginTop: 'auto',
+            padding: '12px',
+            borderRadius: '12px',
+            background: 'rgba(17, 24, 39, 0.4)',
+            border: '1px solid rgba(255, 255, 255, 0.06)',
+            fontSize: '0.75rem',
+            color: '#94a3b8'
+          }}>
+            <div style={{ fontWeight: 700, color: '#e2e8f0', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span>💡</span> Ràng Buộc Kiến Trúc
             </div>
-            <ul className="list-disc list-inside space-y-1 text-[10px] text-slate-500">
+            <ul style={{ paddingLeft: '16px', margin: 0, lineHeight: 1.6, fontSize: '0.72rem', color: '#64748b' }}>
               <li>Ít nhất 1 Ingress & 1 Egress</li>
               <li>Chặn chu trình lặp vô hạn (BR-035)</li>
               <li>Khối Model chỉ nhận mô hình ACTIVE</li>
@@ -686,23 +936,47 @@ export default function DiscordPipelineCanvasPage() {
           </div>
         </aside>
 
-        {/* CANVAS WORKSPACE (SVG & HTML5 POINTER EVENTS) */}
+        {/* CENTER INTERACTIVE CANVAS WORKSPACE */}
         <main
           ref={containerRef}
           onMouseDown={handleMouseDownCanvas}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onWheel={handleWheel}
-          className="flex-1 relative cursor-crosshair overflow-hidden bg-[#070b12]"
           style={{
-            backgroundImage: `radial-gradient(#1e293b 1px, transparent 1px)`,
+            flex: 1,
+            position: 'relative',
+            cursor: 'crosshair',
+            overflow: 'hidden',
+            background: '#070b14',
+            backgroundImage: `radial-gradient(rgba(255, 255, 255, 0.12) 1.2px, transparent 1.2px)`,
             backgroundSize: `${24 * zoom}px ${24 * zoom}px`,
             backgroundPosition: `${pan.x}px ${pan.y}px`
           }}
         >
           {/* CYCLE WARNING BANNER (NẾU PHÁT HIỆN VÒNG LẶP) */}
           {cycleDetected && (
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 px-6 py-2.5 rounded-2xl bg-rose-950/90 border border-rose-500 text-rose-200 text-xs font-bold flex items-center gap-3 shadow-2xl animate-bounce">
+            <div
+              style={{
+                position: 'absolute',
+                top: '16px',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                zIndex: 40,
+                padding: '10px 24px',
+                borderRadius: '16px',
+                background: 'rgba(127, 29, 29, 0.95)',
+                border: '1px solid #ef4444',
+                color: '#fee2e2',
+                fontSize: '0.82rem',
+                fontWeight: 700,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                boxShadow: '0 10px 30px rgba(239, 68, 68, 0.35)'
+              }}
+              className="anim-pulse-red"
+            >
               <span>🚨</span>
               <span>
                 CẢNH BÁO BR-035 / SEC-014: Phát hiện chu trình lặp tuần hoàn (Cycle Loop)! Dây nối vi phạm được đánh dấu đỏ.
@@ -712,23 +986,25 @@ export default function DiscordPipelineCanvasPage() {
 
           {/* VIEWPORT CANVAS WORLD */}
           <div
-            className="absolute origin-top-left transition-transform duration-75"
             style={{
+              position: 'absolute',
+              transformOrigin: '0 0',
               transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
               width: '4000px',
-              height: '4000px'
+              height: '4000px',
+              pointerEvents: 'none'
             }}
           >
             {/* SVG CONNECTION WIRES */}
-            <svg className="absolute inset-0 w-full h-full pointer-events-none z-0">
+            <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 1 }}>
               <defs>
                 <linearGradient id="wire-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
                   <stop offset="0%" stopColor="#6366f1" />
                   <stop offset="100%" stopColor="#a855f7" />
                 </linearGradient>
                 <linearGradient id="wire-cycle-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="#f43f5e" />
-                  <stop offset="100%" stopColor="#ef4444" />
+                  <stop offset="0%" stopColor="#ef4444" />
+                  <stop offset="100%" stopColor="#f43f5e" />
                 </linearGradient>
               </defs>
 
@@ -745,13 +1021,13 @@ export default function DiscordPipelineCanvasPage() {
                   cyclePath.includes(edge.target_node_id);
 
                 return (
-                  <g key={edge.id} className="pointer-events-auto group cursor-pointer">
-                    {/* Invisible thick click area */}
+                  <g key={edge.id} style={{ pointerEvents: 'auto', cursor: 'pointer' }}>
+                    {/* Invisible thick click area for deleting */}
                     <path
                       d={pathData}
                       fill="none"
                       stroke="transparent"
-                      strokeWidth={16}
+                      strokeWidth={18}
                       onClick={() => handleDeleteEdge(edge.id)}
                     />
                     {/* Visible line */}
@@ -761,13 +1037,11 @@ export default function DiscordPipelineCanvasPage() {
                       stroke={isCycleEdge ? 'url(#wire-cycle-gradient)' : 'url(#wire-gradient)'}
                       strokeWidth={isCycleEdge ? 3.5 : 2.5}
                       strokeDasharray={isCycleEdge ? '6,6' : 'none'}
-                      className={`transition-all duration-200 group-hover:stroke-rose-400 group-hover:stroke-[4px] ${
-                        isCycleEdge ? 'animate-pulse' : ''
-                      }`}
+                      style={{ transition: 'stroke 0.2s, stroke-width 0.2s' }}
                     />
                     {/* Animated Particle if Simulation is active */}
                     {activeSimNodeId === srcNode.id && (
-                      <circle r={5} fill="#38bdf8" className="animate-ping">
+                      <circle r={5} fill="#38bdf8">
                         <animateMotion path={pathData} dur="0.8s" repeatCount="indefinite" />
                       </circle>
                     )}
@@ -779,8 +1053,8 @@ export default function DiscordPipelineCanvasPage() {
               {connectingSourceId && (() => {
                 const srcNode = nodes.find(n => n.id === connectingSourceId);
                 if (!srcNode) return null;
-                const x1 = srcNode.position_x + 220;
-                const y1 = srcNode.position_y + 45;
+                const x1 = srcNode.position_x + 240;
+                const y1 = srcNode.position_y + 44;
                 const x2 = mousePos.x;
                 const y2 = mousePos.y;
                 const dx = Math.abs(x2 - x1) * 0.5;
@@ -793,7 +1067,7 @@ export default function DiscordPipelineCanvasPage() {
                     stroke="#38bdf8"
                     strokeWidth={2.5}
                     strokeDasharray="4,4"
-                    className="animate-pulse"
+                    className="anim-dash"
                   />
                 );
               })()}
@@ -811,26 +1085,59 @@ export default function DiscordPipelineCanvasPage() {
                   key={node.id}
                   onMouseDown={e => handleNodeMouseDown(e, node)}
                   style={{
+                    position: 'absolute',
                     left: `${node.position_x}px`,
                     top: `${node.position_y}px`,
-                    width: '220px'
-                  }}
-                  className={`absolute rounded-2xl bg-[#0e1626]/90 backdrop-blur-md border p-3.5 shadow-xl transition-all duration-150 cursor-move ${
-                    isSelected
-                      ? 'border-indigo-400 ring-2 ring-indigo-500/40 shadow-indigo-500/20'
+                    width: '240px',
+                    borderRadius: '16px',
+                    background: 'rgba(15, 23, 42, 0.9)',
+                    backdropFilter: 'blur(16px)',
+                    border: isSelected
+                      ? '1px solid #6366f1'
                       : isCycleNode
-                      ? 'border-rose-500 ring-2 ring-rose-500/40 shadow-rose-500/30'
-                      : 'border-slate-700/60 hover:border-slate-500'
-                  } ${isActiveSim ? 'ring-4 ring-cyan-400 scale-105 shadow-cyan-500/50' : ''}`}
+                      ? '1px solid #ef4444'
+                      : '1px solid rgba(255, 255, 255, 0.12)',
+                    boxShadow: isSelected
+                      ? '0 0 25px rgba(99, 102, 241, 0.4)'
+                      : isCycleNode
+                      ? '0 0 25px rgba(239, 68, 68, 0.45)'
+                      : isActiveSim
+                      ? '0 0 25px rgba(56, 189, 248, 0.5)'
+                      : '0 12px 28px rgba(0, 0, 0, 0.45)',
+                    padding: '14px',
+                    pointerEvents: 'auto',
+                    cursor: 'move',
+                    transition: 'border 0.2s, box-shadow 0.2s, transform 0.1s',
+                    transform: isActiveSim ? 'scale(1.04)' : 'scale(1)',
+                    zIndex: isSelected ? 20 : 10
+                  }}
                 >
                   {/* Left Input Port (Trừ Ingress) */}
                   {node.node_type !== 'discord_ingress' && (
                     <div
                       onMouseUp={e => handleEndConnect(e, node.id)}
-                      className="absolute -left-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-slate-900 border-2 border-indigo-400 flex items-center justify-center hover:scale-125 hover:bg-indigo-500 transition-all cursor-pointer z-10"
+                      style={{
+                        position: 'absolute',
+                        left: '-12px',
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        width: '24px',
+                        height: '24px',
+                        borderRadius: '50%',
+                        background: '#0a0f1d',
+                        border: '2px solid #6366f1',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        zIndex: 25,
+                        transition: 'transform 0.2s, background-color 0.2s'
+                      }}
                       title="Cổng Đầu Vào (Input Port)"
+                      onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-50%) scale(1.2)'}
+                      onMouseLeave={e => e.currentTarget.style.transform = 'translateY(-50%) scale(1)'}
                     >
-                      <div className="w-2 h-2 rounded-full bg-white" />
+                      <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#6366f1' }} />
                     </div>
                   )}
 
@@ -838,54 +1145,109 @@ export default function DiscordPipelineCanvasPage() {
                   {node.node_type !== 'discord_egress' && (
                     <div
                       onMouseDown={e => handleStartConnect(e, node.id)}
-                      className="absolute -right-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-slate-900 border-2 border-purple-400 flex items-center justify-center hover:scale-125 hover:bg-purple-500 transition-all cursor-pointer z-10"
+                      style={{
+                        position: 'absolute',
+                        right: '-12px',
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        width: '24px',
+                        height: '24px',
+                        borderRadius: '50%',
+                        background: '#0a0f1d',
+                        border: '2px solid #a855f7',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        zIndex: 25,
+                        transition: 'transform 0.2s, background-color 0.2s'
+                      }}
                       title="Kéo từ đây để nối dây (Output Port)"
+                      onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-50%) scale(1.2)'}
+                      onMouseLeave={e => e.currentTarget.style.transform = 'translateY(-50%) scale(1)'}
                     >
-                      <div className="w-2 h-2 rounded-full bg-white" />
+                      <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#a855f7' }} />
                     </div>
                   )}
 
-                  {/* Header Khối */}
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-base p-1 rounded-lg bg-slate-800">{tmpl.icon}</span>
-                      <span className="text-xs font-bold text-white truncate max-w-[110px]">
+                  {/* Card Header: Icon, Label, Close button */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div style={{
+                        width: '28px',
+                        height: '28px',
+                        borderRadius: '8px',
+                        background: tmpl.gradient,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '1rem'
+                      }}>
+                        {tmpl.icon}
+                      </div>
+                      <span style={{
+                        fontSize: '0.82rem',
+                        fontWeight: 700,
+                        color: '#f8fafc',
+                        maxWidth: '125px',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap'
+                      }}>
                         {node.label}
                       </span>
                     </div>
+
                     <button
                       onClick={e => {
                         e.stopPropagation();
                         handleDeleteNode(node.id);
                       }}
-                      className="text-slate-500 hover:text-rose-400 p-1 text-xs transition-colors"
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: '#64748b',
+                        cursor: 'pointer',
+                        fontSize: '0.8rem',
+                        padding: '2px 4px',
+                        transition: 'color 0.2s'
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.color = '#ef4444'}
+                      onMouseLeave={e => e.currentTarget.style.color = '#64748b'}
                       title="Xóa khối"
                     >
                       ✕
                     </button>
                   </div>
 
-                  {/* Nội dung tóm tắt Khối */}
-                  <div className="bg-slate-900/70 rounded-xl p-2 text-[11px] text-slate-300 border border-slate-800/80">
+                  {/* Card Body: Summary Chip */}
+                  <div style={{
+                    background: 'rgba(0, 0, 0, 0.45)',
+                    borderRadius: '10px',
+                    padding: '8px 10px',
+                    fontSize: '0.74rem',
+                    border: '1px solid rgba(255, 255, 255, 0.05)',
+                    lineHeight: 1.4
+                  }}>
                     {node.node_type === 'model_binding' ? (
-                      <div className="space-y-0.5">
-                        <div className="text-purple-300 font-semibold truncate">
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        <div style={{ color: '#d8b4fe', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           Mô hình: {node.config?.model_id || 'Chưa chọn'}
                         </div>
-                        <div className="text-slate-400 text-[10px]">
+                        <div style={{ color: '#94a3b8', fontSize: '0.7rem' }}>
                           Temp: {node.config?.temperature ?? 0.7} | Max: {node.config?.max_tokens ?? 1000}
                         </div>
                       </div>
                     ) : node.node_type === 'discord_ingress' ? (
-                      <div className="text-indigo-300 font-medium text-[10px]">
+                      <div style={{ color: '#818cf8', fontWeight: 600 }}>
                         Lắng nghe: All Channels
                       </div>
                     ) : node.node_type === 'discord_egress' ? (
-                      <div className="text-emerald-300 font-medium text-[10px]">
+                      <div style={{ color: '#34d399', fontWeight: 600 }}>
                         Markdown Embed: Bật
                       </div>
                     ) : (
-                      <div className="text-cyan-300 font-medium text-[10px]">
+                      <div style={{ color: '#22d3ee', fontWeight: 600 }}>
                         Lọc Text & Chuẩn Hóa
                       </div>
                     )}
@@ -895,60 +1257,146 @@ export default function DiscordPipelineCanvasPage() {
             })}
           </div>
 
-          {/* CANVAS FLOATING CONTROLS (ZOOM, FIT, RESET) */}
-          <div className="absolute bottom-6 left-6 z-20 flex items-center gap-2 bg-[#0c121e]/90 backdrop-blur-md p-1.5 rounded-2xl border border-slate-800 shadow-xl">
+          {/* CANVAS FLOATING CONTROLS (BOTTOM LEFT) */}
+          <div style={{
+            position: 'absolute',
+            bottom: '24px',
+            left: '24px',
+            zIndex: 35,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            background: 'rgba(11, 16, 29, 0.95)',
+            backdropFilter: 'blur(16px)',
+            padding: '6px 10px',
+            borderRadius: '14px',
+            border: '1px solid rgba(255, 255, 255, 0.1)',
+            boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)'
+          }}>
             <button
               onClick={() => setZoom(prev => Math.min(1.5, prev + 0.1))}
-              className="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-bold flex items-center justify-center transition-all"
+              style={{
+                width: '30px',
+                height: '30px',
+                borderRadius: '8px',
+                background: 'rgba(255, 255, 255, 0.08)',
+                border: 'none',
+                color: '#ffffff',
+                fontSize: '1rem',
+                fontWeight: 700,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'background 0.2s'
+              }}
               title="Phóng to"
             >
               +
             </button>
-            <span className="text-xs font-semibold text-slate-400 px-1 w-12 text-center">
+            <span style={{
+              fontSize: '0.78rem',
+              fontWeight: 600,
+              color: '#94a3b8',
+              width: '46px',
+              textAlign: 'center'
+            }}>
               {Math.round(zoom * 100)}%
             </span>
             <button
               onClick={() => setZoom(prev => Math.max(0.5, prev - 0.1))}
-              className="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-bold flex items-center justify-center transition-all"
+              style={{
+                width: '30px',
+                height: '30px',
+                borderRadius: '8px',
+                background: 'rgba(255, 255, 255, 0.08)',
+                border: 'none',
+                color: '#ffffff',
+                fontSize: '1rem',
+                fontWeight: 700,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'background 0.2s'
+              }}
               title="Thu nhỏ"
             >
               -
             </button>
-            <div className="h-4 w-px bg-slate-700 mx-1" />
+            <div style={{ width: '1px', height: '16px', background: 'rgba(255, 255, 255, 0.12)', margin: '0 4px' }} />
             <button
               onClick={() => {
                 setPan({ x: 0, y: 0 });
                 setZoom(1);
               }}
-              className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-all"
+              style={{
+                padding: '6px 12px',
+                borderRadius: '8px',
+                background: 'rgba(255, 255, 255, 0.08)',
+                border: 'none',
+                color: '#cbd5e1',
+                fontSize: '0.78rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                transition: 'background 0.2s'
+              }}
             >
               Căn Giữa
             </button>
           </div>
         </main>
 
-        {/* RIGHT SIDE INSPECTOR DRAWER (CẤU HÌNH THAM SỐ KHỐI ĐƯỢC CHỌN) */}
+        {/* RIGHT SIDE INSPECTOR DRAWER */}
         {selectedNode && (
-          <aside className="w-80 border-l border-slate-800/80 bg-[#0a0f19]/95 backdrop-blur-md p-5 flex flex-col gap-4 z-20 overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <div className="flex items-center gap-2">
-                <span className="text-xl">{NODE_TEMPLATES[selectedNode.node_type].icon}</span>
+          <aside style={{
+            width: '320px',
+            background: 'rgba(11, 16, 29, 0.95)',
+            backdropFilter: 'blur(20px)',
+            borderLeft: '1px solid rgba(255, 255, 255, 0.08)',
+            padding: '24px 20px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '20px',
+            zIndex: 35,
+            flexShrink: 0,
+            overflowY: 'auto'
+          }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+              paddingBottom: '14px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '1.4rem' }}>{NODE_TEMPLATES[selectedNode.node_type].icon}</span>
                 <div>
-                  <h3 className="text-sm font-bold text-white">Cấu Hình Khối</h3>
-                  <p className="text-[11px] text-slate-400">{selectedNode.label}</p>
+                  <h3 style={{ fontSize: '0.92rem', fontWeight: 700, color: '#f8fafc', margin: 0 }}>
+                    Cấu Hình Khối
+                  </h3>
+                  <p style={{ fontSize: '0.75rem', color: '#64748b', margin: 0 }}>{selectedNode.label}</p>
                 </div>
               </div>
               <button
                 onClick={() => setSelectedNodeId(null)}
-                className="text-slate-400 hover:text-white p-1 text-xs"
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#94a3b8',
+                  fontSize: '0.9rem',
+                  cursor: 'pointer'
+                }}
               >
                 ✕
               </button>
             </div>
 
-            {/* Label chung */}
+            {/* Display Name Input */}
             <div>
-              <label className="text-xs font-bold text-slate-300 mb-1.5 block">Tên hiển thị khối</label>
+              <label style={{ fontSize: '0.78rem', fontWeight: 700, color: '#cbd5e1', display: 'block', marginBottom: '6px' }}>
+                Tên hiển thị khối
+              </label>
               <input
                 type="text"
                 value={selectedNode.label}
@@ -956,15 +1404,24 @@ export default function DiscordPipelineCanvasPage() {
                   const val = e.target.value;
                   setNodes(prev => prev.map(n => (n.id === selectedNode.id ? { ...n, label: val } : n)));
                 }}
-                className="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none"
+                style={{
+                  width: '100%',
+                  background: 'rgba(17, 24, 39, 0.8)',
+                  border: '1px solid rgba(255, 255, 255, 0.12)',
+                  borderRadius: '10px',
+                  padding: '8px 12px',
+                  color: '#ffffff',
+                  fontSize: '0.82rem',
+                  outline: 'none'
+                }}
               />
             </div>
 
-            {/* Cấu hình đặc thù: MODEL BINDING (BR-037) */}
+            {/* Config: MODEL BINDING (BR-037) */}
             {selectedNode.node_type === 'model_binding' && (
-              <div className="space-y-4">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 <div>
-                  <label className="text-xs font-bold text-purple-300 mb-1.5 block">
+                  <label style={{ fontSize: '0.78rem', fontWeight: 700, color: '#d8b4fe', display: 'block', marginBottom: '6px' }}>
                     Mô hình AI chỉ định (Chỉ chấp nhận ACTIVE - BR-037)
                   </label>
                   <select
@@ -979,10 +1436,19 @@ export default function DiscordPipelineCanvasPage() {
                         )
                       );
                     }}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:border-purple-500 outline-none"
+                    style={{
+                      width: '100%',
+                      background: 'rgba(17, 24, 39, 0.8)',
+                      border: '1px solid rgba(168, 85, 247, 0.4)',
+                      borderRadius: '10px',
+                      padding: '8px 12px',
+                      color: '#ffffff',
+                      fontSize: '0.82rem',
+                      outline: 'none'
+                    }}
                   >
                     {activeModels.map(m => (
-                      <option key={m.id} value={m.id}>
+                      <option key={m.id} value={m.id} style={{ background: '#0f172a', color: '#fff' }}>
                         {m.name} ({m.provider})
                       </option>
                     ))}
@@ -990,7 +1456,7 @@ export default function DiscordPipelineCanvasPage() {
                 </div>
 
                 <div>
-                  <label className="text-xs font-bold text-slate-300 mb-1.5 block">
+                  <label style={{ fontSize: '0.78rem', fontWeight: 700, color: '#cbd5e1', display: 'block', marginBottom: '6px' }}>
                     Persona System Prompt (Định hình phong cách Bot)
                   </label>
                   <textarea
@@ -1009,14 +1475,25 @@ export default function DiscordPipelineCanvasPage() {
                         )
                       );
                     }}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:border-purple-500 outline-none resize-none leading-relaxed"
+                    style={{
+                      width: '100%',
+                      background: 'rgba(17, 24, 39, 0.8)',
+                      border: '1px solid rgba(255, 255, 255, 0.12)',
+                      borderRadius: '10px',
+                      padding: '10px 12px',
+                      color: '#ffffff',
+                      fontSize: '0.8rem',
+                      outline: 'none',
+                      resize: 'none',
+                      lineHeight: 1.5
+                    }}
                   />
                 </div>
 
                 <div>
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className="text-slate-300 font-bold">Temperature (Độ sáng tạo)</span>
-                    <span className="text-purple-400 font-bold">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', marginBottom: '6px' }}>
+                    <span style={{ color: '#cbd5e1', fontWeight: 700 }}>Temperature</span>
+                    <span style={{ color: '#a855f7', fontWeight: 700 }}>
                       {selectedNode.config?.temperature ?? 0.7}
                     </span>
                   </div>
@@ -1036,14 +1513,14 @@ export default function DiscordPipelineCanvasPage() {
                         )
                       );
                     }}
-                    className="w-full accent-purple-500 cursor-pointer"
+                    style={{ width: '100%', accentColor: '#a855f7', cursor: 'pointer' }}
                   />
                 </div>
 
                 <div>
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className="text-slate-300 font-bold">Max Tokens (Trần độ dài)</span>
-                    <span className="text-purple-400 font-bold">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', marginBottom: '6px' }}>
+                    <span style={{ color: '#cbd5e1', fontWeight: 700 }}>Max Tokens</span>
+                    <span style={{ color: '#a855f7', fontWeight: 700 }}>
                       {selectedNode.config?.max_tokens ?? 1000}
                     </span>
                   </div>
@@ -1063,16 +1540,16 @@ export default function DiscordPipelineCanvasPage() {
                         )
                       );
                     }}
-                    className="w-full accent-purple-500 cursor-pointer"
+                    style={{ width: '100%', accentColor: '#a855f7', cursor: 'pointer' }}
                   />
                 </div>
               </div>
             )}
 
-            {/* Cấu hình đặc thù: TRANSFORM FILTER */}
+            {/* Config: TRANSFORM FILTER */}
             {selectedNode.node_type === 'transform_filter' && (
-              <div className="space-y-3">
-                <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', color: '#cbd5e1', cursor: 'pointer' }}>
                   <input
                     type="checkbox"
                     checked={selectedNode.config?.strip ?? true}
@@ -1086,12 +1563,12 @@ export default function DiscordPipelineCanvasPage() {
                         )
                       );
                     }}
-                    className="rounded accent-cyan-500"
+                    style={{ accentColor: '#06b6d4' }}
                   />
                   Xóa khoảng trắng thừa (Strip Whitespace)
                 </label>
 
-                <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', color: '#cbd5e1', cursor: 'pointer' }}>
                   <input
                     type="checkbox"
                     checked={selectedNode.config?.lowercase ?? false}
@@ -1105,18 +1582,29 @@ export default function DiscordPipelineCanvasPage() {
                         )
                       );
                     }}
-                    className="rounded accent-cyan-500"
+                    style={{ accentColor: '#06b6d4' }}
                   />
-                  Chuyển toàn bộ sang chữ thường (Lowercase)
+                  Chuyển sang chữ thường (Lowercase)
                 </label>
               </div>
             )}
 
-            {/* Nút Xóa Khối */}
-            <div className="mt-auto pt-4 border-t border-slate-800">
+            {/* Delete button */}
+            <div style={{ marginTop: 'auto', paddingTop: '16px', borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}>
               <button
                 onClick={() => handleDeleteNode(selectedNode.id)}
-                className="w-full py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-xs font-bold transition-all"
+                style={{
+                  width: '100%',
+                  padding: '10px',
+                  borderRadius: '10px',
+                  background: 'rgba(239, 68, 68, 0.12)',
+                  color: '#f87171',
+                  border: '1px solid rgba(239, 68, 68, 0.3)',
+                  fontSize: '0.8rem',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
               >
                 🗑 Xóa Khối Khỏi Canvas
               </button>
@@ -1125,100 +1613,160 @@ export default function DiscordPipelineCanvasPage() {
         )}
       </div>
 
-      {/* SIMULATE RUN MODAL (CHẠY THỬ NGHIỆM ĐO LƯỜNG NFR-027 <= 30ms) */}
+      {/* SIMULATE RUN MODAL */}
       {showSimulateModal && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-[#0e1626] border border-slate-800 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col">
-            <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="text-xl">🎯</span>
-                <h3 className="text-base font-bold text-white">Mô Phỏng Chạy Thử Luồng Pipeline</h3>
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 999,
+          background: 'rgba(0, 0, 0, 0.75)',
+          backdropFilter: 'blur(16px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '16px'
+        }}>
+          <div style={{
+            background: '#0d1322',
+            border: '1px solid rgba(255, 255, 255, 0.12)',
+            borderRadius: '20px',
+            width: '100%',
+            maxWidth: '680px',
+            boxShadow: '0 25px 60px rgba(0, 0, 0, 0.6)',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden'
+          }}>
+            <div style={{
+              padding: '16px 24px',
+              borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '1.3rem' }}>🎯</span>
+                <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#ffffff', margin: 0 }}>
+                  Mô Phỏng Chạy Thử Luồng Pipeline
+                </h3>
               </div>
               <button
                 onClick={() => setShowSimulateModal(false)}
-                className="text-slate-400 hover:text-white"
+                style={{ background: 'transparent', border: 'none', color: '#94a3b8', fontSize: '1.1rem', cursor: 'pointer' }}
               >
                 ✕
               </button>
             </div>
 
-            <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+            <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px', maxHeight: '72vh', overflowY: 'auto' }}>
               <div>
-                <label className="text-xs font-bold text-slate-300 mb-1.5 block">
-                  Nội dung tin nhắn thử nghiệm (Giả lập nhận từ Discord)
+                <label style={{ fontSize: '0.8rem', fontWeight: 700, color: '#cbd5e1', display: 'block', marginBottom: '6px' }}>
+                  Nội dung tin nhắn thử nghiệm (Giả lập gửi từ Discord)
                 </label>
                 <textarea
                   rows={3}
                   value={simQuery}
                   onChange={e => setSimQuery(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:border-purple-500 outline-none resize-none leading-relaxed"
+                  style={{
+                    width: '100%',
+                    background: 'rgba(17, 24, 39, 0.9)',
+                    border: '1px solid rgba(255, 255, 255, 0.12)',
+                    borderRadius: '12px',
+                    padding: '12px',
+                    color: '#ffffff',
+                    fontSize: '0.85rem',
+                    outline: 'none',
+                    resize: 'none',
+                    lineHeight: 1.5
+                  }}
                 />
               </div>
 
-              <div className="flex justify-end">
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                 <button
                   onClick={handleSimulateRun}
                   disabled={simulating || !simQuery.trim()}
-                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-xs font-bold shadow-lg shadow-purple-500/30 disabled:opacity-50"
+                  style={{
+                    padding: '10px 24px',
+                    borderRadius: '12px',
+                    background: 'linear-gradient(135deg, #a855f7 0%, #6366f1 100%)',
+                    color: '#ffffff',
+                    border: 'none',
+                    fontSize: '0.85rem',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    boxShadow: '0 4px 18px rgba(168, 85, 247, 0.4)',
+                    opacity: simulating ? 0.6 : 1
+                  }}
                 >
                   {simulating ? 'Đang Thực Thi...' : '🚀 Bắt Đầu Mô Phỏng'}
                 </button>
               </div>
 
-              {/* Kết quả mô phỏng */}
+              {/* Simulation Result */}
               {simResult && (
-                <div className="space-y-4 pt-4 border-t border-slate-800">
-                  {/* Trạng thái Telemetry Header */}
-                  <div className="grid grid-cols-3 gap-3">
-                    <div className="p-3 rounded-xl bg-slate-900 border border-slate-800">
-                      <div className="text-[10px] text-slate-400">Trạng Thái Pipeline</div>
-                      <div className="text-xs font-bold text-emerald-400">{simResult.status}</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', paddingTop: '16px', borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}>
+                  {/* Telemetry Metrics */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
+                    <div style={{ padding: '12px', borderRadius: '12px', background: 'rgba(17, 24, 39, 0.6)', border: '1px solid rgba(255, 255, 255, 0.08)' }}>
+                      <div style={{ fontSize: '0.72rem', color: '#94a3b8' }}>Trạng Thái</div>
+                      <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#34d399', marginTop: '2px' }}>{simResult.status}</div>
                     </div>
-                    <div className="p-3 rounded-xl bg-slate-900 border border-slate-800">
-                      <div className="text-[10px] text-slate-400">Overhead Phụ Trội (NFR-027)</div>
-                      <div className="text-xs font-bold text-indigo-400">
-                        {simResult.pipeline_overhead_ms} ms (&le; 30ms)
-                      </div>
+                    <div style={{ padding: '12px', borderRadius: '12px', background: 'rgba(17, 24, 39, 0.6)', border: '1px solid rgba(255, 255, 255, 0.08)' }}>
+                      <div style={{ fontSize: '0.72rem', color: '#94a3b8' }}>Overhead (NFR-027)</div>
+                      <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#818cf8', marginTop: '2px' }}>{simResult.pipeline_overhead_ms} ms (&le; 30ms)</div>
                     </div>
-                    <div className="p-3 rounded-xl bg-slate-900 border border-slate-800">
-                      <div className="text-[10px] text-slate-400">Tokens Tiêu Thụ</div>
-                      <div className="text-xs font-bold text-purple-400">{simResult.tokens_consumed}</div>
+                    <div style={{ padding: '12px', borderRadius: '12px', background: 'rgba(17, 24, 39, 0.6)', border: '1px solid rgba(255, 255, 255, 0.08)' }}>
+                      <div style={{ fontSize: '0.72rem', color: '#94a3b8' }}>Tokens Tiêu Thụ</div>
+                      <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#c084fc', marginTop: '2px' }}>{simResult.tokens_consumed}</div>
                     </div>
                   </div>
 
-                  {/* Vết thực thi từng node (Step Traces) */}
+                  {/* Step traces */}
                   <div>
-                    <h4 className="text-xs font-bold text-slate-300 mb-2">Vết Thực Thi (Step Traces):</h4>
-                    <div className="space-y-2">
+                    <h4 style={{ fontSize: '0.8rem', fontWeight: 700, color: '#e2e8f0', margin: '0 0 8px 0' }}>Vết Thực Thi Từng Khối (Step Traces):</h4>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                       {simResult.step_traces.map((trace, idx) => (
                         <div
                           key={idx}
-                          className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 flex items-center justify-between text-xs"
+                          style={{
+                            padding: '10px 14px',
+                            borderRadius: '10px',
+                            background: 'rgba(17, 24, 39, 0.5)',
+                            border: '1px solid rgba(255, 255, 255, 0.06)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            fontSize: '0.8rem'
+                          }}
                         >
-                          <div className="flex items-center gap-2">
-                            <span className="text-slate-400 font-mono text-[11px]">{idx + 1}.</span>
-                            <span className="font-semibold text-slate-200">{trace.label}</span>
-                            <span className="text-slate-500 text-[11px]">({trace.node_type})</span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ color: '#64748b', fontFamily: 'monospace' }}>{idx + 1}.</span>
+                            <span style={{ fontWeight: 600, color: '#f8fafc' }}>{trace.label}</span>
+                            <span style={{ color: '#64748b', fontSize: '0.75rem' }}>({trace.node_type})</span>
                           </div>
-                          <div className="flex items-center gap-3">
-                            <span className="text-indigo-400 font-mono text-[11px]">
-                              {trace.duration_ms} ms
-                            </span>
-                            <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-                              ✓ PASS
-                            </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <span style={{ color: '#818cf8', fontFamily: 'monospace', fontSize: '0.75rem' }}>{trace.duration_ms} ms</span>
+                            <span style={{ padding: '2px 8px', borderRadius: '9999px', fontSize: '0.7rem', background: 'rgba(16, 185, 129, 0.15)', color: '#10b981' }}>✓ PASS</span>
                           </div>
                         </div>
                       ))}
                     </div>
                   </div>
 
-                  {/* Phản hồi cuối cùng gửi ra Discord */}
+                  {/* Output Preview */}
                   <div>
-                    <h4 className="text-xs font-bold text-slate-300 mb-1.5">
-                      Nội Dung Phản Hồi In Ra Discord (Egress Output):
-                    </h4>
-                    <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-200 whitespace-pre-wrap leading-relaxed font-sans">
+                    <h4 style={{ fontSize: '0.8rem', fontWeight: 700, color: '#e2e8f0', margin: '0 0 6px 0' }}>Phản Hồi In Ra Discord (Egress Output):</h4>
+                    <div style={{
+                      padding: '14px',
+                      borderRadius: '12px',
+                      background: 'rgba(0, 0, 0, 0.6)',
+                      border: '1px solid rgba(255, 255, 255, 0.08)',
+                      fontSize: '0.82rem',
+                      color: '#f8fafc',
+                      whiteSpace: 'pre-wrap',
+                      lineHeight: 1.6
+                    }}>
                       {simResult.output_text}
                     </div>
                   </div>
@@ -1231,53 +1779,92 @@ export default function DiscordPipelineCanvasPage() {
 
       {/* EXECUTIONS HISTORY MODAL */}
       {showHistoryModal && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-[#0e1626] border border-slate-800 rounded-2xl w-full max-w-3xl overflow-hidden shadow-2xl flex flex-col">
-            <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="text-xl">📋</span>
-                <h3 className="text-base font-bold text-white">Lịch Sử Thực Thi Pipeline Gần Đây</h3>
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 999,
+          background: 'rgba(0, 0, 0, 0.75)',
+          backdropFilter: 'blur(16px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '16px'
+        }}>
+          <div style={{
+            background: '#0d1322',
+            border: '1px solid rgba(255, 255, 255, 0.12)',
+            borderRadius: '20px',
+            width: '100%',
+            maxWidth: '720px',
+            boxShadow: '0 25px 60px rgba(0, 0, 0, 0.6)',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden'
+          }}>
+            <div style={{
+              padding: '16px 24px',
+              borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '1.3rem' }}>📋</span>
+                <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#ffffff', margin: 0 }}>
+                  Lịch Sử Thực Thi Pipeline Gần Đây
+                </h3>
               </div>
               <button
                 onClick={() => setShowHistoryModal(false)}
-                className="text-slate-400 hover:text-white"
+                style={{ background: 'transparent', border: 'none', color: '#94a3b8', fontSize: '1.1rem', cursor: 'pointer' }}
               >
                 ✕
               </button>
             </div>
 
-            <div className="p-6 max-h-[70vh] overflow-y-auto space-y-3">
+            <div style={{ padding: '24px', maxHeight: '70vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {executions.length === 0 ? (
-                <div className="text-center py-10 text-slate-400 text-xs">
+                <div style={{ textAlign: 'center', padding: '40px 0', color: '#64748b', fontSize: '0.85rem' }}>
                   Chưa có lượt thực thi nào được ghi nhận.
                 </div>
               ) : (
                 executions.map(item => (
                   <div
                     key={item.id}
-                    className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 flex flex-col gap-2"
+                    style={{
+                      padding: '14px 16px',
+                      borderRadius: '12px',
+                      background: 'rgba(17, 24, 39, 0.6)',
+                      border: '1px solid rgba(255, 255, 255, 0.08)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '8px'
+                    }}
                   >
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-bold text-slate-200">
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.82rem' }}>
+                      <span style={{ fontWeight: 700, color: '#f8fafc' }}>
                         {item.trigger_source} • {item.model_used || 'Mặc định'}
                       </span>
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            item.status === 'SUCCESS'
-                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
-                              : 'bg-amber-500/10 text-amber-400 border border-amber-500/30'
-                          }`}
-                        >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <span style={{
+                          padding: '2px 8px',
+                          borderRadius: '9999px',
+                          fontSize: '0.72rem',
+                          fontWeight: 700,
+                          background: item.status === 'SUCCESS' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                          color: item.status === 'SUCCESS' ? '#10b981' : '#f59e0b'
+                        }}>
                           {item.status}
                         </span>
-                        <span className="text-slate-500 text-[10px]">
+                        <span style={{ color: '#64748b', fontSize: '0.75rem' }}>
                           {new Date(item.created_at).toLocaleString('vi-VN')}
                         </span>
                       </div>
                     </div>
-                    <p className="text-xs text-slate-400 italic">&ldquo;{item.input_message}&rdquo;</p>
-                    <div className="text-[11px] text-slate-500 flex gap-4">
+                    <p style={{ margin: 0, fontSize: '0.8rem', color: '#94a3b8', fontStyle: 'italic' }}>
+                      &ldquo;{item.input_message}&rdquo;
+                    </p>
+                    <div style={{ fontSize: '0.75rem', color: '#64748b', display: 'flex', gap: '16px' }}>
                       <span>Overhead: {item.pipeline_overhead_ms}ms</span>
                       <span>LLM: {item.llm_latency_ms}ms</span>
                       <span>Tokens: {item.tokens_consumed}</span>
