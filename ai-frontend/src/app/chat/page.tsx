@@ -567,7 +567,9 @@ export default function ChatWorkspacePage() {
                   onClick={() => !isEditing && loadConversationMessages(conv.id)}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}>
-                    <span style={{ fontSize: '0.9rem' }}>💬</span>
+                    <span style={{ fontSize: '0.9rem' }}>
+                      {conv.title.startsWith('Discord Bot:') ? '🤖' : '💬'}
+                    </span>
                     {isEditing ? (
                       <input
                         type="text"
@@ -595,9 +597,25 @@ export default function ChatWorkspacePage() {
                         color: isActive ? '#ffffff' : 'var(--text-secondary)',
                         whiteSpace: 'nowrap',
                         overflow: 'hidden',
-                        textOverflow: 'ellipsis'
+                        textOverflow: 'ellipsis',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px'
                       }}>
-                        {conv.title}
+                        {conv.title.startsWith('Discord Bot:') && (
+                          <span style={{
+                            fontSize: '0.65rem',
+                            padding: '1px 5px',
+                            borderRadius: '4px',
+                            background: 'rgba(88, 101, 242, 0.25)',
+                            color: '#5865F2',
+                            fontWeight: 600,
+                            flexShrink: 0
+                          }}>
+                            DISCORD
+                          </span>
+                        )}
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{conv.title}</span>
                       </span>
                     )}
                   </div>
@@ -684,6 +702,25 @@ export default function ChatWorkspacePage() {
             </div>
           </Link>
           <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+            <Link
+              href="/bot/discord"
+              id="btn-sidebar-goto-bot"
+              title="Quản lý Discord Bot"
+              aria-label="Quản lý Discord Bot"
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--text-muted)',
+                fontSize: '1rem',
+                cursor: 'pointer',
+                padding: '6px',
+                display: 'flex',
+                alignItems: 'center',
+                textDecoration: 'none'
+              }}
+            >
+              🤖
+            </Link>
             <Link
               href="/settings"
               title="Cài đặt tài khoản"

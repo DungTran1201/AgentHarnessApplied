@@ -22,15 +22,15 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
         ):
             return await call_next(request)
 
-        # Đối với endpoint chat stream, bản thân handler sẽ đo TTFT & tokens chi tiết
-        is_chat_stream = "/messages/stream" in path
+        # Đối với endpoint chat stream hoặc bot dispatch, bản thân handler sẽ đo tokens & telemetry chi tiết
+        is_custom_logged = "/messages/stream" in path or "/bot/discord/test-dispatch" in path
 
         start_time = time.perf_counter()
         response: Response = await call_next(request)
         latency_ms = (time.perf_counter() - start_time) * 1000
 
-        # Nếu không phải chat stream, ghi nhật ký telemetry chung cho các API khác
-        if not is_chat_stream:
+        # Nếu không phải custom logged endpoint, ghi nhật ký telemetry chung cho các API khác
+        if not is_custom_logged:
             # Trích xuất user_id từ cookie hoặc Authorization header
             user_id = None
             token = request.cookies.get("access_token")
