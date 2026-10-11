@@ -23,6 +23,7 @@ interface CompanionStageProps {
   selectedProjectId?: string;
   onSelectProject?: (id: string) => void;
   activeConvTitle?: string;
+  onControllerReady?: (ctrl: VRMController) => void;
 }
 
 export default function CompanionStage({
@@ -41,12 +42,16 @@ export default function CompanionStage({
   selectedProjectId = '',
   onSelectProject,
   activeConvTitle,
+  onControllerReady,
 }: CompanionStageProps) {
   const [showChatPanel, setShowChatPanel] = useState(true);
   const controllerRef = useRef<VRMController | null>(null);
 
   const handleControllerReady = (ctrl: VRMController) => {
     controllerRef.current = ctrl;
+    if (onControllerReady) {
+      onControllerReady(ctrl);
+    }
   };
 
   const handleExpression = (expr: string) => {

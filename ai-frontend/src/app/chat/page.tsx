@@ -228,6 +228,7 @@ export default function ChatWorkspacePage() {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
       setIsStreaming(false);
+      vrmControllerRef.current?.handleStopGeneration();
       setAvatarState('idle');
     }
   };
@@ -340,6 +341,9 @@ export default function ChatWorkspacePage() {
           },
           controller.signal
         );
+        if (accumulatedText) {
+          vrmControllerRef.current?.handleAIResponseComplete(targetConvId || 'project', accumulatedText);
+        }
         setAvatarState('success');
         setTimeout(() => setAvatarState('idle'), 2500);
       } catch (err: any) {
@@ -446,6 +450,9 @@ export default function ChatWorkspacePage() {
         }
       }
 
+      if (accumulatedText) {
+        vrmControllerRef.current?.handleAIResponseComplete(targetConvId || 'chat', accumulatedText);
+      }
       setAvatarState('success');
       setTimeout(() => setAvatarState('idle'), 2500);
     } catch (err: any) {
@@ -534,6 +541,9 @@ export default function ChatWorkspacePage() {
           selectedProjectId={selectedProjectId}
           onSelectProject={setSelectedProjectId}
           activeConvTitle={activeConv?.title}
+          onControllerReady={ctrl => {
+            vrmControllerRef.current = ctrl;
+          }}
         />
       ) : (
         /* Workspace Mode: Productivity Layout with Integrated VRM Area */
