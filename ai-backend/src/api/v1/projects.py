@@ -40,25 +40,30 @@ class ProjectChatRequest(BaseModel):
 # 2. GRAPH VALIDATION ENGINE
 # ==============================================================================
 
-def validate_project_graph(graph_data: Dict[str, Any]) -> Dict[str, Any]:
+def validate_project_graph(graph_data: Dict[str, Any], user_id: Optional[str] = None) -> Dict[str, Any]:
     """
-    Xác thực tính toàn vẹn của cấu trúc đồ thị Graph (PRJ-BR-004, PRJ-BR-005, PRJ-BR-006):
-    1. Đủ chính xác 3 Node: web_input, model, output.
-    2. Đủ chính xác 2 Cạnh nối: web_input -> model và model -> output.
-    3. Kiểm tra tham số: 10 <= max_words <= 4000.
-    4. Kiểm tra model_id: Tồn tại trong DB models, status == 'ACTIVE', provider có API Key.
-    5. Kiểm tra tham số model: temperature (0.0 - 2.0), max_tokens hợp lệ.
+    Xác thực tính toàn vẹn của cấu trúc đồ thị Graph (PRJ-BR-004, PRJ-BR-005, PRJ-BR-006, BR-SPN-001..007):
+    1. Đủ các Node bắt buộc: web_input, model, output (mỗi loại đúng 1 node).
+    2. Node tùy chọn: system_prompt (tối đa 1 node, DEC-SPN-02).
+       Tổng số node hợp lệ: 3 (legacy) hoặc 4 (kèm system_prompt).
+    3. Cạnh nối:
+       - Bắt buộc: web_input -> model và model -> output.
+       - Nếu có system_prompt: bắt buộc có cạnh system_prompt -> model.
+       - Cấm cạnh nối tắt (input -> output), cấm chu trình, cấm nối prompt -> output.
+       - Tổng số cạnh hợp lệ: 2 (nếu 3 node) hoặc 3 (nếu 4 node).
+    4. Kiểm tra cấu hình System Prompt Node:
+       - prompt_id phải tồn tại trong data.config.
+       - prompt_id phải tồn tại trong bảng system_prompts trong DB (và thuộc user nếu user_id được cung cấp).
+    5. Kiểm tra tham số: 10 <= max_words <= 4000.
+    6. Kiểm tra model_id: Tồn tại trong DB models, status == 'ACTIVE', provider có API Key.
+    7. Kiểm tra tham số model: temperature (0.0 - 2.0), max_tokens hợp lệ.
     """
     errors: List[str] = []
     nodes = graph_data.get("nodes", [])
     edges = graph_data.get("edges", [])
 
-    # 1. Kiểm tra số lượng Node
-    if len(nodes) != 3:
-        errors.append(f"Graph phải chứa chính xác 3 Node: Web Input, Model và Output (hiện tại có {len(nodes)} node).")
-
     # Phân loại các node
-    node_by_type: Dict[str, Dict[str, Any]] = {}
+    node_by_type: Dict[str, List[Dict[str, Any]]] = {}
     node_by_id: Dict[str, Dict[str, Any]] = {}
     for n in nodes:
         ntype = n.get("type")
@@ -66,32 +71,61 @@ def validate_project_graph(graph_data: Dict[str, Any]) -> Dict[str, Any]:
         if nid:
             node_by_id[nid] = n
         if ntype:
-            if ntype in node_by_type:
-                errors.append(f"Mỗi project chỉ được phép có 1 node loại '{ntype}' (phát hiện trùng lặp).")
-            node_by_type[ntype] = n
+            if ntype not in node_by_type:
+                node_by_type[ntype] = []
+            node_by_type[ntype].append(n)
 
-    input_node = node_by_type.get("web_input")
-    model_node = node_by_type.get("model")
-    output_node = node_by_type.get("output")
+    # 1. Kiểm tra các node bắt buộc
+    input_nodes = node_by_type.get("web_input", [])
+    model_nodes = node_by_type.get("model", [])
+    output_nodes = node_by_type.get("output", [])
+    prompt_nodes = node_by_type.get("system_prompt", [])
 
-    if not input_node:
+    if len(input_nodes) == 0:
         errors.append("Graph thiếu Web Input Node.")
-    if not model_node:
-        errors.append("Graph thiếu Model Node.")
-    if not output_node:
-        errors.append("Graph thiếu Output Node.")
+    elif len(input_nodes) > 1:
+        errors.append(f"Mỗi project chỉ được phép có 1 Web Input Node (hiện tại có {len(input_nodes)}).")
 
-    # 2. Kiểm tra số lượng và chiều kết nối của các Edge
-    if len(edges) != 2:
-        errors.append(f"Graph phải chứa chính xác 2 cạnh kết nối liền mạch (hiện tại có {len(edges)} cạnh).")
+    if len(model_nodes) == 0:
+        errors.append("Graph thiếu Model Node.")
+    elif len(model_nodes) > 1:
+        errors.append(f"Mỗi project chỉ được phép có 1 Model Node (hiện tại có {len(model_nodes)}).")
+
+    if len(output_nodes) == 0:
+        errors.append("Graph thiếu Output Node.")
+    elif len(output_nodes) > 1:
+        errors.append(f"Mỗi project chỉ được phép có 1 Output Node (hiện tại có {len(output_nodes)}).")
+
+    # Kiểm tra số lượng system_prompt (DEC-SPN-02: 0..1)
+    if len(prompt_nodes) > 1:
+        errors.append(f"Mỗi Model chỉ được kết nối tối đa 1 System Prompt Node trong MVP (hiện tại có {len(prompt_nodes)}).")
+
+    # Kiểm tra loại node không hợp lệ
+    valid_types = {"web_input", "model", "output", "system_prompt"}
+    for ntype in node_by_type.keys():
+        if ntype not in valid_types:
+            errors.append(f"Phát hiện loại node không được hỗ trợ: '{ntype}'.")
+
+    input_node = input_nodes[0] if input_nodes else None
+    model_node = model_nodes[0] if model_nodes else None
+    output_node = output_nodes[0] if output_nodes else None
+    prompt_node = prompt_nodes[0] if prompt_nodes else None
+
+    # 2. Kiểm tra các Edge
+    has_prompt = prompt_node is not None
+    expected_edge_count = 3 if has_prompt else 2
+    if len(edges) != expected_edge_count:
+        errors.append(f"Graph yêu cầu chính xác {expected_edge_count} cạnh kết nối liền mạch (hiện tại có {len(edges)} cạnh).")
 
     input_to_model_edge = False
     model_to_output_edge = False
+    prompt_to_model_edge = False
 
     if input_node and model_node and output_node:
         in_id = input_node.get("id")
         model_id_node = model_node.get("id")
         out_id = output_node.get("id")
+        prompt_id_node = prompt_node.get("id") if prompt_node else None
 
         for e in edges:
             src = e.get("source")
@@ -100,17 +134,43 @@ def validate_project_graph(graph_data: Dict[str, Any]) -> Dict[str, Any]:
                 input_to_model_edge = True
             elif src == model_id_node and tgt == out_id:
                 model_to_output_edge = True
+            elif prompt_id_node and src == prompt_id_node and tgt == model_id_node:
+                prompt_to_model_edge = True
             elif src == in_id and tgt == out_id:
                 errors.append("Phát hiện cạnh nối tắt trực tiếp từ Web Input sang Output (không được phép bỏ qua Model Node).")
             elif tgt == in_id:
                 errors.append("Phát hiện cạnh nối ngược về Web Input Node (không được phép tạo chu trình hoặc nối ngược).")
+            elif prompt_id_node and src == prompt_id_node and tgt == out_id:
+                errors.append("Phát hiện cạnh nối từ System Prompt sang Output Node (không hợp lệ).")
+            elif prompt_id_node and tgt == prompt_id_node:
+                errors.append("Phát hiện cạnh nối đi vào System Prompt Node (System Prompt Node chỉ có cổng xuất).")
 
         if not input_to_model_edge:
             errors.append("Thiếu kết nối có hướng từ Web Input Node sang Model Node.")
         if not model_to_output_edge:
             errors.append("Thiếu kết nối có hướng từ Model Node sang Output Node.")
+        if has_prompt and not prompt_to_model_edge:
+            errors.append("System Prompt Node chưa được kết nối vào Model Node.")
 
-    # 3. Kiểm tra cấu hình Web Input Node
+    # 3. Kiểm tra System Prompt Node cấu hình & tồn tại trong DB
+    target_prompt_id = None
+    if prompt_node:
+        p_cfg = prompt_node.get("data", {}).get("config", {})
+        target_prompt_id = p_cfg.get("prompt_id")
+        if not target_prompt_id:
+            errors.append("System Prompt Node chưa được liên kết với prompt nào (prompt_id bị rỗng).")
+        else:
+            if user_id:
+                p_rec = query_one(
+                    "SELECT id, name FROM system_prompts WHERE id = ? AND (user_id = ? OR user_id = 'guest_user')",
+                    (target_prompt_id, user_id)
+                )
+            else:
+                p_rec = query_one("SELECT id, name FROM system_prompts WHERE id = ?", (target_prompt_id,))
+            if not p_rec:
+                errors.append(f"System Prompt tham chiếu '{target_prompt_id}' không tồn tại hoặc đã bị xóa khỏi thư viện.")
+
+    # 4. Kiểm tra cấu hình Web Input Node
     max_words = 500
     if input_node:
         cfg = input_node.get("data", {}).get("config", {})
@@ -121,7 +181,7 @@ def validate_project_graph(graph_data: Dict[str, Any]) -> Dict[str, Any]:
         except (ValueError, TypeError):
             errors.append("Tham số max_words của Web Input Node không phải là số hợp lệ.")
 
-    # 4. Kiểm tra cấu hình Model Node
+    # 5. Kiểm tra cấu hình Model Node
     target_model_id = None
     if model_node:
         cfg = model_node.get("data", {}).get("config", {})
@@ -162,7 +222,8 @@ def validate_project_graph(graph_data: Dict[str, Any]) -> Dict[str, Any]:
         "is_valid": len(errors) == 0,
         "errors": errors,
         "target_model_id": target_model_id,
-        "max_words_limit": max_words
+        "max_words_limit": max_words,
+        "prompt_id": target_prompt_id
     }
 
 # ==============================================================================
@@ -404,7 +465,7 @@ async def save_project_graph(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project không tồn tại")
 
     graph_dict = payload.model_dump()
-    val_result = validate_project_graph(graph_dict)
+    val_result = validate_project_graph(graph_dict, user_id=user_id)
     
     graph_json = json.dumps(graph_dict)
     is_valid_flag = 1 if val_result["is_valid"] else 0
@@ -452,7 +513,7 @@ async def validate_graph_only(
     if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project không tồn tại")
 
-    val_result = validate_project_graph(payload.model_dump())
+    val_result = validate_project_graph(payload.model_dump(), user_id=user_id)
     return val_result
 
 @projects_router.post("/{project_id}/activate", summary="Kích hoạt project sang ACTIVE an toàn hạn ngạch")
@@ -601,6 +662,53 @@ async def chat_through_project(
             }
         )
 
+    # 2.5. Phân giải System Prompt liên kết nếu có trong graph (DEC-SPN-01, DEC-SPN-03, DEC-SPN-04)
+    system_prompt_instruction: Optional[str] = None
+    if proj.get("graph_data"):
+        try:
+            g_data = json.loads(proj["graph_data"])
+            g_nodes = g_data.get("nodes", [])
+            g_edges = g_data.get("edges", [])
+            prompt_nodes = [n for n in g_nodes if n.get("type") == "system_prompt"]
+            if prompt_nodes:
+                p_node = prompt_nodes[0]
+                p_node_id = p_node.get("id")
+                model_nodes = [n for n in g_nodes if n.get("type") == "model"]
+                m_node_id = model_nodes[0].get("id") if model_nodes else None
+                is_connected = any(
+                    e.get("source") == p_node_id and e.get("target") == m_node_id
+                    for e in g_edges
+                )
+                if is_connected:
+                    ref_prompt_id = p_node.get("data", {}).get("config", {}).get("prompt_id")
+                    if not ref_prompt_id:
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail={
+                                "error_code": "PROMPT_UNAVAILABLE",
+                                "message": "System Prompt Node chưa được gắn ID prompt hợp lệ."
+                            }
+                        )
+                    # Query SQLite DB for dynamic resolution (DEC-SPN-01, DEC-SPN-03)
+                    prompt_record = query_one(
+                        "SELECT id, content FROM system_prompts WHERE id = ? AND (user_id = ? OR user_id = 'guest_user')",
+                        (ref_prompt_id, user_id)
+                    )
+                    if not prompt_record:
+                        # Fail-closed per DEC-SPN-04
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail={
+                                "error_code": "PROMPT_UNAVAILABLE",
+                                "message": f"System Prompt liên kết (ID: '{ref_prompt_id}') không tồn tại hoặc đã bị xóa khỏi thư viện. Vui lòng mở Project Editor để chọn lại prompt."
+                            }
+                        )
+                    system_prompt_instruction = prompt_record.get("content")
+        except HTTPException:
+            raise
+        except Exception as e:
+            pass
+
     # 3. Quản lý conversation
     conv_id = payload.conversation_id
     if not conv_id:
@@ -643,7 +751,8 @@ async def chat_through_project(
             async for event in chat_agent.astream_agent(
                 prompt=payload.message,
                 history=context_msgs,
-                model_override=target_model_id
+                model_override=target_model_id,
+                system_instruction=system_prompt_instruction
             ):
                 if event.get("status") == "streaming":
                     token_str = event.get("token", "")

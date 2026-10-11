@@ -119,13 +119,18 @@ class LangChainModelFactory:
             )
         return None
 
-def build_langchain_messages(prompt: str, history: List[Dict[str, Any]]) -> List[BaseMessage]:
-    """Constructs a sliding window of max 20 messages (INV-04) formatted for LangChain."""
-    system_instruction = (
+def build_langchain_messages(
+    prompt: str,
+    history: List[Dict[str, Any]],
+    system_instruction: Optional[str] = None
+) -> List[BaseMessage]:
+    """Constructs a sliding window of max 20 messages (INV-04) formatted for LangChain with optional custom system instruction."""
+    default_instruction = (
         "Bạn là AI-Chan, trợ lý ảo thông minh và thân thiện. "
         "Hãy trả lời chính xác, hữu ích, hỗ trợ định dạng Markdown và mã nguồn chuẩn khi cần."
     )
-    messages: List[BaseMessage] = [SystemMessage(content=system_instruction)]
+    instruction = system_instruction.strip() if system_instruction and system_instruction.strip() else default_instruction
+    messages: List[BaseMessage] = [SystemMessage(content=instruction)]
     
     # 20 most recent messages context window
     recent_history = history[-20:] if len(history) > 20 else history
@@ -223,11 +228,12 @@ class ChatAgentOrchestrator:
         self,
         prompt: str,
         history: List[Dict[str, Any]],
-        model_override: Optional[str] = None
+        model_override: Optional[str] = None,
+        system_instruction: Optional[str] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        """Asynchronously streams token chunks with automatic failover (SSE compatible)."""
+        """Asynchronously streams token chunks with automatic failover (SSE compatible) and custom system instruction."""
         cfg = EnvKeyLoader.get_config()
-        messages = build_langchain_messages(prompt, history)
+        messages = build_langchain_messages(prompt, history, system_instruction=system_instruction)
         
         primary_prov = cfg["default_provider"] if cfg["default_provider"] in ["gemini", "openai"] else "gemini"
         target_model = model_override or cfg["default_model"]
@@ -285,7 +291,10 @@ class ChatAgentOrchestrator:
         # 3. Fallback High-Quality Local/Mock Generator (khi chưa cấu hình API Key trong .env)
         logger.info("Chưa có API Key hợp lệ trong .env -> Kích hoạt LangGraph Mock Agent Simulator.")
         p_lower = prompt.lower()
-        greeting = "Chào bạn! Tôi là **AI-Chan Assistant**, trợ lý ảo thông minh chạy qua kiến trúc **LangChain & LangGraph**.\n\n"
+        if system_instruction and system_instruction.strip():
+            greeting = f"Chào bạn! Tôi đang phản hồi với chỉ dẫn hệ thống: *\"{system_instruction.strip()[:60]}...\"*\n\n"
+        else:
+            greeting = "Chào bạn! Tôi là **AI-Chan Assistant**, trợ lý ảo thông minh chạy qua kiến trúc **LangChain & LangGraph**.\n\n"
         
         if "python" in p_lower:
             body = (

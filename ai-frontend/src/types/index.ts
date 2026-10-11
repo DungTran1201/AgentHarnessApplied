@@ -186,10 +186,16 @@ export interface DiscordBotTestDispatchResponse {
 
 export type ProjectStatus = 'ACTIVE' | 'STOP' | 'DEACTIVE' | 'DELETED';
 
-export type NodeType = 'web_input' | 'model' | 'output';
+export type NodeType = 'web_input' | 'system_prompt' | 'model' | 'output';
 
 export interface WebInputConfig {
   max_words: number;
+}
+
+export interface SystemPromptNodeConfig {
+  prompt_id: string;
+  name?: string;
+  description?: string | null;
 }
 
 export interface ModelNodeConfig {
@@ -208,7 +214,7 @@ export interface GraphNode {
   position: { x: number; y: number };
   data: {
     label: string;
-    config: WebInputConfig | ModelNodeConfig | OutputNodeConfig | any;
+    config: WebInputConfig | SystemPromptNodeConfig | ModelNodeConfig | OutputNodeConfig | any;
   };
 }
 
@@ -218,6 +224,7 @@ export interface GraphEdge {
   target: string;
   sourceHandle?: string;
   targetHandle?: string;
+  type?: string;
 }
 
 export interface GraphData {
