@@ -66,9 +66,6 @@ class UpdateModelRequest(BaseModel):
     max_tokens: Optional[int] = Field(default=None, ge=256, description="Phản hồi tối đa (tokens >= 256)")
     supports_streaming: Optional[bool] = Field(default=None, description="Hỗ trợ SSE streaming")
 
-class DeleteModelConfirmationRequest(BaseModel):
-    confirmation_name: str = Field(..., min_length=1, description="Mã định danh mô hình để xác nhận thao tác xóa vĩnh viễn (BR-030)")
-
 
 # ------------------------------------------------------------------------------
 # 6.1 GET /api/v1/models (FR-021, UC-016, OP-010)
@@ -362,60 +359,6 @@ async def archive_model(
         "model_id": model_id,
         "status": "ARCHIVED",
         "message": f"Đã chuyển mô hình '{model['name']}' vào trạng thái lưu trữ an toàn."
-    }
-
-
-# ------------------------------------------------------------------------------
-# 6.11 DELETE /api/v1/models/{model_id}/permanent (FR-043, UC-031, OP-030, BR-028, BR-029, BR-030, SEC-012)
-# ------------------------------------------------------------------------------
-@models_router.delete("/{model_id}/permanent")
-async def delete_model_permanent(
-    model_id: str,
-    payload: DeleteModelConfirmationRequest,
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Gỡ bỏ và xóa hoàn toàn bản ghi mô hình khỏi danh mục hệ thống.
-    Áp dụng 3 chốt chặn bảo vệ:
-    1. Bất biến mô hình mặc định (BR-028)
-    2. Tiền điều kiện trạng thái không hoạt động (BR-029)
-    3. Xác nhận định danh tường minh (BR-030)
-    """
-    model = query_one("SELECT * FROM models WHERE id = ?", (model_id,))
-    if not model:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Không tìm thấy mô hình với mã định danh '{model_id}'."
-        )
-
-    # BR-028: Chốt chặn bảo vệ mô hình mặc định
-    if bool(model["is_default"]):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Không thể xóa mô hình mặc định của hệ thống. Vui lòng thiết lập một mô hình khác làm mặc định trước khi xóa."
-        )
-
-    # BR-029: Tiền điều kiện trạng thái (chỉ cho phép khi INACTIVE hoặc ARCHIVED)
-    if model["status"] == "ACTIVE":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Mô hình đang hoạt động (ACTIVE). Vui lòng chuyển trạng thái sang Tắt (INACTIVE) hoặc Lưu trữ (ARCHIVED) trước khi xóa vĩnh viễn."
-        )
-
-    # BR-030: Chốt chặn xác nhận định danh tường minh
-    if payload.confirmation_name.strip() != model_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Mã định danh xác nhận không khớp. Thao tác xóa bị hủy bỏ."
-        )
-
-    # Thực hiện xóa vật lý bản ghi (tin nhắn lịch sử vẫn bảo toàn theo ADR-011)
-    execute_commit("DELETE FROM models WHERE id = ?", (model_id,))
-
-    return {
-        "model_id": model_id,
-        "deleted": True,
-        "message": "Xóa mô hình vĩnh viễn khỏi danh mục thành công."
     }
 
 

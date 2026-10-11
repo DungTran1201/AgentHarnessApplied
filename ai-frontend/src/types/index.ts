@@ -181,96 +181,123 @@ export interface DiscordBotTestDispatchResponse {
 }
 
 // ==============================================================================
-// VISUAL PIPELINE & MODEL BINDING TYPES (CR-010, FR-048..FR-052)
+// PROJECT MANAGEMENT TYPES (PRJ-MVP)
 // ==============================================================================
 
-export type PipelineNodeType = 'discord_ingress' | 'model_binding' | 'transform_filter' | 'discord_egress';
+export type ProjectStatus = 'ACTIVE' | 'STOP' | 'DEACTIVE' | 'DELETED';
 
-export type PipelineState = 'STOPPED' | 'RUNNING' | 'PAUSED';
+export type NodeType = 'web_input' | 'system_prompt' | 'model' | 'output';
 
-export interface PipelineNodeConfig {
-  model_id?: string;
-  system_prompt?: string;
-  temperature?: number;
-  max_tokens?: number;
-  lowercase?: boolean;
-  strip?: boolean;
-  prefix_filter?: string;
-  wrap_markdown?: boolean;
-  send_typing?: boolean;
-  description?: string;
-  [key: string]: any;
+export interface WebInputConfig {
+  max_words: number;
 }
 
-export interface PipelineNode {
+export interface SystemPromptNodeConfig {
+  prompt_id: string;
+  name?: string;
+  description?: string | null;
+}
+
+export interface ModelNodeConfig {
+  model_id: string;
+  temperature: number;
+  max_tokens: number;
+}
+
+export interface OutputNodeConfig {
+  streaming: boolean;
+}
+
+export interface GraphNode {
   id: string;
-  node_type: PipelineNodeType;
-  label: string;
-  position_x: number;
-  position_y: number;
-  config: PipelineNodeConfig;
+  type: NodeType;
+  position?: { x: number; y: number };
+  data: {
+    label: string;
+    config: WebInputConfig | SystemPromptNodeConfig | ModelNodeConfig | OutputNodeConfig | any;
+  };
 }
 
-export interface PipelineEdge {
+export interface GraphEdge {
   id: string;
-  source_node_id: string;
-  target_node_id: string;
-  source_handle?: string;
-  target_handle?: string;
+  source: string;
+  target: string;
+  sourceHandle?: string;
+  targetHandle?: string;
+  type?: string;
 }
 
-export interface DiscordPresenceInfo {
-  status: 'online' | 'idle' | 'invisible';
-  color: 'green' | 'amber' | 'grey';
-  label: string;
+export interface GraphData {
+  viewport?: { x: number; y: number; zoom: number };
+  nodes: GraphNode[];
+  edges: GraphEdge[];
 }
 
-export interface BotPipeline {
+export interface ProjectQuotaInfo {
+  active_count: number;
+  max_limit: number;
+  remaining_slots: number;
+}
+
+export interface Project {
   id: string;
   user_id: string;
-  guild_id?: string | null;
   name: string;
-  state: PipelineState;
-  viewport_x: number;
-  viewport_y: number;
-  viewport_zoom: number;
+  description: string | null;
+  status: ProjectStatus;
   is_valid: boolean;
-  nodes: PipelineNode[];
-  edges: PipelineEdge[];
-  presence?: DiscordPresenceInfo;
-  created_at?: string;
-  updated_at?: string;
+  target_model_id: string | null;
+  max_words_limit: number;
+  node_count: number;
+  graph_data?: GraphData | null;
+  last_validated_at: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
-export interface StepTrace {
-  node_id: string;
-  node_type: PipelineNodeType;
-  label: string;
-  duration_ms: number;
-  output_preview: string;
-  status: string;
+export interface ProjectListResponse {
+  items: Project[];
+  total: number;
+  active_quota: ProjectQuotaInfo;
 }
 
-export interface PipelineSimulationResponse {
-  execution_id: string;
-  status: string;
-  state: PipelineState;
-  output_text: string;
-  model_used: string;
-  tokens_consumed: number;
-  pipeline_overhead_ms: number;
-  llm_latency_ms: number;
-  step_traces: StepTrace[];
+// ==============================================================================
+// SYSTEM PROMPT MANAGEMENT (MVP) CONTRACTS
+// ==============================================================================
+
+export interface SystemPromptSummary {
+  id: string;
+  name: string;
+  description: string | null;
+  content_length: number;
+  created_at: string;
+  updated_at: string;
 }
 
-export interface PipelineDAGValidationResponse {
-  is_valid: boolean;
-  cycle_detected: boolean;
-  cycle_path: string[];
-  topo_order: string[];
-  errors: string[];
-  validation_time_ms: number;
+export interface SystemPromptDetail {
+  id: string;
+  user_id: string;
+  name: string;
+  description: string | null;
+  content: string;
+  created_at: string;
+  updated_at: string;
 }
 
+export interface SystemPromptListResponse {
+  items: SystemPromptSummary[];
+  total: number;
+}
 
+export interface SystemPromptCreateRequest {
+  name: string;
+  description?: string | null;
+  content: string;
+}
+
+export interface SystemPromptUpdateRequest {
+  name: string;
+  description?: string | null;
+  content: string;
+}
 

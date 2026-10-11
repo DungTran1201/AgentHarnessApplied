@@ -116,11 +116,6 @@ export default function SettingsPage() {
   const [confirmArchiveModel, setConfirmArchiveModel] = useState<AgentModel | null>(null);
   const [archivingModelId, setArchivingModelId] = useState<string | null>(null);
 
-  // Permanent Delete Modal state (FR-043, OP-030, BR-028, BR-029, BR-030, UX-010)
-  const [confirmDeleteModel, setConfirmDeleteModel] = useState<AgentModel | null>(null);
-  const [deleteConfirmInput, setDeleteConfirmInput] = useState<string>('');
-  const [isDeletingPermanent, setIsDeletingPermanent] = useState<boolean>(false);
-
   const showToast = (type: 'success' | 'error', message: string) => {
     setToast({ type, message });
     setTimeout(() => setToast(null), 4000);
@@ -508,42 +503,6 @@ export default function SettingsPage() {
       showToast('error', err.message || 'Lỗi khi lưu trữ mô hình.');
     } finally {
       setArchivingModelId(null);
-    }
-  };
-
-  // FR-043: Xóa vĩnh viễn mô hình khỏi hệ thống (OP-030, BR-028, BR-029, BR-030, UX-010)
-  const handlePermanentDeleteModel = async (model: AgentModel) => {
-    if (model.is_default) {
-      showToast('error', 'Không thể xóa mô hình mặc định của hệ thống (BR-028).');
-      return;
-    }
-    if (model.status === 'ACTIVE') {
-      showToast('error', 'Mô hình đang hoạt động (ACTIVE). Vui lòng chuyển trạng thái sang Tắt hoặc Lưu trữ trước (BR-029).');
-      return;
-    }
-    if (deleteConfirmInput.trim() !== model.id) {
-      showToast('error', 'Mã định danh xác nhận không khớp (BR-030).');
-      return;
-    }
-    setIsDeletingPermanent(true);
-    try {
-      const res = await fetch(`/api/v1/models/${model.id}/permanent`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirmation_name: deleteConfirmInput.trim() })
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.detail || 'Không thể xóa vĩnh viễn mô hình.');
-      }
-      showToast('success', `🗑️ ${data.message || 'Đã xóa vĩnh viễn mô hình thành công.'}`);
-      setConfirmDeleteModel(null);
-      setDeleteConfirmInput('');
-      await fetchModels();
-    } catch (err: any) {
-      showToast('error', err.message || 'Lỗi khi xóa vĩnh viễn mô hình.');
-    } finally {
-      setIsDeletingPermanent(false);
     }
   };
 
@@ -2437,16 +2396,16 @@ export default function SettingsPage() {
                           </button>
                         </div>
 
-                        {/* Action Row 3: Set Default (Active only) & Permanent Delete (FR-043, OP-030, BR-028, BR-029) */}
-                        <div style={{ display: 'flex', gap: '8px', marginTop: '2px' }}>
-                          {!m.is_default && !isArchived && (
+                        {/* Action Row 3: Set Default (Active only) */}
+                        {!m.is_default && !isArchived && (
+                          <div style={{ display: 'flex', gap: '8px', marginTop: '2px' }}>
                             <button
                               type="button"
                               onClick={() => handleSetDefaultModel(m)}
                               disabled={isSettingDef || m.status !== 'ACTIVE'}
                               title={m.status !== 'ACTIVE' ? 'Chỉ có thể đặt mô hình đang ACTIVE làm mặc định' : 'Thiết lập làm mô hình mặc định cho các phiên chat mới'}
                               style={{
-                                flex: 1,
+                                width: '100%',
                                 padding: '6px 10px',
                                 borderRadius: 'var(--radius-sm)',
                                 background: m.status === 'ACTIVE' ? 'rgba(245, 158, 11, 0.1)' : 'rgba(255,255,255,0.03)',
@@ -2464,52 +2423,8 @@ export default function SettingsPage() {
                               <span>⭐</span>
                               <span>{isSettingDef ? 'Đang đặt...' : 'Đặt mặc định'}</span>
                             </button>
-                          )}
-
-                          {/* Permanent Removal Button (FR-043, OP-030, BR-028, BR-029, UX-010) */}
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (m.is_default) {
-                                showToast('error', 'Không thể xóa mô hình mặc định của hệ thống (BR-028).');
-                                return;
-                              }
-                              if (m.status === 'ACTIVE') {
-                                showToast('error', 'Mô hình đang hoạt động (ACTIVE). Vui lòng Tạm dừng hoặc Lưu trữ trước khi xóa vĩnh viễn (BR-029).');
-                                return;
-                              }
-                              setConfirmDeleteModel(m);
-                              setDeleteConfirmInput('');
-                            }}
-                            disabled={m.is_default || m.status === 'ACTIVE'}
-                            title={
-                              m.is_default
-                                ? 'Không thể xóa mô hình mặc định của hệ thống (BR-028)'
-                                : m.status === 'ACTIVE'
-                                ? 'Mô hình đang hoạt động (ACTIVE). Vui lòng tạm dừng hoặc lưu trữ trước khi xóa (BR-029)'
-                                : 'Xóa vĩnh viễn mô hình khỏi hệ thống (FR-043, OP-030)'
-                            }
-                            style={{
-                              flex: (!m.is_default && !isArchived) ? 1 : undefined,
-                              width: (!m.is_default && !isArchived) ? undefined : '100%',
-                              padding: '6px 10px',
-                              borderRadius: 'var(--radius-sm)',
-                              background: (m.is_default || m.status === 'ACTIVE') ? 'rgba(255,255,255,0.02)' : 'rgba(225, 29, 72, 0.1)',
-                              border: (m.is_default || m.status === 'ACTIVE') ? '1px solid rgba(255,255,255,0.06)' : '1px solid rgba(225, 29, 72, 0.3)',
-                              color: (m.is_default || m.status === 'ACTIVE') ? 'var(--text-muted)' : '#f43f5e',
-                              fontSize: '0.78rem',
-                              fontWeight: 600,
-                              cursor: (m.is_default || m.status === 'ACTIVE') ? 'not-allowed' : 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: '6px'
-                            }}
-                          >
-                            <span>🗑️</span>
-                            <span>Xóa vĩnh viễn</span>
-                          </button>
-                        </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
@@ -3021,127 +2936,6 @@ export default function SettingsPage() {
               </div>
             )}
 
-            {/* ============================================================ */}
-            {/* MODAL 4: XÁC NHẬN GỠ BỎ VĨNH VIỄN MÔ HÌNH (FR-043, OP-030, BR-030, UX-010) */}
-            {/* ============================================================ */}
-            {confirmDeleteModel && (
-              <div style={{
-                position: 'fixed',
-                inset: 0,
-                background: 'rgba(0, 0, 0, 0.8)',
-                backdropFilter: 'blur(8px)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                zIndex: 1000,
-                padding: '1rem'
-              }}>
-                <div style={{
-                  background: '#0f172a',
-                  border: '1px solid rgba(239, 68, 68, 0.4)',
-                  borderRadius: 'var(--radius-lg)',
-                  padding: '2rem',
-                  maxWidth: '480px',
-                  width: '100%',
-                  boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.9)'
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '1rem' }}>
-                    <span style={{ fontSize: '1.6rem' }}>⚠️</span>
-                    <h3 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#f87171' }}>
-                      Xác Nhận Xóa Vĩnh Viễn Mô Hình
-                    </h3>
-                  </div>
-
-                  <p style={{ fontSize: '0.88rem', color: '#cbd5e1', lineHeight: 1.6, marginBottom: '1rem' }}>
-                    Bạn đang chuẩn bị xóa vĩnh viễn mô hình <strong style={{ color: '#fff' }}>{confirmDeleteModel.name}</strong> khỏi cơ sở dữ liệu hệ thống.
-                  </p>
-
-                  <div style={{
-                    padding: '10px 14px',
-                    borderRadius: 'var(--radius-sm)',
-                    background: 'rgba(239, 68, 68, 0.1)',
-                    border: '1px solid rgba(239, 68, 68, 0.25)',
-                    fontSize: '0.8rem',
-                    color: '#fca5a5',
-                    lineHeight: 1.5,
-                    marginBottom: '1.25rem'
-                  }}>
-                    🚨 <strong>Cảnh báo (BR-029, ADR-011):</strong> Hành động này không thể hoàn tác. Bản ghi cấu hình mô hình sẽ bị xóa vĩnh viễn. Tuy nhiên, toàn bộ lịch sử tin nhắn trò chuyện và dữ liệu log tài nguyên trước đây vẫn được bảo tồn trọn vẹn dưới dạng văn bản tĩnh.
-                  </div>
-
-                  <div style={{ marginBottom: '1.5rem' }}>
-                    <label style={{ display: 'block', fontSize: '0.82rem', color: '#94a3b8', marginBottom: '8px' }}>
-                      Để xác nhận, vui lòng nhập chính xác mã định danh <code style={{ color: '#f43f5e', background: 'rgba(244, 63, 94, 0.15)', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>{confirmDeleteModel.id}</code>:
-                    </label>
-                    <input
-                      type="text"
-                      value={deleteConfirmInput}
-                      onChange={(e) => setDeleteConfirmInput(e.target.value)}
-                      placeholder={`Nhập ${confirmDeleteModel.id}`}
-                      style={{
-                        width: '100%',
-                        padding: '10px 14px',
-                        borderRadius: 'var(--radius-sm)',
-                        background: 'rgba(0,0,0,0.4)',
-                        border: deleteConfirmInput.trim() === confirmDeleteModel.id ? '1px solid #22c55e' : '1px solid var(--border-subtle)',
-                        color: '#fff',
-                        fontSize: '0.88rem',
-                        fontFamily: 'var(--font-mono)',
-                        outline: 'none',
-                        transition: 'border-color 0.2s'
-                      }}
-                      autoFocus
-                    />
-                    {deleteConfirmInput && deleteConfirmInput.trim() !== confirmDeleteModel.id && (
-                      <span style={{ display: 'block', color: '#f87171', fontSize: '0.75rem', marginTop: '6px' }}>
-                        Mã xác nhận chưa trùng khớp với định danh mô hình.
-                      </span>
-                    )}
-                  </div>
-
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setConfirmDeleteModel(null);
-                        setDeleteConfirmInput('');
-                      }}
-                      style={{
-                        padding: '8px 16px',
-                        borderRadius: 'var(--radius-sm)',
-                        background: 'rgba(255,255,255,0.06)',
-                        border: '1px solid var(--border-subtle)',
-                        color: '#fff',
-                        fontSize: '0.85rem',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      Hủy bỏ
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handlePermanentDeleteModel(confirmDeleteModel)}
-                      disabled={isDeletingPermanent || deleteConfirmInput.trim() !== confirmDeleteModel.id}
-                      style={{
-                        padding: '8px 20px',
-                        borderRadius: 'var(--radius-sm)',
-                        background: (deleteConfirmInput.trim() === confirmDeleteModel.id && !isDeletingPermanent) ? '#dc2626' : 'rgba(220, 38, 38, 0.3)',
-                        border: 'none',
-                        color: (deleteConfirmInput.trim() === confirmDeleteModel.id && !isDeletingPermanent) ? '#fff' : 'rgba(255,255,255,0.4)',
-                        fontSize: '0.85rem',
-                        fontWeight: 600,
-                        cursor: (deleteConfirmInput.trim() === confirmDeleteModel.id && !isDeletingPermanent) ? 'pointer' : 'not-allowed',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px'
-                      }}
-                    >
-                      {isDeletingPermanent ? 'Đang xóa...' : 'Xác nhận xóa vĩnh viễn'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
         )}
 
