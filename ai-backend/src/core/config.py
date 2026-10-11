@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     DISCORD_REDIRECT_URI: str = "http://localhost:3000/api/v1/auth/discord/callback"
     DISCORD_BOT_TOKEN: str = ""
     DISCORD_PUBLIC_KEY: str = ""
+    # Project Management Settings
+    MAX_ACTIVE_PROJECTS: int = 3
 
     model_config = SettingsConfigDict(
         env_file=_env_path,
