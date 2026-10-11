@@ -114,6 +114,39 @@ def run_migration():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_conversations_project_id ON conversations(project_id)")
             conn.commit()
 
+        # 10. Apply 009_system_prompt_management.sql (system_prompts table)
+        migration_009_file = MIGRATIONS_DIR / "009_system_prompt_management.sql"
+        if migration_009_file.exists():
+            print(f"Executing {migration_009_file.name} on {db_path.name}...")
+            with open(migration_009_file, "r", encoding="utf-8") as f:
+                cur.executescript(f.read())
+            conn.commit()
+            print(f"Applied 009 migration successfully to {db_path.name}.")
+
+        # Seed default sample system prompts for guest_user if table is empty for guest
+        prompt_count = cur.execute("SELECT COUNT(*) FROM system_prompts WHERE user_id = 'guest_user'").fetchone()[0]
+        if prompt_count == 0:
+            print(f"Seeding default system prompts for guest_user in {db_path.name}...")
+            cur.execute("""
+                INSERT OR IGNORE INTO system_prompts (id, user_id, name, description, content)
+                VALUES
+                (
+                    'sp_seed_python_expert',
+                    'guest_user',
+                    'Chuyên Gia Python & Kiến Trúc Phần Mềm',
+                    'Hỗ trợ viết mã nguồn Python tối ưu, tuân thủ PEP 8, Type Hinting và Clean Architecture',
+                    'Bạn là chuyên gia Senior Python Architect với hơn 10 năm kinh nghiệm. Khi viết code, hãy luôn tuân thủ các nguyên tắc sau:\n1. Luôn sử dụng Type Hinting đầy đủ cho tham số và kiểu trả về.\n2. Viết docstring theo chuẩn Google hoặc Sphinx.\n3. Ưu tiên giải pháp tối ưu thời gian O(n) và không gian O(n).\n4. Đưa ra giải thích súc tích, tập trung vào bản chất kỹ thuật.'
+                ),
+                (
+                    'sp_seed_business_analyst',
+                    'guest_user',
+                    'Senior Business Analyst (IT)',
+                    'Hỗ trợ khảo sát, bóc tách yêu cầu, viết User Stories và phân tích nghiệp vụ',
+                    'Bạn là Senior Business Analyst chuyên nghiệp. Khi tiếp nhận yêu cầu từ người dùng:\n1. Phân loại rõ: FACT, ASSUMPTION, DECISION, OPEN QUESTION.\n2. Xác định Actor, Preconditions, Postconditions và Acceptance Criteria kiểm thử được.\n3. Không tự tiện suy diễn yêu cầu nếu chưa có bằng chứng xác thực.'
+                )
+            """)
+            conn.commit()
+
         # Verify tables
         tables = [r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
         print(f"Tables in {db_path.name}: {tables}")
@@ -126,6 +159,9 @@ def run_migration():
         if "projects" in tables:
             project_count = cur.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
             print(f"Total projects in {db_path.name}: {project_count}")
+        if "system_prompts" in tables:
+            sp_count = cur.execute("SELECT COUNT(*) FROM system_prompts").fetchone()[0]
+            print(f"Total system prompts in {db_path.name}: {sp_count}")
             
         conn.close()
 

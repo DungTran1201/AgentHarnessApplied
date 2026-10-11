@@ -227,4 +227,31 @@ BEGIN
     UPDATE projects SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
 END;
 
+-- ==============================================================================
+-- 7. BẢNG QUẢN LÝ SYSTEM PROMPT (SYSTEM PROMPT MANAGEMENT MVP)
+-- ==============================================================================
+
+CREATE TABLE IF NOT EXISTS system_prompts (
+    id VARCHAR(36) PRIMARY KEY,
+    user_id VARCHAR(36) NOT NULL,
+    name VARCHAR(100) NOT NULL COLLATE NOCASE,
+    description VARCHAR(500),
+    content TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT uq_user_prompt_name UNIQUE (user_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_system_prompts_user_updated ON system_prompts(user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_system_prompts_user_name ON system_prompts(user_id, name);
+
+CREATE TRIGGER IF NOT EXISTS trg_system_prompts_updated_at
+AFTER UPDATE ON system_prompts
+FOR EACH ROW
+BEGIN
+    UPDATE system_prompts SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
+END;
+
+
 
