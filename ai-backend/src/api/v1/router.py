@@ -6,7 +6,6 @@ from src.api.v1.users import users_router
 from src.api.v1.models import models_router
 from src.api.v1.resources import resources_router
 from src.api.v1.bot import bot_router
-from src.api.v1.bot_pipeline import bot_pipeline_router
 
 api_router = APIRouter()
 
@@ -28,6 +27,5 @@ api_router.include_router(users_router)
 api_router.include_router(models_router)
 api_router.include_router(resources_router)
 api_router.include_router(bot_router)
-api_router.include_router(bot_pipeline_router)
 
 
