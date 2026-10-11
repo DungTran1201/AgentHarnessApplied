@@ -1,0 +1,520 @@
+openapi: 3.1.0
+info:
+  title: "AI-Chan Assistant API"
+  version: "1.0.0"
+  description: "RESTful and Server-Sent Events API contracts for AI-Chan Chatbot Assistant."
+
+servers:
+  - url: "/api/v1"
+    description: "Production and Local Ingress Gateway API"
+
+paths:
+  /auth/register:
+    post:
+      summary: "Register new user"
+      operationId: "registerUser"
+      tags: ["Authentication"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserRegisterRequest"
+      responses:
+        "201":
+          description: "User registered successfully"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfileResponse"
+        "400":
+          description: "Email already registered"
+        "422":
+          description: "Validation error"
+
+  /auth/login:
+    post:
+      summary: "Login and establish session"
+      operationId: "loginUser"
+      tags: ["Authentication"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserLoginRequest"
+      responses:
+        "200":
+          description: "Login successful; JWT set in HttpOnly cookie"
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfileResponse"
+        "401":
+          description: "Invalid email or password"
+
+  /auth/logout:
+    post:
+      summary: "Logout and clear session cookie"
+      operationId: "logoutUser"
+      tags: ["Authentication"]
+      responses:
+        "200":
+          description: "Session cookie cleared"
+
+  /auth/me:
+    get:
+      summary: "Get current user profile"
+      operationId: "getCurrentUser"
+      tags: ["Authentication"]
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfileResponse"
+        "401":
+          description: "Not authenticated"
+
+  /conversations:
+    post:
+      summary: "Create new conversation"
+      operationId: "createConversation"
+      tags: ["Conversations"]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConversationCreateRequest"
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationResponse"
+    get:
+      summary: "List user conversations"
+      operationId: "listConversations"
+      tags: ["Conversations"]
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ConversationResponse"
+
+  /conversations/{conv_id}:
+    patch:
+      summary: "Rename conversation"
+      operationId: "renameConversation"
+      tags: ["Conversations"]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: conv_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConversationUpdateRequest"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationResponse"
+        "404":
+          description: "Conversation not found"
+    delete:
+      summary: "Delete conversation"
+      operationId: "deleteConversation"
+      tags: ["Conversations"]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: conv_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: "Conversation deleted successfully"
+
+  /conversations/{conv_id}/messages:
+    get:
+      summary: "Get conversation message history"
+      operationId: "getMessages"
+      tags: ["Conversations"]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: conv_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MessageResponse"
+
+  /chat/conversations/{conv_id}/stream:
+    post:
+      summary: "Send message and stream AI response via SSE"
+      operationId: "streamChat"
+      tags: ["Chat"]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: conv_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatStreamRequest"
+      responses:
+        "200":
+          description: "Server-Sent Events streaming response"
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "422":
+          description: "Message length exceeds 4,000 characters or is empty"
+        "429":
+          description: "Rate limit exceeded"
+
+  /models:
+    get:
+      summary: "List all configured agent models"
+      operationId: "listModels"
+      tags: ["Models"]
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: "List of agent models"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AgentModelResponse"
+
+  /models/{model_id}:
+    get:
+      summary: "Get agent model details"
+      operationId: "getModelDetails"
+      tags: ["Models"]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: model_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: "Model details"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentModelResponse"
+        "404":
+          description: "Model not found"
+
+  /models/{model_id}/test:
+    post:
+      summary: "Test model connection and latency"
+      operationId: "testModelConnection"
+      tags: ["Models"]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: model_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: "Ping health test result"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelTestResponse"
+        "400":
+          description: "API Key not configured in .env"
+
+  /models/{model_id}/activate:
+    patch:
+      summary: "Activate agent model"
+      operationId: "activateModel"
+      tags: ["Models"]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: model_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: "Model activated"
+        "400":
+          description: "Missing API Key in .env"
+
+  /models/{model_id}/deactivate:
+    patch:
+      summary: "Deactivate agent model (soft toggle)"
+      operationId: "deactivateModel"
+      tags: ["Models"]
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: model_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: "Model deactivated"
+        "400":
+          description: "Cannot deactivate active default model"
+
+  /models/default:
+    patch:
+      summary: "Set default active agent model"
+      operationId: "setDefaultModel"
+      tags: ["Models"]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetDefaultModelRequest"
+      responses:
+        "200":
+          description: "Default model updated"
+        "400":
+          description: "Model is inactive"
+
+  /health:
+    get:
+      summary: "Service health check"
+      operationId: "healthCheck"
+      tags: ["System"]
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  database:
+                    type: string
+                  version:
+                    type: string
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: access_token
+
+  schemas:
+    UserRegisterRequest:
+      type: object
+      required: ["email", "password", "full_name"]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 6
+        full_name:
+          type: string
+          minLength: 1
+
+    UserLoginRequest:
+      type: object
+      required: ["email", "password"]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    UserProfileResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        full_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    ConversationCreateRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          default: "Cuộc trò chuyện mới"
+
+    ConversationUpdateRequest:
+      type: object
+      required: ["title"]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 255
+
+    ConversationResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    MessageResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        conversation_id:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: ["user", "assistant"]
+        content:
+          type: string
+        model_used:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    ChatStreamRequest:
+      type: object
+      required: ["content"]
+      properties:
+        content:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        model_override:
+          type: string
+          nullable: true
+
+    AgentModelResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        provider:
+          type: string
+        status:
+          type: string
+          enum: ["ACTIVE", "INACTIVE", "DEGRADED"]
+        is_default:
+          type: boolean
+        context_window:
+          type: integer
+        max_tokens:
+          type: integer
+        supports_streaming:
+          type: boolean
+        has_api_key:
+          type: boolean
+        latency_ms:
+          type: integer
+          nullable: true
+        last_checked_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    ModelTestResponse:
+      type: object
+      properties:
+        model_id:
+          type: string
+        healthy:
+          type: boolean
+        latency_ms:
+          type: integer
+        message:
+          type: string
+        tested_at:
+          type: string
+          format: date-time
+
+    SetDefaultModelRequest:
+      type: object
+      required: ["model_id"]
+      properties:
+        model_id:
+          type: string
+

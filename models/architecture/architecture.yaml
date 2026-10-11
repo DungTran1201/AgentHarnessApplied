@@ -1,0 +1,104 @@
+version: "1.0"
+architecture:
+  id: ARCH-001
+  name: "ai-chan-three-tier-architecture"
+  view: current
+  source_refs:
+    - "ai-frontend"
+    - "ai-backend/src"
+    - "ai-backend/llm"
+    - "ai-infra"
+  components:
+    - id: COMP-001
+      name: "ai-frontend"
+      type: "client-application"
+      responsibilities:
+        - "User Interface rendering & interaction"
+        - "Client-side fast calculation and parsing (Web Workers)"
+        - "Local state cache & streaming chunk rendering"
+        - "Interactive Real-Time Resource Dashboard with Live SSE Charts & Quota Gauges"
+    - id: COMP-002
+      name: "ai-backend-src"
+      type: "service-backend"
+      responsibilities:
+        - "API Gateway, routing, authentication, authorization"
+        - "Database schema, ORM session, migrations"
+        - "Business logic services & lifecycle management"
+        - "Discord OAuth2 flow, state verification, user provisioning & linking"
+        - "Telemetry Interception Middleware, TTFT & Latency logging, User Quota enforcement"
+        - "Server-Sent Events metrics broadcaster & time-series aggregation service"
+        - "Dynamic Agent Model Catalog mutations, parameter validation, fuzzy search, and multi-filter engine"
+    - id: COMP-003
+      name: "ai-backend-llm"
+      type: "llm-engine"
+      responsibilities:
+        - "Multi-provider LLM integrations (OpenAI, Gemini, Anthropic, Ollama, Groq)"
+        - "Prompt templates, system personas, safety guardrails"
+        - "Fallback routing, token cost tracking, and streaming handlers"
+        - "LangChain and LangGraph stateful agent workflow engine (StateGraph)"
+        - "Dynamic provider model loader initialized from environment keys (.env)"
+        - "Multi-provider model inventory, health ping, and latency measurement"
+    - id: COMP-004
+      name: "ai-infra"
+      type: "infrastructure-operations"
+      responsibilities:
+        - "Multi-container orchestration (Docker Compose, Dockerfiles)"
+        - "Reverse proxy, rate limiting, and SSL termination (Nginx)"
+        - "Observability and automated environment bootstrapping"
+  boundaries:
+    - name: "client-boundary"
+      scope: "Browser to Reverse Proxy / API Gateway"
+    - name: "llm-isolation-boundary"
+      scope: "Backend business logic to external LLM provider APIs"
+  dependencies:
+    - from: "ai-frontend"
+      to: "ai-backend-src"
+      protocol: "HTTP/REST, SSE, WebSocket"
+    - from: "ai-backend-src"
+      to: "ai-backend-llm"
+      protocol: "In-process Python module invocation"
+    - from: "ai-backend-llm"
+      to: "external-llm-providers"
+      protocol: "HTTPS / REST API"
+    - from: "ai-infra"
+      to: "ai-frontend"
+      protocol: "Docker / Nginx routing"
+    - from: "ai-infra"
+      to: "ai-backend-src"
+      protocol: "Docker / Network bridge"
+  constraints:
+    - "Zero credentials committed to source control"
+    - "Decoupled LLM integration module from core backend business logic"
+  quality_attributes:
+    - "Low latency client response via streaming & client compute"
+    - "Resilience via automatic LLM provider fallback"
+  decisions:
+    - id: ADR-001
+      title: "Decouple LLM Engine into ai-backend/llm and Core Web in ai-backend/src"
+      status: "approved"
+    - id: ADR-002
+      title: "Three-tier root layout: ai-frontend, ai-backend, ai-infra"
+      status: "approved"
+    - id: ADR-005
+      title: "LangChain and LangGraph Stateful Multi-Provider Agent Architecture Loaded via .env"
+      status: "approved"
+    - id: ADR-006
+      title: "Multi-Provider Agent Model Lifecycle and Management Architecture without Hard Deletion"
+      status: "approved"
+    - id: ADR-007
+      title: "Discord OAuth2 Authorization Code Flow Authentication with CSRF State Guard"
+      status: "approved"
+    - id: ADR-008
+      title: "Real-Time Resource Telemetry Interception, SSE Live Broadcasting & Quota Guard Architecture"
+      status: "approved"
+    - id: ADR-009
+      title: "Extensible Agent Model Management, Mutation Validation, Fuzzy Search & Multi-Attribute Filtering Architecture"
+      status: "approved"
+    - id: ADR-010
+      title: "Bi-directional Discord Identity Binding, Conflict Rejection & Safe Account Unlinking Architecture"
+      status: "approved"
+    - id: ADR-012
+      title: "Discord Bot Multi-Scope Management, Active Model Routing & Unified Quota Sharing Architecture"
+      status: "approved"
+
+

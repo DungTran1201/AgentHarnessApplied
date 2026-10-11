@@ -1,0 +1,21 @@
+version: "1.0"
+change_types:
+  feature:
+    signals: ["add", "new", "support", "introduce", "enable"]
+  bugfix:
+    signals: ["bug", "fix", "broken", "error", "fails", "regression"]
+  refactor:
+    signals: ["refactor", "restructure", "cleanup", "simplify", "rename"]
+  security_change:
+    signals: ["security", "auth", "authorization", "permission", "secret", "credential", "encryption"]
+  infrastructure_change:
+    signals: ["deploy", "docker", "kubernetes", "infra", "pipeline", "production", "ci/cd"]
+signals:
+  business_process: ["workflow", "process", "approval", "registration", "order", "business flow"]
+  api: ["api", "endpoint", "rest", "openapi", "webhook"]
+  data: ["database", "schema", "table", "migration", "storage", "vector"]
+  lifecycle: ["state", "status", "lifecycle", "activate", "disable", "expire"]
+  external_integration: ["discord", "github", "provider", "external api", "webhook"]
+  security: ["token", "api key", "auth", "rbac", "permission", "secret", "prompt injection"]
+  ui: ["screen", "page", "dashboard", "button", "form", "user flow", "ux"]
+  ai_or_agent: ["agent", "llm", "model", "prompt", "tool", "rag", "memory", "fallback"]

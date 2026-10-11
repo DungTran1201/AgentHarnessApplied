@@ -1,0 +1,9 @@
+version: "1.0"
+interaction:
+  id: SEQ-001
+  scenario: ""
+  participants: []
+  messages: []
+  branches: []
+  errors: []
+  source_refs: []
