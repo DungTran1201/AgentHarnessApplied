@@ -39,6 +39,21 @@ export default function HomePage() {
         </div>
 
         <nav style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+          <Link href="/projects" style={{
+            color: 'var(--text-secondary)',
+            textDecoration: 'none',
+            fontSize: '0.9rem',
+            fontWeight: 500,
+            padding: '8px 16px',
+            borderRadius: 'var(--radius-sm)',
+            transition: 'color 0.2s',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '6px'
+          }}>
+            <span>🧩</span>
+            <span>Projects</span>
+          </Link>
           <Link href="/login" style={{
             color: 'var(--text-secondary)',
             textDecoration: 'none',
@@ -199,6 +214,11 @@ export default function HomePage() {
               icon: '🎨',
               title: 'Giao Diện Chuẩn UX & Markdown',
               desc: 'Hỗ trợ định dạng bảng, toán học, tô màu mã nguồn và sao chép code chỉ với một cú nhấp chuột.'
+            },
+            {
+              icon: '🧩',
+              title: 'Visual Workflow Canvas',
+              desc: 'Thiết kế pipeline AI trực quan: Web Input -> Model Node -> Output Node với cơ chế Quota 3 Slots Active và bảo vệ dữ liệu nhạy cảm.'
             }
           ].map((item, idx) => (
             <div key={idx} style={{

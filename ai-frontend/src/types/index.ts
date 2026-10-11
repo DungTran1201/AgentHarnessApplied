@@ -179,3 +179,77 @@ export interface DiscordBotTestDispatchResponse {
   web_synced: boolean;
   conversation_id: string | null;
 }
+
+// ==============================================================================
+// PROJECT MANAGEMENT TYPES (PRJ-MVP)
+// ==============================================================================
+
+export type ProjectStatus = 'ACTIVE' | 'STOP' | 'DEACTIVE' | 'DELETED';
+
+export type NodeType = 'web_input' | 'model' | 'output';
+
+export interface WebInputConfig {
+  max_words: number;
+}
+
+export interface ModelNodeConfig {
+  model_id: string;
+  temperature: number;
+  max_tokens: number;
+}
+
+export interface OutputNodeConfig {
+  streaming: boolean;
+}
+
+export interface GraphNode {
+  id: string;
+  type: NodeType;
+  position: { x: number; y: number };
+  data: {
+    label: string;
+    config: WebInputConfig | ModelNodeConfig | OutputNodeConfig | any;
+  };
+}
+
+export interface GraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  sourceHandle?: string;
+  targetHandle?: string;
+}
+
+export interface GraphData {
+  viewport?: { x: number; y: number; zoom: number };
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
+export interface ProjectQuotaInfo {
+  active_count: number;
+  max_limit: number;
+  remaining_slots: number;
+}
+
+export interface Project {
+  id: string;
+  user_id: string;
+  name: string;
+  description: string | null;
+  status: ProjectStatus;
+  is_valid: boolean;
+  target_model_id: string | null;
+  max_words_limit: number;
+  node_count: number;
+  graph_data?: GraphData | null;
+  last_validated_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectListResponse {
+  items: Project[];
+  total: number;
+  active_quota: ProjectQuotaInfo;
+}

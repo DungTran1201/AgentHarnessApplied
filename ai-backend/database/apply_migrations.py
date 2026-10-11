@@ -98,6 +98,22 @@ def run_migration():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_source ON messages(source)")
             conn.commit()
 
+        # 9. Apply 008_project_management.sql (Projects table & conversations.project_id)
+        migration_008_file = MIGRATIONS_DIR / "008_project_management.sql"
+        if migration_008_file.exists():
+            print(f"Executing {migration_008_file.name} on {db_path.name}...")
+            with open(migration_008_file, "r", encoding="utf-8") as f:
+                cur.executescript(f.read())
+            conn.commit()
+            print(f"Applied 008 migration successfully to {db_path.name}.")
+
+        conv_cols = [c[1] for c in cur.execute("PRAGMA table_info(conversations)").fetchall()]
+        if "project_id" not in conv_cols:
+            print(f"Adding project_id column to conversations in {db_path.name}...")
+            cur.execute("ALTER TABLE conversations ADD COLUMN project_id VARCHAR(36) REFERENCES projects(id) ON DELETE SET NULL")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_conversations_project_id ON conversations(project_id)")
+            conn.commit()
+
         # Verify tables
         tables = [r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
         print(f"Tables in {db_path.name}: {tables}")
@@ -107,6 +123,9 @@ def run_migration():
         if "discord_bot_configs" in tables:
             bot_cfg_count = cur.execute("SELECT COUNT(*) FROM discord_bot_configs").fetchone()[0]
             print(f"Total discord bot configs in {db_path.name}: {bot_cfg_count}")
+        if "projects" in tables:
+            project_count = cur.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
+            print(f"Total projects in {db_path.name}: {project_count}")
             
         conn.close()
 

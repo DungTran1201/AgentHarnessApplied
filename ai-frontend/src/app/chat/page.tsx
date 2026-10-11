@@ -3,7 +3,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { AgentModel } from '@/types';
+import { AgentModel, Project } from '@/types';
+import { ProjectService } from '@/services/projectService';
 
 interface Conversation {
   id: string;
@@ -136,6 +137,11 @@ export default function ChatWorkspacePage() {
   const [selectedModelId, setSelectedModelId] = useState<string>('gemini-3.8-flash');
   const [showModelDropdown, setShowModelDropdown] = useState(false);
 
+  // Active Projects state (FR-012, FR-013, FR-014)
+  const [activeProjects, setActiveProjects] = useState<Project[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState<string>('');
+  const [showProjectDropdown, setShowProjectDropdown] = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatScrollContainerRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -180,6 +186,19 @@ export default function ChatWorkspacePage() {
       }
     };
     fetchActiveModels();
+  }, []);
+
+  // Load Active Projects for workflow selector
+  useEffect(() => {
+    const fetchActiveProjects = async () => {
+      try {
+        const projects = await ProjectService.getActiveProjects();
+        setActiveProjects(projects);
+      } catch {
+        // Fallback
+      }
+    };
+    fetchActiveProjects();
   }, []);
 
   // 2. Tải danh sách cuộc trò chuyện
@@ -361,6 +380,90 @@ export default function ChatWorkspacePage() {
       textareaRef.current.style.height = '48px';
     }
 
+    // Nếu người dùng đang chọn Project Workflow
+    if (selectedProjectId) {
+      const activeProj = activeProjects.find(p => p.id === selectedProjectId);
+      if (activeProj) {
+        const maxWords = activeProj.max_words_limit || (activeProj.graph_data?.nodes.find(n => n.type === 'web_input')?.data?.config as any)?.max_words_limit;
+        if (maxWords && typeof maxWords === 'number') {
+          const wordCount = textToSend.trim().split(/\s+/).filter(Boolean).length;
+          if (wordCount > maxWords) {
+            alert(`⚠️ Số lượng từ (${wordCount}) vượt quá giới hạn cấu hình của Project (${maxWords} từ).`);
+            setMessages(prev => prev.filter(m => m.id !== assistantPlaceholderId && m.id !== userMsg.id));
+            setIsStreaming(false);
+            return;
+          }
+        }
+      }
+
+      let accumulatedText = '';
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
+      try {
+        await ProjectService.streamProjectChat(
+          selectedProjectId,
+          textToSend.trim(),
+          targetConvId,
+          (chunk: string) => {
+            accumulatedText += chunk;
+            setMessages(prev =>
+              prev.map(m =>
+                m.id === assistantPlaceholderId
+                  ? { ...m, content: accumulatedText }
+                  : m
+              )
+            );
+          },
+          (doneData?: any) => {
+            if (doneData?.conversation_id && !activeConvId) {
+              setActiveConvId(doneData.conversation_id);
+            }
+          },
+          (err: any) => {
+            if (err?.name === 'AbortError') {
+              console.log('Project stream aborted by user.');
+              return;
+            }
+            const errMsg = err?.message || 'Đã xảy ra lỗi khi xử lý luồng Project.';
+            accumulatedText = `⚠️ **Lỗi Workflow:** ${errMsg}`;
+            setMessages(prev =>
+              prev.map(m =>
+                m.id === assistantPlaceholderId
+                  ? { ...m, content: accumulatedText }
+                  : m
+              )
+            );
+          },
+          controller.signal
+        );
+      } catch (err: any) {
+        if (err?.name === 'AbortError') {
+          console.log('Project stream aborted by user.');
+        } else {
+          setMessages(prev =>
+            prev.map(m =>
+              m.id === assistantPlaceholderId
+                ? { ...m, content: m.content || `⚠️ Lỗi kết nối luồng Project: ${err.message}` }
+                : m
+            )
+          );
+        }
+      } finally {
+        setIsStreaming(false);
+        abortControllerRef.current = null;
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === assistantPlaceholderId
+              ? { ...m, isStreaming: false, content: m.content || 'Không nhận được phản hồi từ workflow.' }
+              : m
+          )
+        );
+        fetchConversations();
+      }
+      return;
+    }
+
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
@@ -509,7 +612,7 @@ export default function ChatWorkspacePage() {
         zIndex: 20
       }}>
         {/* Sidebar Header */}
-        <div style={{ padding: '16px', borderBottom: '1px solid var(--border-subtle)' }}>
+        <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border-subtle)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <button
             type="button"
             onClick={handleCreateNewConversation}
@@ -519,12 +622,12 @@ export default function ChatWorkspacePage() {
               alignItems: 'center',
               justifyContent: 'center',
               gap: '8px',
-              padding: '11px',
+              padding: '10px',
               background: 'var(--accent-gradient)',
               border: 'none',
               borderRadius: 'var(--radius-sm)',
               color: '#ffffff',
-              fontSize: '0.925rem',
+              fontSize: '0.9rem',
               fontWeight: 600,
               cursor: 'pointer',
               boxShadow: 'var(--accent-glow)'
@@ -533,6 +636,28 @@ export default function ChatWorkspacePage() {
             <span>+</span>
             <span>Cuộc trò chuyện mới</span>
           </button>
+
+          <Link
+            href="/projects"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              padding: '8px',
+              background: 'rgba(255, 255, 255, 0.04)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-sm)',
+              color: 'var(--text-secondary)',
+              fontSize: '0.82rem',
+              fontWeight: 500,
+              textDecoration: 'none',
+              transition: 'background 0.2s'
+            }}
+          >
+            <span>🧩</span>
+            <span>Quản lý Projects ({activeProjects.length} Active)</span>
+          </Link>
         </div>
 
         {/* Conversation List */}
@@ -702,6 +827,25 @@ export default function ChatWorkspacePage() {
             </div>
           </Link>
           <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+            <Link
+              href="/projects"
+              id="btn-sidebar-goto-projects"
+              title="Quản lý Visual Canvas Projects"
+              aria-label="Quản lý Visual Canvas Projects"
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--text-muted)',
+                fontSize: '1rem',
+                cursor: 'pointer',
+                padding: '6px',
+                display: 'flex',
+                alignItems: 'center',
+                textDecoration: 'none'
+              }}
+            >
+              🧩
+            </Link>
             <Link
               href="/bot/discord"
               id="btn-sidebar-goto-bot"
@@ -895,6 +1039,138 @@ export default function ChatWorkspacePage() {
                     >
                       <span>⚙️</span>
                       <span>Quản lý & Kích hoạt Models</span>
+                    </Link>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Project Workflow Selector Dropdown */}
+            <div style={{ position: 'relative' }}>
+              <button
+                type="button"
+                onClick={() => setShowProjectDropdown(!showProjectDropdown)}
+                title="Chọn quy trình Project Active để chạy hội thoại"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '5px 12px',
+                  borderRadius: 'var(--radius-sm)',
+                  background: selectedProjectId ? 'rgba(16, 185, 129, 0.15)' : 'rgba(255, 255, 255, 0.05)',
+                  border: selectedProjectId ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid var(--border-subtle)',
+                  fontSize: '0.78rem',
+                  color: selectedProjectId ? '#34d399' : 'var(--text-secondary)',
+                  fontWeight: 600,
+                  cursor: 'pointer'
+                }}
+              >
+                <span>🧩</span>
+                <span>
+                  {selectedProjectId
+                    ? (activeProjects.find(p => p.id === selectedProjectId)?.name || 'Project Active')
+                    : 'Chat Tiêu Chuẩn'}
+                </span>
+                <span style={{ fontSize: '0.65rem', marginLeft: '2px' }}>▼</span>
+              </button>
+
+              {showProjectDropdown && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: '120%',
+                    right: 0,
+                    minWidth: '270px',
+                    background: 'rgba(15, 23, 42, 0.95)',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: 'var(--radius-md)',
+                    boxShadow: '0 12px 30px rgba(0, 0, 0, 0.5)',
+                    padding: '8px',
+                    zIndex: 100,
+                    backdropFilter: 'blur(16px)'
+                  }}
+                >
+                  <div style={{ padding: '6px 10px', fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    Chọn Workflow ({activeProjects.length}/3 Active)
+                  </div>
+
+                  <div
+                    onClick={() => {
+                      setSelectedProjectId('');
+                      setShowProjectDropdown(false);
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '8px 10px',
+                      borderRadius: 'var(--radius-sm)',
+                      background: selectedProjectId === '' ? 'var(--bg-active)' : 'transparent',
+                      border: selectedProjectId === '' ? '1px solid rgba(99, 102, 241, 0.3)' : '1px solid transparent',
+                      cursor: 'pointer',
+                      marginBottom: '4px'
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: '0.82rem', fontWeight: selectedProjectId === '' ? 700 : 500, color: '#fff' }}>
+                        Chat Tiêu Chuẩn
+                      </div>
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                        Trò chuyện trực tiếp qua AI Model
+                      </div>
+                    </div>
+                    {selectedProjectId === '' && <span style={{ color: '#818cf8', fontSize: '0.85rem' }}>✓</span>}
+                  </div>
+
+                  {activeProjects.map(proj => (
+                    <div
+                      key={proj.id}
+                      onClick={() => {
+                        setSelectedProjectId(proj.id);
+                        setShowProjectDropdown(false);
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '8px 10px',
+                        borderRadius: 'var(--radius-sm)',
+                        background: selectedProjectId === proj.id ? 'var(--bg-active)' : 'transparent',
+                        border: selectedProjectId === proj.id ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid transparent',
+                        cursor: 'pointer',
+                        marginBottom: '4px'
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontSize: '0.82rem', fontWeight: selectedProjectId === proj.id ? 700 : 500, color: '#fff' }}>
+                          {proj.name}
+                        </div>
+                        <div style={{ fontSize: '0.7rem', color: '#34d399' }}>
+                          🟢 ACTIVE • 3-Node Workflow
+                        </div>
+                      </div>
+                      {selectedProjectId === proj.id && <span style={{ color: '#34d399', fontSize: '0.85rem' }}>✓</span>}
+                    </div>
+                  ))}
+
+                  <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: '6px', paddingTop: '6px' }}>
+                    <Link
+                      href="/projects"
+                      onClick={() => setShowProjectDropdown(false)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '6px 10px',
+                        borderRadius: 'var(--radius-sm)',
+                        color: '#38bdf8',
+                        fontSize: '0.78rem',
+                        fontWeight: 600,
+                        textDecoration: 'none'
+                      }}
+                    >
+                      <span>🧩</span>
+                      <span>Quản lý Visual Canvas Projects</span>
                     </Link>
                   </div>
                 </div>
@@ -1200,6 +1476,43 @@ export default function ChatWorkspacePage() {
                 >
                   <span style={{ fontSize: '0.8rem' }}>■</span>
                   <span>Dừng phản hồi</span>
+                </button>
+              </div>
+            )}
+
+            {/* Active Project Workflow Indicator Banner */}
+            {selectedProjectId && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '6px 12px',
+                marginBottom: '8px',
+                borderRadius: 'var(--radius-sm)',
+                background: 'rgba(16, 185, 129, 0.12)',
+                border: '1px solid rgba(16, 185, 129, 0.3)',
+                fontSize: '0.8rem',
+                color: '#34d399'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span>🧩</span>
+                  <span>
+                    Chạy qua Workflow: <strong>{activeProjects.find(p => p.id === selectedProjectId)?.name}</strong>
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedProjectId('')}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: 'var(--text-muted)',
+                    cursor: 'pointer',
+                    fontSize: '0.75rem',
+                    textDecoration: 'underline'
+                  }}
+                >
+                  Quay lại Chat Tiêu Chuẩn ✕
                 </button>
               </div>
             )}

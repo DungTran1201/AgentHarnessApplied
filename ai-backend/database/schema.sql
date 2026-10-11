@@ -195,3 +195,36 @@ CREATE TABLE IF NOT EXISTS user_quotas (
 CREATE INDEX IF NOT EXISTS idx_user_quotas_reset ON user_quotas(reset_at);
 
 
+-- ==============================================================================
+-- 6. BẢNG QUẢN LÝ DỰ ÁN (PROJECTS - PROJECT MANAGEMENT MVP)
+-- ==============================================================================
+
+CREATE TABLE IF NOT EXISTS projects (
+    id VARCHAR(36) PRIMARY KEY,
+    user_id VARCHAR(36) NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    description VARCHAR(500),
+    status VARCHAR(20) NOT NULL DEFAULT 'STOP' CHECK (status IN ('ACTIVE', 'STOP', 'DEACTIVE', 'DELETED')),
+    graph_data TEXT,
+    target_model_id VARCHAR(100),
+    max_words_limit INTEGER DEFAULT 500,
+    is_valid BOOLEAN NOT NULL DEFAULT 0 CHECK (is_valid IN (0, 1)),
+    last_validated_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (target_model_id) REFERENCES models(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_projects_user_updated ON projects(user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_projects_user_status ON projects(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_projects_target_model ON projects(target_model_id);
+
+CREATE TRIGGER IF NOT EXISTS trg_projects_updated_at
+AFTER UPDATE ON projects
+FOR EACH ROW
+BEGIN
+    UPDATE projects SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
+END;
+
+
