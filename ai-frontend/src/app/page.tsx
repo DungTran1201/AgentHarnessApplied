@@ -232,8 +232,8 @@ export default function HomePage() {
             },
             {
               icon: '🧩',
-              title: 'Visual Workflow Canvas',
-              desc: 'Thiết kế pipeline AI trực quan: Web Input -> Model Node -> Output Node với cơ chế Quota 3 Slots Active và bảo vệ dữ liệu nhạy cảm.'
+              title: 'Visual Project Editor',
+              desc: 'Thiết kế đồ thị dự án trực quan: Web Input, Model Node, System Prompt và Output Node với xác thực chu trình DAG an toàn.'
             }
           ].map((item, idx) => (
             <div key={idx} style={{
