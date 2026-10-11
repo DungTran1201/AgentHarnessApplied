@@ -1,10 +1,19 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter, useParams } from 'next/navigation';
-import { Project, GraphData, GraphNode, GraphEdge, NodeType, AgentModel } from '@/types';
+import {
+  Project,
+  GraphData,
+  GraphNode,
+  GraphEdge,
+  NodeType,
+  AgentModel,
+  SystemPromptSummary
+} from '@/types';
 import { ProjectService } from '@/services/projectService';
+import { SystemPromptService } from '@/services/systemPromptService';
 
 export default function ProjectEditorPage() {
   const router = useRouter();
@@ -20,6 +29,24 @@ export default function ProjectEditorPage() {
 
   // Available models from catalog
   const [availableModels, setAvailableModels] = useState<AgentModel[]>([]);
+
+  // Available system prompts from library (MVP)
+  const [availablePrompts, setAvailablePrompts] = useState<SystemPromptSummary[]>([]);
+  const [loadingPrompts, setLoadingPrompts] = useState(false);
+
+  // Node Catalog UI state: Collapsible groups, Search & Category Filter
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({
+    input: false,
+    system_prompt: false,
+    model: false,
+    output: false
+  });
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterCategory, setFilterCategory] = useState<'all' | 'input' | 'system_prompt' | 'model' | 'output'>('all');
+
+  const toggleGroup = (key: string) => {
+    setCollapsedGroups(prev => ({ ...prev, [key]: !prev[key] }));
+  };
 
   // Canvas State: nodes, edges, viewport
   const [nodes, setNodes] = useState<GraphNode[]>([]);
@@ -52,18 +79,21 @@ export default function ProjectEditorPage() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  // Load project & models on mount
+  // Load project, models & prompts on mount
   useEffect(() => {
     const fetchData = async () => {
       try {
         setLoading(true);
-        const [projData, modelsRes] = await Promise.all([
+        setLoadingPrompts(true);
+        const [projData, modelsRes, promptsRes] = await Promise.all([
           ProjectService.getProject(projectId),
-          fetch('/api/v1/models').then(r => r.ok ? r.json() : []).catch(() => [])
+          fetch('/api/v1/models').then(r => r.ok ? r.json() : []).catch(() => []),
+          SystemPromptService.getPrompts().then(r => r.items).catch(() => [])
         ]);
 
         setProject(projData);
         setAvailableModels(modelsRes.filter((m: AgentModel) => m.status === 'ACTIVE'));
+        setAvailablePrompts(promptsRes || []);
 
         if (projData.graph_data && projData.graph_data.nodes && projData.graph_data.nodes.length > 0) {
           setNodes(projData.graph_data.nodes);
@@ -102,8 +132,8 @@ export default function ProjectEditorPage() {
           ];
 
           const initialEdges: GraphEdge[] = [
-            { id: 'edge_in_model', source: 'node_input_1', target: 'node_model_1' },
-            { id: 'edge_model_out', source: 'node_model_1', target: 'node_output_1' }
+            { id: 'edge_in_model', source: 'node_input_1', target: 'node_model_1', type: 'data_flow' },
+            { id: 'edge_model_out', source: 'node_model_1', target: 'node_output_1', type: 'data_flow' }
           ];
 
           setNodes(initialNodes);
@@ -114,28 +144,41 @@ export default function ProjectEditorPage() {
         showToast('error', err.message || 'Lỗi khi tải project');
       } finally {
         setLoading(false);
+        setLoadingPrompts(false);
       }
     };
 
     fetchData();
   }, [projectId]);
 
-  // Real-time graph validation
+  // Real-time graph validation (BR-SPN-001..005)
   const checkGraphValidity = () => {
-    if (nodes.length !== 3 || edges.length !== 2) return false;
     const inputNode = nodes.find(n => n.type === 'web_input');
     const modelNode = nodes.find(n => n.type === 'model');
     const outputNode = nodes.find(n => n.type === 'output');
+    const promptNodes = nodes.filter(n => n.type === 'system_prompt');
 
     if (!inputNode || !modelNode || !outputNode) return false;
+    if (promptNodes.length > 1) return false;
 
     const hasInToModel = edges.some(e => e.source === inputNode.id && e.target === modelNode.id);
     const hasModelToOut = edges.some(e => e.source === modelNode.id && e.target === outputNode.id);
 
-    return hasInToModel && hasModelToOut;
+    if (!hasInToModel || !hasModelToOut) return false;
+
+    if (promptNodes.length === 1) {
+      const pNode = promptNodes[0];
+      const hasPromptToModel = edges.some(e => e.source === pNode.id && e.target === modelNode.id);
+      if (!hasPromptToModel) return false;
+      if (!pNode.data.config?.prompt_id) return false;
+    }
+
+    const expectedEdgeCount = promptNodes.length === 1 ? 3 : 2;
+    return edges.length === expectedEdgeCount;
   };
 
   const isGraphValid = checkGraphValidity();
+  const hasSystemPromptNode = nodes.some(n => n.type === 'system_prompt');
 
   // Handle Save Graph
   const handleSave = async () => {
@@ -165,7 +208,7 @@ export default function ProjectEditorPage() {
     try {
       if (targetStatus === 'ACTIVE') {
         if (!isGraphValid) {
-          showToast('error', 'Graph chưa hợp lệ! Cần đủ 3 node và 2 dây nối Input -> Model -> Output.');
+          showToast('error', 'Graph chưa hợp lệ! Vui lòng nối Input → Model → Output và System Prompt (nếu có).');
           return;
         }
         await ProjectService.activateProject(projectId);
@@ -184,8 +227,8 @@ export default function ProjectEditorPage() {
     }
   };
 
-  // Add node from palette
-  const handleAddNode = (type: NodeType) => {
+  // Add standard node (Input, Model, Output)
+  const handleAddStandardNode = (type: NodeType) => {
     if (nodes.some(n => n.type === type)) {
       showToast('error', `Mỗi project chỉ được chứa tối đa 1 ${type === 'web_input' ? 'Web Input' : type === 'model' ? 'Model' : 'Output'} Node.`);
       return;
@@ -195,13 +238,15 @@ export default function ProjectEditorPage() {
     const defaultLabels: Record<NodeType, string> = {
       web_input: 'Web Input',
       model: 'Model LLM',
-      output: 'Web Output'
+      output: 'Web Output',
+      system_prompt: 'System Prompt'
     };
 
     const defaultConfigs: Record<NodeType, any> = {
       web_input: { max_words: 500 },
       model: { model_id: availableModels[0]?.id || 'gemini-3.8-flash', temperature: 0.7, max_tokens: 2048 },
-      output: { streaming: true }
+      output: { streaming: true },
+      system_prompt: {}
     };
 
     const posX = type === 'web_input' ? 100 : type === 'model' ? 420 : 740;
@@ -222,6 +267,34 @@ export default function ProjectEditorPage() {
     setSelectedNodeId(newId);
   };
 
+  // Add System Prompt Node from Prompt Library (MVP - DEC-SPN-01, DEC-SPN-02)
+  const handleAddPromptNode = (prompt: SystemPromptSummary) => {
+    if (nodes.some(n => n.type === 'system_prompt')) {
+      showToast('error', 'Mỗi project chỉ được chứa tối đa 1 System Prompt Node trong MVP. Bạn có thể xóa node cũ hoặc chọn prompt khác trong bảng cấu hình.');
+      return;
+    }
+
+    const newId = `node_prompt_${Date.now()}`;
+    const newNode: GraphNode = {
+      id: newId,
+      type: 'system_prompt',
+      position: { x: 100, y: 320 },
+      data: {
+        label: prompt.name,
+        config: {
+          prompt_id: prompt.id,
+          name: prompt.name,
+          description: prompt.description
+        }
+      }
+    };
+
+    setNodes(prev => [...prev, newNode]);
+    setHasUnsavedChanges(true);
+    setSelectedNodeId(newId);
+    showToast('success', `Đã thêm System Prompt: "${prompt.name}" vào Canvas!`);
+  };
+
   // Delete node
   const handleDeleteNode = (id: string) => {
     setNodes(prev => prev.filter(n => n.id !== id));
@@ -239,7 +312,11 @@ export default function ProjectEditorPage() {
 
   // Canvas Mouse Down: Detect node drag or canvas pan
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest('.node-card') || (e.target as HTMLElement).closest('.handle-circle') || (e.target as HTMLElement).closest('.config-drawer')) {
+    if (
+      (e.target as HTMLElement).closest('.node-card') ||
+      (e.target as HTMLElement).closest('.handle-circle') ||
+      (e.target as HTMLElement).closest('.config-drawer')
+    ) {
       return;
     }
 
@@ -315,8 +392,8 @@ export default function ProjectEditorPage() {
     setConnectingSourceNodeId(nodeId);
   };
 
-  // Finish connection on a target handle
-  const handleTargetHandleMouseUp = (e: React.MouseEvent, targetNodeId: string) => {
+  // Finish connection on a target handle (with Typed Connection rules)
+  const handleTargetHandleMouseUp = (e: React.MouseEvent, targetNodeId: string, targetHandle: 'in' | 'system_instruction') => {
     e.stopPropagation();
     if (!connectingSourceNodeId || connectingSourceNodeId === targetNodeId) {
       setConnectingSourceNodeId(null);
@@ -331,28 +408,60 @@ export default function ProjectEditorPage() {
       return;
     }
 
-    // Quy tắc hướng: Web Input -> Model và Model -> Output
+    // Quy tắc kết nối typed ports (BR-SPN-001..003)
     let isValidPair = false;
-    if (srcNode.type === 'web_input' && tgtNode.type === 'model') isValidPair = true;
-    if (srcNode.type === 'model' && tgtNode.type === 'output') isValidPair = true;
+    let edgeType = 'data_flow';
+
+    if (srcNode.type === 'web_input' && tgtNode.type === 'model' && targetHandle === 'in') {
+      isValidPair = true;
+      edgeType = 'data_flow';
+    } else if (srcNode.type === 'system_prompt' && tgtNode.type === 'model' && targetHandle === 'system_instruction') {
+      isValidPair = true;
+      edgeType = 'system_instruction';
+    } else if (srcNode.type === 'model' && tgtNode.type === 'output' && targetHandle === 'in') {
+      isValidPair = true;
+      edgeType = 'data_flow';
+    }
 
     if (!isValidPair) {
-      showToast('error', `Không thể kết nối từ ${srcNode.type} sang ${tgtNode.type}. Chiều hợp lệ: Web Input → Model → Output.`);
+      if (srcNode.type === 'system_prompt' && targetHandle === 'in') {
+        showToast('error', 'System Prompt Node phải nối vào cổng "Cổng Chỉ Dẫn Hệ Thống" (màu cam) của Model Node.');
+      } else if (srcNode.type === 'web_input' && targetHandle === 'system_instruction') {
+        showToast('error', 'Web Input Node phải nối vào cổng "Cổng Nhận Dữ Liệu" (màu xanh) của Model Node.');
+      } else {
+        showToast('error', `Không thể kết nối ${srcNode.type} sang ${tgtNode.type}. Kết nối hợp lệ: Web Input → Model, System Prompt → Model, Model → Output.`);
+      }
       setConnectingSourceNodeId(null);
       return;
     }
 
-    // Check duplicate
+    // Kiểm tra trùng lặp
     if (edges.some(e => e.source === srcNode.id && e.target === tgtNode.id)) {
       setConnectingSourceNodeId(null);
       return;
     }
 
-    // Gỡ kết nối cũ nếu node đó đã có cạnh nối tương ứng
+    // Kiểm tra giới hạn: Model chỉ nhận tối đa 1 System Prompt Node (DEC-SPN-02)
+    if (srcNode.type === 'system_prompt') {
+      const existingPromptEdge = edges.find(
+        e => e.target === tgtNode.id && nodes.find(n => n.id === e.source)?.type === 'system_prompt'
+      );
+      if (existingPromptEdge && existingPromptEdge.source !== srcNode.id) {
+        showToast('error', 'Model Node đã có 1 System Prompt kết nối (giới hạn tối đa 0..1 trong MVP).');
+        setConnectingSourceNodeId(null);
+        return;
+      }
+    }
+
+    // Gỡ kết nối cũ cho cùng loại handle để thay thế liền mạch
     const newEdges = edges.filter(e => {
       if (srcNode.type === 'web_input' && e.source === srcNode.id) return false;
+      if (srcNode.type === 'system_prompt' && e.source === srcNode.id) return false;
       if (srcNode.type === 'model' && e.source === srcNode.id) return false;
-      if (tgtNode.type === 'model' && e.target === tgtNode.id) return false;
+      if (tgtNode.type === 'model') {
+        if (srcNode.type === 'web_input' && nodes.find(n => n.id === e.source)?.type === 'web_input') return false;
+        if (srcNode.type === 'system_prompt' && nodes.find(n => n.id === e.source)?.type === 'system_prompt') return false;
+      }
       if (tgtNode.type === 'output' && e.target === tgtNode.id) return false;
       return true;
     });
@@ -360,13 +469,16 @@ export default function ProjectEditorPage() {
     const newEdge: GraphEdge = {
       id: `edge_${Date.now()}`,
       source: srcNode.id,
-      target: tgtNode.id
+      target: tgtNode.id,
+      sourceHandle: srcNode.type === 'system_prompt' ? 'prompt_out' : 'out',
+      targetHandle: targetHandle,
+      type: edgeType
     };
 
     setEdges([...newEdges, newEdge]);
     setConnectingSourceNodeId(null);
     setHasUnsavedChanges(true);
-    showToast('success', `Đã kết nối ${srcNode.data.label} → ${tgtNode.data.label}`);
+    showToast('success', `Đã kết nối: ${srcNode.data.label} → ${tgtNode.data.label} (${edgeType})`);
   };
 
   // Selected node config object
@@ -396,6 +508,16 @@ export default function ProjectEditorPage() {
   // Node dimensions for Bézier curves calculation
   const NODE_WIDTH = 220;
   const NODE_HEIGHT = 100;
+
+  // Filtered System Prompts based on search query
+  const filteredPrompts = useMemo(() => {
+    if (!searchQuery.trim()) return availablePrompts;
+    const q = searchQuery.toLowerCase().trim();
+    return availablePrompts.filter(p =>
+      p.name.toLowerCase().includes(q) ||
+      (p.description && p.description.toLowerCase().includes(q))
+    );
+  }, [availablePrompts, searchQuery]);
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#0a0f1d', color: '#fff', overflow: 'hidden' }}>
@@ -465,7 +587,7 @@ export default function ProjectEditorPage() {
           display: 'flex',
           alignItems: 'center',
           gap: '6px',
-          padding: '4px 12px',
+          padding: '4px 14px',
           borderRadius: '20px',
           background: isGraphValid ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)',
           border: `1px solid ${isGraphValid ? '#22c55e' : '#ef4444'}`,
@@ -474,12 +596,16 @@ export default function ProjectEditorPage() {
           color: isGraphValid ? '#4ade80' : '#f87171'
         }}>
           <span>{isGraphValid ? '✓' : '⚠'}</span>
-          <span>{isGraphValid ? 'Graph Hợp Lệ' : 'Thiếu Kết Nối (3 Node)'}</span>
+          <span>
+            {isGraphValid
+              ? (hasSystemPromptNode ? 'Graph Hợp Lệ (+ System Prompt)' : 'Graph Hợp Lệ (3 Node Cơ Bản)')
+              : 'Thiếu Kết Nối Graph'}
+          </span>
         </div>
 
         {/* Right: Actions */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          {/* Status Dropdown/Toggle */}
+          {/* Status Dropdown */}
           {project && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Trạng thái:</span>
@@ -531,84 +657,366 @@ export default function ProjectEditorPage() {
 
       {/* Editor Body */}
       <div style={{ flex: 1, display: 'flex', position: 'relative', overflow: 'hidden' }}>
-        {/* Left Toolbar: Node Palette */}
+        {/* Left Toolbar: Node Catalog with 4 Categories, Search & Filter (BR-SPN-001) */}
         <aside style={{
-          width: '240px',
+          width: '280px',
           borderRight: '1px solid rgba(255, 255, 255, 0.08)',
-          background: 'rgba(15, 23, 42, 0.65)',
-          backdropFilter: 'blur(8px)',
-          padding: '1.25rem',
+          background: 'rgba(15, 23, 42, 0.75)',
+          backdropFilter: 'blur(12px)',
+          padding: '1rem',
           display: 'flex',
           flexDirection: 'column',
-          gap: '1rem',
-          zIndex: 20
+          gap: '0.75rem',
+          zIndex: 20,
+          overflowY: 'auto'
         }}>
+          {/* Header Title */}
           <div>
-            <h4 style={{ margin: '0 0 0.25rem 0', fontSize: '0.85rem', textTransform: 'uppercase', color: '#94a3b8', letterSpacing: '0.05em' }}>
-              Thư Viện Node (MVP)
+            <h4 style={{ margin: '0 0 0.2rem 0', fontSize: '0.85rem', textTransform: 'uppercase', color: '#94a3b8', letterSpacing: '0.05em', fontWeight: 700 }}>
+              Node Catalog
             </h4>
-            <p style={{ margin: 0, fontSize: '0.75rem', color: '#64748b' }}>
-              Kéo hoặc nhấn để thêm vào Canvas
+            <p style={{ margin: 0, fontSize: '0.72rem', color: '#64748b' }}>
+              4 nhóm node • Kéo hoặc nhấn để thêm vào Canvas
             </p>
           </div>
 
-          {[
-            {
-              type: 'web_input' as NodeType,
-              title: 'Web Input Node',
-              icon: '📥',
-              color: '#06b6d4',
-              desc: 'Nhận câu hỏi từ Web Chat (giới hạn số từ)'
-            },
-            {
-              type: 'model' as NodeType,
-              title: 'Model LLM Node',
-              icon: '🧠',
-              color: '#a855f7',
-              desc: 'Xử lý suy luận AI thông qua Provider'
-            },
-            {
-              type: 'output' as NodeType,
-              title: 'Web Output Node',
-              icon: '💬',
-              color: '#10b981',
-              desc: 'Định dạng phản hồi streaming cho user'
-            }
-          ].map(p => {
-            const alreadyExists = nodes.some(n => n.type === p.type);
-            return (
-              <div
-                key={p.type}
-                onClick={() => handleAddNode(p.type)}
+          {/* Search Bar at Top of Catalog */}
+          <div style={{ position: 'relative' }}>
+            <input
+              type="text"
+              placeholder="🔍 Tìm node hoặc prompt..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '7px 28px 7px 10px',
+                borderRadius: '6px',
+                border: '1px solid rgba(255, 255, 255, 0.12)',
+                background: 'rgba(0, 0, 0, 0.35)',
+                color: '#fff',
+                fontSize: '0.8rem',
+                outline: 'none'
+              }}
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
                 style={{
-                  background: 'rgba(255, 255, 255, 0.03)',
-                  border: `1px solid ${alreadyExists ? 'rgba(255, 255, 255, 0.08)' : p.color}`,
-                  borderRadius: '10px',
-                  padding: '12px',
-                  cursor: alreadyExists ? 'not-allowed' : 'pointer',
-                  opacity: alreadyExists ? 0.5 : 1,
-                  transition: 'all 0.2s',
-                  position: 'relative'
+                  position: 'absolute',
+                  right: '8px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#94a3b8',
+                  cursor: 'pointer',
+                  fontSize: '0.8rem'
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                  <span style={{ fontSize: '1.2rem' }}>{p.icon}</span>
-                  <span style={{ fontWeight: 600, fontSize: '0.9rem', color: '#fff' }}>{p.title}</span>
-                </div>
-                <div style={{ fontSize: '0.75rem', color: '#94a3b8', lineHeight: '1.3' }}>
-                  {p.desc}
-                </div>
-                {alreadyExists && (
-                  <span style={{ position: 'absolute', top: '8px', right: '8px', fontSize: '0.65rem', background: '#334155', padding: '2px 6px', borderRadius: '4px' }}>
-                    Đã có
+                ✕
+              </button>
+            )}
+          </div>
+
+          {/* Category Filter Pills */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+            {[
+              { id: 'all', label: 'Tất cả' },
+              { id: 'input', label: 'Input' },
+              { id: 'system_prompt', label: 'Prompt' },
+              { id: 'model', label: 'Model' },
+              { id: 'output', label: 'Output' }
+            ].map(f => (
+              <button
+                key={f.id}
+                onClick={() => setFilterCategory(f.id as any)}
+                style={{
+                  padding: '3px 8px',
+                  borderRadius: '12px',
+                  border: filterCategory === f.id ? '1px solid #a855f7' : '1px solid rgba(255, 255, 255, 0.1)',
+                  background: filterCategory === f.id ? 'rgba(168, 85, 247, 0.25)' : 'rgba(255, 255, 255, 0.04)',
+                  color: filterCategory === f.id ? '#e9d5ff' : '#94a3b8',
+                  fontSize: '0.7rem',
+                  fontWeight: 600,
+                  cursor: 'pointer'
+                }}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+
+          {/* 4 Collapsible Accordion Groups */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.25rem' }}>
+
+            {/* Group 1: INPUT */}
+            {(filterCategory === 'all' || filterCategory === 'input') && (
+              <div style={{ border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '8px', overflow: 'hidden' }}>
+                <div
+                  onClick={() => toggleGroup('input')}
+                  style={{
+                    padding: '8px 12px',
+                    background: 'rgba(6, 182, 212, 0.1)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    cursor: 'pointer',
+                    userSelect: 'none'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span>📥</span>
+                    <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#38bdf8' }}>Input (1)</span>
+                  </div>
+                  <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
+                    {collapsedGroups['input'] && !searchQuery ? '▶' : '▼'}
                   </span>
+                </div>
+
+                {(!collapsedGroups['input'] || searchQuery) && (
+                  <div style={{ padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px', background: 'rgba(0, 0, 0, 0.2)' }}>
+                    {(() => {
+                      const alreadyExists = nodes.some(n => n.type === 'web_input');
+                      const matchesSearch = !searchQuery || 'web input nhận câu hỏi'.toLowerCase().includes(searchQuery.toLowerCase());
+                      if (!matchesSearch) return null;
+
+                      return (
+                        <div
+                          onClick={() => handleAddStandardNode('web_input')}
+                          style={{
+                            background: 'rgba(255, 255, 255, 0.03)',
+                            border: `1px solid ${alreadyExists ? 'rgba(255, 255, 255, 0.08)' : '#06b6d4'}`,
+                            borderRadius: '8px',
+                            padding: '8px',
+                            cursor: alreadyExists ? 'not-allowed' : 'pointer',
+                            opacity: alreadyExists ? 0.5 : 1
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <span style={{ fontWeight: 600, fontSize: '0.8rem', color: '#fff' }}>Web Input Node</span>
+                            {alreadyExists && <span style={{ fontSize: '0.65rem', background: '#334155', padding: '1px 4px', borderRadius: '4px' }}>Đã có</span>}
+                          </div>
+                          <div style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: '2px' }}>
+                            Nhận câu hỏi từ Web Chat (giới hạn số từ)
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
                 )}
               </div>
-            );
-          })}
+            )}
 
-          <div style={{ marginTop: 'auto', padding: '10px', background: 'rgba(0, 0, 0, 0.3)', borderRadius: '8px', fontSize: '0.75rem', color: '#94a3b8' }}>
-            💡 <strong>Mẹo:</strong> Nối cổng tròn bên phải của Web Input vào cổng trái Model, và cổng phải Model vào cổng trái Output.
+            {/* Group 2: SYSTEM PROMPT (MVP) */}
+            {(filterCategory === 'all' || filterCategory === 'system_prompt') && (
+              <div style={{ border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '8px', overflow: 'hidden' }}>
+                <div
+                  onClick={() => toggleGroup('system_prompt')}
+                  style={{
+                    padding: '8px 12px',
+                    background: 'rgba(245, 158, 11, 0.1)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    cursor: 'pointer',
+                    userSelect: 'none'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span>📜</span>
+                    <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#fbbf24' }}>
+                      System Prompt ({availablePrompts.length})
+                    </span>
+                  </div>
+                  <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
+                    {collapsedGroups['system_prompt'] && !searchQuery ? '▶' : '▼'}
+                  </span>
+                </div>
+
+                {(!collapsedGroups['system_prompt'] || searchQuery) && (
+                  <div style={{ padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px', background: 'rgba(0, 0, 0, 0.2)' }}>
+                    {loadingPrompts ? (
+                      <div style={{ fontSize: '0.72rem', color: '#94a3b8', textAlign: 'center', padding: '6px' }}>
+                        Đang tải danh sách prompt...
+                      </div>
+                    ) : filteredPrompts.length === 0 ? (
+                      <div style={{ fontSize: '0.72rem', color: '#94a3b8', textAlign: 'center', padding: '6px' }}>
+                        {searchQuery ? 'Không tìm thấy prompt phù hợp' : 'Chưa có prompt trong thư viện'}
+                        <div style={{ marginTop: '4px' }}>
+                          <Link href="/system-prompts" target="_blank" style={{ color: '#fbbf24', textDecoration: 'underline' }}>
+                            + Quản lý Prompt
+                          </Link>
+                        </div>
+                      </div>
+                    ) : (
+                      filteredPrompts.map(p => {
+                        const isCurrentPromptOnCanvas = nodes.some(
+                          n => n.type === 'system_prompt' && n.data.config?.prompt_id === p.id
+                        );
+                        return (
+                          <div
+                            key={p.id}
+                            onClick={() => handleAddPromptNode(p)}
+                            style={{
+                              background: 'rgba(255, 255, 255, 0.03)',
+                              border: `1px solid ${isCurrentPromptOnCanvas ? 'rgba(255, 255, 255, 0.08)' : '#f59e0b'}`,
+                              borderRadius: '8px',
+                              padding: '8px',
+                              cursor: isCurrentPromptOnCanvas ? 'not-allowed' : 'pointer',
+                              opacity: isCurrentPromptOnCanvas ? 0.5 : 1,
+                              transition: 'all 0.15s'
+                            }}
+                            title={`Nhấn để thêm "${p.name}" vào Canvas`}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <span style={{ fontWeight: 600, fontSize: '0.8rem', color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '170px' }}>
+                                {p.name}
+                              </span>
+                              {isCurrentPromptOnCanvas ? (
+                                <span style={{ fontSize: '0.65rem', background: '#334155', padding: '1px 4px', borderRadius: '4px' }}>
+                                  Đang dùng
+                                </span>
+                              ) : (
+                                <span style={{ fontSize: '0.65rem', color: '#fbbf24' }}>+ Thêm</span>
+                              )}
+                            </div>
+                            {p.description && (
+                              <div style={{ fontSize: '0.68rem', color: '#94a3b8', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {p.description}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Group 3: MODEL */}
+            {(filterCategory === 'all' || filterCategory === 'model') && (
+              <div style={{ border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '8px', overflow: 'hidden' }}>
+                <div
+                  onClick={() => toggleGroup('model')}
+                  style={{
+                    padding: '8px 12px',
+                    background: 'rgba(168, 85, 247, 0.1)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    cursor: 'pointer',
+                    userSelect: 'none'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span>🧠</span>
+                    <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#c084fc' }}>Model (1)</span>
+                  </div>
+                  <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
+                    {collapsedGroups['model'] && !searchQuery ? '▶' : '▼'}
+                  </span>
+                </div>
+
+                {(!collapsedGroups['model'] || searchQuery) && (
+                  <div style={{ padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px', background: 'rgba(0, 0, 0, 0.2)' }}>
+                    {(() => {
+                      const alreadyExists = nodes.some(n => n.type === 'model');
+                      const matchesSearch = !searchQuery || 'model llm suy luận ai'.toLowerCase().includes(searchQuery.toLowerCase());
+                      if (!matchesSearch) return null;
+
+                      return (
+                        <div
+                          onClick={() => handleAddStandardNode('model')}
+                          style={{
+                            background: 'rgba(255, 255, 255, 0.03)',
+                            border: `1px solid ${alreadyExists ? 'rgba(255, 255, 255, 0.08)' : '#a855f7'}`,
+                            borderRadius: '8px',
+                            padding: '8px',
+                            cursor: alreadyExists ? 'not-allowed' : 'pointer',
+                            opacity: alreadyExists ? 0.5 : 1
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <span style={{ fontWeight: 600, fontSize: '0.8rem', color: '#fff' }}>Model LLM Node</span>
+                            {alreadyExists && <span style={{ fontSize: '0.65rem', background: '#334155', padding: '1px 4px', borderRadius: '4px' }}>Đã có</span>}
+                          </div>
+                          <div style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: '2px' }}>
+                            Xử lý suy luận AI qua Provider
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Group 4: OUTPUT */}
+            {(filterCategory === 'all' || filterCategory === 'output') && (
+              <div style={{ border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '8px', overflow: 'hidden' }}>
+                <div
+                  onClick={() => toggleGroup('output')}
+                  style={{
+                    padding: '8px 12px',
+                    background: 'rgba(16, 185, 129, 0.1)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    cursor: 'pointer',
+                    userSelect: 'none'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span>💬</span>
+                    <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#34d399' }}>Output (1)</span>
+                  </div>
+                  <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
+                    {collapsedGroups['output'] && !searchQuery ? '▶' : '▼'}
+                  </span>
+                </div>
+
+                {(!collapsedGroups['output'] || searchQuery) && (
+                  <div style={{ padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px', background: 'rgba(0, 0, 0, 0.2)' }}>
+                    {(() => {
+                      const alreadyExists = nodes.some(n => n.type === 'output');
+                      const matchesSearch = !searchQuery || 'web output phản hồi streaming'.toLowerCase().includes(searchQuery.toLowerCase());
+                      if (!matchesSearch) return null;
+
+                      return (
+                        <div
+                          onClick={() => handleAddStandardNode('output')}
+                          style={{
+                            background: 'rgba(255, 255, 255, 0.03)',
+                            border: `1px solid ${alreadyExists ? 'rgba(255, 255, 255, 0.08)' : '#10b981'}`,
+                            borderRadius: '8px',
+                            padding: '8px',
+                            cursor: alreadyExists ? 'not-allowed' : 'pointer',
+                            opacity: alreadyExists ? 0.5 : 1
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <span style={{ fontWeight: 600, fontSize: '0.8rem', color: '#fff' }}>Web Output Node</span>
+                            {alreadyExists && <span style={{ fontSize: '0.65rem', background: '#334155', padding: '1px 4px', borderRadius: '4px' }}>Đã có</span>}
+                          </div>
+                          <div style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: '2px' }}>
+                            Định dạng phản hồi streaming (SSE)
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+            )}
+
+          </div>
+
+          <div style={{ marginTop: 'auto', padding: '8px', background: 'rgba(0, 0, 0, 0.3)', borderRadius: '6px', fontSize: '0.7rem', color: '#94a3b8', lineHeight: '1.4' }}>
+            💡 <strong>Hướng dẫn nối:</strong><br />
+            • Cổng xanh (Input) → Cổng trên Model (User Input)<br />
+            • Cổng cam (Prompt) → Cổng dưới Model (Instruction)<br />
+            • Cổng phải Model → Cổng Output
           </div>
         </aside>
 
@@ -677,14 +1085,23 @@ export default function ProjectEditorPage() {
                 const tgtNode = nodes.find(n => n.id === edge.target);
                 if (!srcNode || !tgtNode) return null;
 
+                const isPromptEdge = srcNode.type === 'system_prompt';
+                const isSelected = selectedEdgeId === edge.id;
+
                 const startX = srcNode.position.x + NODE_WIDTH;
                 const startY = srcNode.position.y + NODE_HEIGHT / 2;
+
+                // Model Node has two distinct target ports: in (top 32%) and system_instruction (top 72%)
+                let endY = tgtNode.position.y + NODE_HEIGHT / 2;
+                if (tgtNode.type === 'model') {
+                  endY = isPromptEdge ? tgtNode.position.y + NODE_HEIGHT * 0.72 : tgtNode.position.y + NODE_HEIGHT * 0.32;
+                }
                 const endX = tgtNode.position.x;
-                const endY = tgtNode.position.y + NODE_HEIGHT / 2;
 
                 const dx = Math.max(60, Math.abs(endX - startX) * 0.5);
                 const pathData = `M ${startX} ${startY} C ${startX + dx} ${startY}, ${endX - dx} ${endY}, ${endX} ${endY}`;
-                const isSelected = selectedEdgeId === edge.id;
+
+                const edgeStroke = isSelected ? '#f43f5e' : (isPromptEdge ? '#f59e0b' : '#38bdf8');
 
                 return (
                   <g key={edge.id} style={{ pointerEvents: 'auto' }}>
@@ -701,9 +1118,9 @@ export default function ProjectEditorPage() {
                     <path
                       d={pathData}
                       fill="none"
-                      stroke={isSelected ? '#f43f5e' : '#a855f7'}
+                      stroke={edgeStroke}
                       strokeWidth={isSelected ? 3 : 2}
-                      strokeDasharray="6 4"
+                      strokeDasharray={isPromptEdge ? '4 3' : '6 4'}
                       onClick={() => setSelectedEdgeId(edge.id)}
                       style={{ cursor: 'pointer' }}
                     />
@@ -727,11 +1144,13 @@ export default function ProjectEditorPage() {
                 const dx = Math.abs(mousePos.x - startX) * 0.5;
                 const pathData = `M ${startX} ${startY} C ${startX + dx} ${startY}, ${mousePos.x - dx} ${mousePos.y}, ${mousePos.x} ${mousePos.y}`;
 
+                const dragColor = srcNode.type === 'system_prompt' ? '#f59e0b' : '#38bdf8';
+
                 return (
                   <path
                     d={pathData}
                     fill="none"
-                    stroke="#38bdf8"
+                    stroke={dragColor}
                     strokeWidth={2}
                     strokeDasharray="4 4"
                   />
@@ -751,10 +1170,11 @@ export default function ProjectEditorPage() {
             {nodes.map(node => {
               const isSelected = selectedNodeId === node.id;
               const isInput = node.type === 'web_input';
+              const isPrompt = node.type === 'system_prompt';
               const isModel = node.type === 'model';
               const isOutput = node.type === 'output';
 
-              const accentColor = isInput ? '#06b6d4' : isModel ? '#a855f7' : '#10b981';
+              const accentColor = isInput ? '#06b6d4' : isPrompt ? '#f59e0b' : isModel ? '#a855f7' : '#10b981';
 
               return (
                 <div
@@ -780,11 +1200,12 @@ export default function ProjectEditorPage() {
                     transition: 'border-color 0.2s, box-shadow 0.2s'
                   }}
                 >
-                  {/* Left Target Handle (In) for Model & Output */}
-                  {!isInput && (
+                  {/* Left Target Handles */}
+                  {/* 1. For Output Node: single in handle */}
+                  {isOutput && (
                     <div
                       className="handle-circle"
-                      onMouseUp={e => handleTargetHandleMouseUp(e, node.id)}
+                      onMouseUp={e => handleTargetHandleMouseUp(e, node.id, 'in')}
                       style={{
                         position: 'absolute',
                         left: '-8px',
@@ -793,7 +1214,7 @@ export default function ProjectEditorPage() {
                         width: '16px',
                         height: '16px',
                         borderRadius: '50%',
-                        background: '#38bdf8',
+                        background: '#10b981',
                         border: '2px solid #0f172a',
                         cursor: 'crosshair',
                         zIndex: 20
@@ -802,7 +1223,51 @@ export default function ProjectEditorPage() {
                     />
                   )}
 
-                  {/* Right Source Handle (Out) for Web Input & Model */}
+                  {/* 2. For Model Node: DUAL INPUT HANDLES (Data Flow + System Instruction) */}
+                  {isModel && (
+                    <>
+                      {/* Port 1: User Message / Data Flow (Top Left 32%) */}
+                      <div
+                        className="handle-circle"
+                        onMouseUp={e => handleTargetHandleMouseUp(e, node.id, 'in')}
+                        style={{
+                          position: 'absolute',
+                          left: '-8px',
+                          top: '32%',
+                          transform: 'translateY(-50%)',
+                          width: '16px',
+                          height: '16px',
+                          borderRadius: '50%',
+                          background: '#38bdf8',
+                          border: '2px solid #0f172a',
+                          cursor: 'crosshair',
+                          zIndex: 20
+                        }}
+                        title="Cổng Nhận Dữ Liệu: Web Input (In)"
+                      />
+                      {/* Port 2: System Instruction / Prompt (Bottom Left 72%) */}
+                      <div
+                        className="handle-circle"
+                        onMouseUp={e => handleTargetHandleMouseUp(e, node.id, 'system_instruction')}
+                        style={{
+                          position: 'absolute',
+                          left: '-8px',
+                          top: '72%',
+                          transform: 'translateY(-50%)',
+                          width: '16px',
+                          height: '16px',
+                          borderRadius: '50%',
+                          background: '#f59e0b',
+                          border: '2px solid #0f172a',
+                          cursor: 'crosshair',
+                          zIndex: 20
+                        }}
+                        title="Cổng Chỉ Dẫn Hệ Thống: System Prompt (In)"
+                      />
+                    </>
+                  )}
+
+                  {/* Right Source Handle (Out) for Web Input, System Prompt & Model */}
                   {!isOutput && (
                     <div
                       className="handle-circle"
@@ -820,7 +1285,7 @@ export default function ProjectEditorPage() {
                         cursor: 'crosshair',
                         zIndex: 20
                       }}
-                      title="Cổng Xuất Dữ Liệu (Out) - Kéo để nối"
+                      title={`Cổng Xuất ${isPrompt ? 'Chỉ Dẫn' : 'Dữ Liệu'} (Out) - Kéo để nối`}
                     />
                   )}
 
@@ -828,9 +1293,9 @@ export default function ProjectEditorPage() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                       <span style={{ fontSize: '1.1rem' }}>
-                        {isInput ? '📥' : isModel ? '🧠' : '💬'}
+                        {isInput ? '📥' : isPrompt ? '📜' : isModel ? '🧠' : '💬'}
                       </span>
-                      <span style={{ fontWeight: 700, fontSize: '0.9rem', color: '#fff' }}>
+                      <span style={{ fontWeight: 700, fontSize: '0.9rem', color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '140px' }}>
                         {node.data.label}
                       </span>
                     </div>
@@ -850,9 +1315,14 @@ export default function ProjectEditorPage() {
                   </div>
 
                   {/* Node Preview Meta */}
-                  <div style={{ fontSize: '0.75rem', color: '#94a3b8', background: 'rgba(0,0,0,0.3)', padding: '6px 8px', borderRadius: '6px' }}>
+                  <div style={{ fontSize: '0.72rem', color: '#94a3b8', background: 'rgba(0,0,0,0.3)', padding: '6px 8px', borderRadius: '6px' }}>
                     {isInput && (
                       <div>Giới hạn: <strong style={{ color: '#fff' }}>{node.data.config?.max_words || 500} từ</strong></div>
+                    )}
+                    {isPrompt && (
+                      <div>
+                        Prompt: <strong style={{ color: '#fbbf24' }}>{node.data.config?.name || 'Đã liên kết'}</strong>
+                      </div>
                     )}
                     {isModel && (
                       <div>
@@ -887,7 +1357,7 @@ export default function ProjectEditorPage() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255, 255, 255, 0.1)', paddingBottom: '0.75rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span style={{ fontSize: '1.2rem' }}>
-                  {selectedNode.type === 'web_input' ? '📥' : selectedNode.type === 'model' ? '🧠' : '💬'}
+                  {selectedNode.type === 'web_input' ? '📥' : selectedNode.type === 'system_prompt' ? '📜' : selectedNode.type === 'model' ? '🧠' : '💬'}
                 </span>
                 <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#fff' }}>
                   Cấu Hình {selectedNode.data.label}
@@ -931,8 +1401,91 @@ export default function ProjectEditorPage() {
                   }}
                 />
                 <p style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '6px' }}>
-                  Nếu tin nhắn của người dùng vượt quá số từ này khi chat trên Trang Chủ, hệ thống sẽ chặn và cảnh báo.
+                  Nếu câu hỏi của người dùng vượt quá số từ này khi chat trên Trang Chủ, hệ thống sẽ chặn và cảnh báo.
                 </p>
+              </div>
+            )}
+
+            {/* Configuration for System Prompt Node (MVP - DEC-SPN-01, DEC-SPN-03) */}
+            {selectedNode.type === 'system_prompt' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#cbd5e1', marginBottom: '6px' }}>
+                    Chọn Prompt Liên Kết (Thư Viện):
+                  </label>
+                  <select
+                    value={selectedNode.data.config?.prompt_id || ''}
+                    onChange={e => {
+                      const selected = availablePrompts.find(p => p.id === e.target.value);
+                      if (selected) {
+                        setNodes(prev => prev.map(n => {
+                          if (n.id === selectedNode.id) {
+                            return {
+                              ...n,
+                              data: {
+                                label: selected.name,
+                                config: {
+                                  prompt_id: selected.id,
+                                  name: selected.name,
+                                  description: selected.description
+                                }
+                              }
+                            };
+                          }
+                          return n;
+                        }));
+                        setHasUnsavedChanges(true);
+                      }
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      borderRadius: '6px',
+                      border: '1px solid rgba(255, 255, 255, 0.15)',
+                      background: '#1e293b',
+                      color: '#fff',
+                      fontSize: '0.85rem',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {availablePrompts.map(p => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={{ background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.2)', padding: '10px', borderRadius: '8px' }}>
+                  <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#fbbf24', marginBottom: '4px' }}>
+                    Định Danh: {selectedNode.data.config?.prompt_id}
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+                    {selectedNode.data.config?.description || 'Không có mô tả bổ sung'}
+                  </div>
+                </div>
+
+                <div style={{ fontSize: '0.75rem', color: '#64748b', lineHeight: '1.4' }}>
+                  ℹ️ <strong>Cơ chế tham chiếu động (DEC-SPN-01):</strong> Khi người dùng chat, Backend sẽ tự động lấy nội dung mới nhất của System Prompt này từ thư viện để gửi tới Model AI.
+                </div>
+
+                <Link
+                  href="/system-prompts"
+                  target="_blank"
+                  style={{
+                    display: 'inline-block',
+                    textAlign: 'center',
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    border: '1px solid rgba(255, 255, 255, 0.15)',
+                    color: '#fbbf24',
+                    fontSize: '0.8rem',
+                    textDecoration: 'none'
+                  }}
+                >
+                  ↗ Mở Quản Lý System Prompt
+                </Link>
               </div>
             )}
 
