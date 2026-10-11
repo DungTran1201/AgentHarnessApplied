@@ -847,6 +847,25 @@ export default function ChatWorkspacePage() {
               🧩
             </Link>
             <Link
+              href="/prompts"
+              id="btn-sidebar-goto-prompts"
+              title="Quản lý System Prompts"
+              aria-label="Quản lý System Prompts"
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--text-muted)',
+                fontSize: '1rem',
+                cursor: 'pointer',
+                padding: '6px',
+                display: 'flex',
+                alignItems: 'center',
+                textDecoration: 'none'
+              }}
+            >
+              📜
+            </Link>
+            <Link
               href="/bot/discord"
               id="btn-sidebar-goto-bot"
               title="Quản lý Discord Bot"

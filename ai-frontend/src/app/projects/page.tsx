@@ -181,6 +181,9 @@ export default function ProjectsPage() {
           <Link href="/projects" style={{ color: '#fff', textDecoration: 'none', fontSize: '0.9rem', fontWeight: 600, borderBottom: '2px solid #a855f7', paddingBottom: '4px' }}>
             Projects
           </Link>
+          <Link href="/prompts" style={{ color: 'var(--text-secondary)', textDecoration: 'none', fontSize: '0.9rem', fontWeight: 500 }}>
+            System Prompts
+          </Link>
           <Link href="/settings" style={{ color: 'var(--text-secondary)', textDecoration: 'none', fontSize: '0.9rem', fontWeight: 500 }}>
             Cài Đặt
           </Link>

@@ -54,6 +54,21 @@ export default function HomePage() {
             <span>🧩</span>
             <span>Projects</span>
           </Link>
+          <Link href="/prompts" style={{
+            color: 'var(--text-secondary)',
+            textDecoration: 'none',
+            fontSize: '0.9rem',
+            fontWeight: 500,
+            padding: '8px 16px',
+            borderRadius: 'var(--radius-sm)',
+            transition: 'color 0.2s',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '6px'
+          }}>
+            <span>📜</span>
+            <span>Prompts</span>
+          </Link>
           <Link href="/login" style={{
             color: 'var(--text-secondary)',
             textDecoration: 'none',

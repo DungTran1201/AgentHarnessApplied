@@ -253,3 +253,44 @@ export interface ProjectListResponse {
   total: number;
   active_quota: ProjectQuotaInfo;
 }
+
+// ==============================================================================
+// SYSTEM PROMPT MANAGEMENT (MVP) CONTRACTS
+// ==============================================================================
+
+export interface SystemPromptSummary {
+  id: string;
+  name: string;
+  description: string | null;
+  content_length: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SystemPromptDetail {
+  id: string;
+  user_id: string;
+  name: string;
+  description: string | null;
+  content: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SystemPromptListResponse {
+  items: SystemPromptSummary[];
+  total: number;
+}
+
+export interface SystemPromptCreateRequest {
+  name: string;
+  description?: string | null;
+  content: string;
+}
+
+export interface SystemPromptUpdateRequest {
+  name: string;
+  description?: string | null;
+  content: string;
+}
+
