@@ -317,26 +317,6 @@ export default function DiscordBotManagementPage() {
         {/* Global Links */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <Link
-            href="/bot/discord/pipeline"
-            id="btn-goto-pipeline"
-            style={{
-              padding: '8px 16px',
-              borderRadius: 'var(--radius-md)',
-              background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.25) 0%, rgba(168, 85, 247, 0.25) 100%)',
-              color: '#c084fc',
-              textDecoration: 'none',
-              fontSize: '0.85rem',
-              fontWeight: 600,
-              border: '1px solid rgba(168, 85, 247, 0.4)',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              boxShadow: '0 0 15px rgba(168, 85, 247, 0.2)'
-            }}
-          >
-            ⚡ Visual Pipeline Canvas (n8n)
-          </Link>
-          <Link
             href="/chat"
             id="btn-goto-chat"
             style={{
@@ -437,85 +417,6 @@ export default function DiscordBotManagementPage() {
       {/* TRƯỜNG HỢP: ĐÃ LIÊN KẾT DISCORD - TOÀN BỘ GIAO DIỆN CONSOLE */}
       {isDiscordLinked && (
         <div>
-          {/* Visual Pipeline Showcase Banner (CR-010) */}
-          <div
-            id="banner-visual-pipeline"
-            style={{
-              padding: '16px 20px',
-              borderRadius: 'var(--radius-lg)',
-              background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(168, 85, 247, 0.15) 100%)',
-              border: '1px solid rgba(168, 85, 247, 0.35)',
-              display: 'flex',
-              flexWrap: 'wrap',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 16,
-              marginBottom: 24,
-              boxShadow: '0 8px 24px rgba(99, 102, 241, 0.1)'
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-              <div
-                style={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: 'var(--radius-md)',
-                  background: 'linear-gradient(135deg, #6366f1, #a855f7)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: '1.4rem'
-                }}
-              >
-                ⚡
-              </div>
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#f1f5f9', margin: 0 }}>
-                    Visual Pipeline Canvas & Dynamic Model Binding (CR-010)
-                  </h3>
-                  <span
-                    style={{
-                      fontSize: '0.72rem',
-                      padding: '2px 8px',
-                      borderRadius: 'var(--radius-full)',
-                      background: 'rgba(168, 85, 247, 0.25)',
-                      color: '#d8b4fe',
-                      fontWeight: 600,
-                      border: '1px solid rgba(168, 85, 247, 0.4)'
-                    }}
-                  >
-                    MỚI (n8n-style)
-                  </span>
-                </div>
-                <p style={{ color: '#94a3b8', fontSize: '0.84rem', margin: '4px 0 0 0' }}>
-                  Kéo thả khối, tạo đường nối Bezier, kiểm soát 3 trạng thái Running (Xanh) - Pause (Vàng) - Stop (Xám) và chỉ định mô hình AI độc lập cho Bot Discord.
-                </p>
-              </div>
-            </div>
-
-            <Link
-              href="/bot/discord/pipeline"
-              id="btn-open-visual-canvas"
-              style={{
-                padding: '10px 20px',
-                borderRadius: 'var(--radius-md)',
-                background: 'linear-gradient(135deg, #6366f1, #a855f7)',
-                color: 'white',
-                fontWeight: 600,
-                fontSize: '0.86rem',
-                textDecoration: 'none',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 8,
-                boxShadow: '0 4px 15px rgba(168, 85, 247, 0.35)',
-                whiteSpace: 'nowrap'
-              }}
-            >
-              Mở Trình Biên Tập Pipeline →
-            </Link>
-          </div>
-
           {/* Top Status & Unified Quota Bar */}
           <section id="bot-status-quota-bar" style={{
             display: 'grid',
