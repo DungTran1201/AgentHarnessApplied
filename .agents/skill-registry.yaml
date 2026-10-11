@@ -1,0 +1,33 @@
+version: "3.0"
+active_skills:
+  - project-discovery
+  - change-intake
+  - requirements-engineering
+  - use-case-modeling
+  - process-modeling
+  - domain-modeling
+  - system-context
+  - architecture-modeling
+  - api-contract
+  - interaction-modeling
+  - state-modeling
+  - security-threat-modeling
+  - test-modeling
+  - deployment-operations
+  - ux-modeling
+  - traceability-audit
+  - documentation-review
+  - feature-lifecycle
+  - impact-analysis
+  - srs-generation
+  - api-design-patterns
+  - api-documentation
+  - frontend-design
+  - web-design-guideline
+inactive_candidates:
+  - design-system
+  - userflow
+  - writing-plans
+  - spec-driven-development
+  - qa-manual-istqb
+  - qa-methodology

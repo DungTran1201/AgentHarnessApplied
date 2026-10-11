@@ -1,0 +1,9 @@
+version: "1.0"
+state_machine:
+  id: STATE-001
+  entity: ""
+  initial_state: ""
+  terminal_states: []
+  states: []
+  transitions: []
+  source_refs: []

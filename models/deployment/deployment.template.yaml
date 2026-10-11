@@ -1,0 +1,10 @@
+version: "1.0"
+deployment:
+  id: DEP-001
+  environment: ""
+  nodes: []
+  workloads: []
+  connections: []
+  secrets: []
+  observability: []
+  source_refs: []

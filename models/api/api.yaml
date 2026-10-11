@@ -1,0 +1,247 @@
+version: "1.0"
+metadata:
+  project: "ai-chan"
+  domain: "Website Chatbot Assistant"
+  layer: "canonical_api_model"
+  status: "BASELINED"
+  updated_at: "2026-10-07"
+
+apis:
+  - id: "API-001"
+    title: "AI-Chan Assistant Core API"
+    base_path: "/api/v1"
+    operations:
+      - id: "OP-001"
+        method: "POST"
+        path: "/auth/register"
+        summary: "Register new user"
+        use_case: "UC-001"
+        source_refs: ["FR-001", "SEC-002"]
+
+      - id: "OP-002"
+        method: "POST"
+        path: "/auth/login"
+        summary: "Login and establish session"
+        use_case: "UC-002"
+        source_refs: ["FR-002", "SEC-004"]
+
+      - id: "OP-003"
+        method: "POST"
+        path: "/auth/logout"
+        summary: "Logout user"
+        use_case: "UC-003"
+        source_refs: ["FR-003", "SEC-004"]
+
+      - id: "OP-004"
+        method: "POST"
+        path: "/conversations"
+        summary: "Create conversation"
+        use_case: "UC-004"
+        source_refs: ["FR-004", "BR-001", "BR-004"]
+
+      - id: "OP-005"
+        method: "GET"
+        path: "/conversations"
+        summary: "List user conversations"
+        use_case: "UC-005"
+        source_refs: ["FR-005", "BR-002"]
+
+      - id: "OP-006"
+        method: "PATCH"
+        path: "/conversations/{conv_id}"
+        summary: "Rename conversation"
+        use_case: "UC-006"
+        source_refs: ["FR-006", "BR-002", "BR-004"]
+
+      - id: "OP-007"
+        method: "DELETE"
+        path: "/conversations/{conv_id}"
+        summary: "Delete conversation"
+        use_case: "UC-007"
+        source_refs: ["FR-007", "BR-002"]
+
+      - id: "OP-008"
+        method: "GET"
+        path: "/conversations/{conv_id}/messages"
+        summary: "Get conversation messages"
+        use_case: "UC-005"
+        source_refs: ["FR-012", "BR-002"]
+
+      - id: "OP-009"
+        method: "POST"
+        path: "/chat/conversations/{conv_id}/stream"
+        summary: "Stream chat interaction via SSE"
+        use_case: "UC-008"
+        source_refs: ["FR-008", "FR-009", "FR-010", "FR-011", "FR-013", "FR-014", "BR-003", "BR-005"]
+
+      - id: "OP-010"
+        method: "GET"
+        path: "/models"
+        summary: "List all configured agent models"
+        use_case: "UC-016"
+        source_refs: ["FR-021", "CAP-AGENT-MGMT"]
+
+      - id: "OP-011"
+        method: "GET"
+        path: "/models/{model_id}"
+        summary: "Get agent model details and capabilities"
+        use_case: "UC-017"
+        source_refs: ["FR-022", "CAP-AGENT-MGMT"]
+
+      - id: "OP-012"
+        method: "POST"
+        path: "/models/{model_id}/test"
+        summary: "Ping and health-check agent model connection"
+        use_case: "UC-018"
+        source_refs: ["FR-023", "BR-014", "CAP-AGENT-MGMT"]
+
+      - id: "OP-013"
+        method: "PATCH"
+        path: "/models/{model_id}/activate"
+        summary: "Activate agent model for routing"
+        use_case: "UC-019"
+        source_refs: ["FR-024", "BR-012", "BR-014", "CAP-AGENT-MGMT"]
+
+      - id: "OP-014"
+        method: "PATCH"
+        path: "/models/{model_id}/deactivate"
+        summary: "Deactivate agent model (soft state toggle)"
+        use_case: "UC-019"
+        source_refs: ["FR-025", "BR-012", "BR-013", "CAP-AGENT-MGMT"]
+
+      - id: "OP-015"
+        method: "PATCH"
+        path: "/models/default"
+        summary: "Set default active agent model"
+        use_case: "UC-020"
+        source_refs: ["FR-026", "BR-013", "CAP-AGENT-MGMT"]
+
+      - id: "OP-016"
+        method: "GET"
+        path: "/auth/discord/login"
+        summary: "Initiate Discord OAuth2 authorization flow with CSRF state"
+        use_case: "UC-021"
+        source_refs: ["FR-027", "FR-028", "BR-016", "SEC-008"]
+
+      - id: "OP-017"
+        method: "GET"
+        path: "/auth/discord/callback"
+        summary: "Handle Discord OAuth2 callback, token exchange, and session issuance"
+        use_case: "UC-022"
+        source_refs: ["FR-027", "FR-028", "BR-016", "BR-017", "BR-018", "SEC-004", "SEC-008"]
+
+      - id: "OP-018"
+        method: "GET"
+        path: "/resources/summary"
+        summary: "Get aggregated resource usage summary (latency percentiles, tokens, requests, quota status)"
+        use_case: "UC-023"
+        source_refs: ["FR-029", "FR-030", "FR-031", "FR-032", "BR-019", "BR-021"]
+
+      - id: "OP-019"
+        method: "GET"
+        path: "/resources/stream"
+        summary: "Stream real-time resource telemetry metrics tick-by-tick via Server-Sent Events"
+        use_case: "UC-023"
+        source_refs: ["FR-033", "FR-034", "BR-021", "SEC-009"]
+
+      - id: "OP-020"
+        method: "GET"
+        path: "/resources/quota"
+        summary: "Get current user token quota limit, remaining allowance, and rate limit status"
+        use_case: "UC-025"
+        source_refs: ["FR-032", "BR-020", "SEC-009"]
+
+      - id: "OP-021"
+        method: "GET"
+        path: "/resources/history"
+        summary: "Get historical time-series resource metrics filtered by time range (1h, 24h, 7d, 30d)"
+        use_case: "UC-024"
+        source_refs: ["FR-029", "FR-030", "FR-031", "BR-021"]
+
+      - id: "OP-022"
+        method: "POST"
+        path: "/models"
+        summary: "Register and add new agent model with configuration and parameter bounds"
+        use_case: "UC-026"
+        source_refs: ["FR-035", "BR-022", "BR-024", "SEC-010"]
+
+      - id: "OP-023"
+        method: "PUT"
+        path: "/models/{model_id}"
+        summary: "Update and edit existing agent model configuration and parameter bounds"
+        use_case: "UC-027"
+        source_refs: ["FR-036", "BR-022", "BR-024", "SEC-010"]
+
+      - id: "OP-024"
+        method: "GET"
+        path: "/models/search"
+        summary: "Search, filter, and sort agent models by query, provider, status, and attributes"
+        use_case: "UC-028"
+        source_refs: ["FR-037", "FR-038", "NFR-022"]
+
+      - id: "OP-025"
+        method: "DELETE"
+        path: "/models/{model_id}"
+        summary: "Soft delete and archive agent model with default protection invariant"
+        use_case: "UC-027"
+        source_refs: ["FR-039", "BR-023", "SEC-010"]
+
+      - id: "OP-026"
+        method: "GET"
+        path: "/auth/discord/link"
+        summary: "Initiate Discord OAuth2 authorization flow for authenticated user account linking"
+        use_case: "UC-029"
+        source_refs: ["FR-040", "BR-025", "SEC-011"]
+
+      - id: "OP-027"
+        method: "GET"
+        path: "/auth/discord/callback"
+        summary: "Discord OAuth2 callback handling account linking or login with conflict rejection"
+        use_case: "UC-029"
+        source_refs: ["FR-028", "FR-040", "BR-016", "BR-025", "SEC-011"]
+
+      - id: "OP-028"
+        method: "DELETE"
+        path: "/users/me/discord"
+        summary: "Unlink Discord identity from authenticated user account with password guard"
+        use_case: "UC-030"
+        source_refs: ["FR-041", "BR-026", "BR-027", "SEC-011"]
+
+      - id: "OP-029"
+        method: "GET"
+        path: "/users/me/connections"
+        summary: "Retrieve connected third-party accounts and social identity linking status"
+        use_case: "UC-029"
+        source_refs: ["FR-042", "UX-009"]
+
+      - id: "OP-031"
+        method: "GET"
+        path: "/bot/discord/config"
+        summary: "Retrieve user or guild Discord bot configuration and integration status"
+        use_case: "UC-032"
+        source_refs: ["FR-044", "FR-045", "BR-031", "SEC-013"]
+
+      - id: "OP-032"
+        method: "PUT"
+        path: "/bot/discord/config"
+        summary: "Update Discord bot model routing, persona prompt, trigger prefix, and token limits"
+        use_case: "UC-033"
+        source_refs: ["FR-045", "FR-046", "BR-031", "BR-033", "BR-034", "SEC-013"]
+
+      - id: "OP-033"
+        method: "GET"
+        path: "/bot/discord/guilds"
+        summary: "List manageable Discord servers (guilds) with bot installation status"
+        use_case: "UC-032"
+        source_refs: ["FR-044", "BR-031", "BR-034", "SEC-013"]
+
+      - id: "OP-034"
+        method: "POST"
+        path: "/bot/discord/test-dispatch"
+        summary: "Send test prompt to simulate Discord bot response and verify token routing"
+        use_case: "UC-033"
+        source_refs: ["FR-045", "FR-046", "BR-032", "BR-033"]
+
+
+
+

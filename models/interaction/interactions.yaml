@@ -1,0 +1,61 @@
+version: "1.0"
+metadata:
+  project: "ai-chan"
+  domain: "Website Chatbot Assistant"
+  layer: "canonical_interaction_model"
+  status: "BASELINED"
+  updated_at: "2026-10-07"
+
+interactions:
+  - id: "SEQ-001"
+    scenario: "User Registration & Bcrypt Hashing"
+    participants: ["ACT-01: Guest", "Next.js Client", "Nginx Gateway", "FastAPI Backend", "PostgreSQL 16"]
+    source_refs: ["FR-001", "SEC-002", "UC-001"]
+
+  - id: "SEQ-002"
+    scenario: "User Login & HttpOnly Cookie Session Setup"
+    participants: ["ACT-01: Guest", "Next.js Client", "Nginx Gateway", "FastAPI Backend", "PostgreSQL 16"]
+    source_refs: ["FR-002", "SEC-004", "UC-002"]
+
+  - id: "SEQ-003"
+    scenario: "Chat SSE Streaming with Token Chunks Delivery via LangGraph Agent"
+    participants: ["ACT-02: User", "Next.js Client", "Nginx Gateway", "FastAPI Backend", "PostgreSQL 16", "LangGraph Agent Engine", "External LLM Providers (.env)"]
+    source_refs: ["FR-008", "FR-009", "FR-010", "FR-012", "FR-013", "ADR-004", "ADR-005", "UC-008"]
+
+  - id: "SEQ-004"
+    scenario: "Automated Multi-Provider LLM Failover via LangGraph StateGraph"
+    participants: ["FastAPI Backend", "LangGraph StateGraph Engine", "Google Gemini (Primary)", "OpenAI (Fallback)"]
+    source_refs: ["FR-010", "FR-011", "BR-005", "NFR-008", "ADR-003", "ADR-005", "UC-008"]
+
+  - id: "SEQ-005"
+    scenario: "Multi-Provider Agent Model Connection Testing, Activation & Default Routing Configuration"
+    participants: ["ACT-02: User / Admin", "Next.js Client", "FastAPI Backend", "Agent Model Manager", "LangChain Adapter", "External Provider APIs (.env)"]
+    source_refs: ["FR-021", "FR-022", "FR-023", "FR-024", "FR-025", "FR-026", "BR-012", "BR-013", "BR-014", "ADR-006", "UC-016", "UC-018", "UC-019", "UC-020"]
+
+  - id: "SEQ-006"
+    scenario: "Discord OAuth2 Authorization Code Grant Registration & Login Flow"
+    participants: ["ACT-01/02: User", "Next.js Web Client", "FastAPI Backend", "Discord OAuth2 Server", "SQLite Database"]
+    source_refs: ["FR-027", "FR-028", "BR-016", "BR-017", "BR-018", "SEC-008", "ADR-007", "UC-021", "UC-022"]
+
+  - id: "SEQ-007"
+    scenario: "Real-Time Telemetry Interception, Token Quota Check & SSE Metric Broadcast"
+    participants: ["ACT-02: User", "Next.js Dashboard Client", "Telemetry Middleware", "LLM Gateway", "Metrics Ring Buffer", "SQLite Database"]
+    source_refs: ["FR-029", "FR-030", "FR-031", "FR-032", "FR-033", "FR-034", "BR-019", "BR-020", "BR-021", "SEC-009", "ADR-008", "UC-023", "UC-024", "UC-025"]
+
+  - id: "SEQ-008"
+    scenario: "Agent Model Management - Registration, Configuration Mutation, Dynamic Filtering and Archival Guard"
+    participants: ["ACT-02: User / Admin", "Next.js Model Catalog UI", "FastAPI Backend", "Agent Model Repository", "SQLite Database"]
+    source_refs: ["FR-035", "FR-036", "FR-037", "FR-038", "FR-039", "BR-022", "BR-023", "BR-024", "SEC-010", "ADR-009", "UC-026", "UC-027", "UC-028"]
+
+  - id: "SEQ-009"
+    scenario: "Authenticated Discord Account Linking, Conflict Rejection & Safe Password-Guarded Unlinking"
+    participants: ["ACT-02: Registered User", "Next.js Settings Connections View", "FastAPI Auth/User Controller", "Discord OAuth2 Server", "SQLite Database"]
+    source_refs: ["FR-040", "FR-041", "FR-042", "BR-025", "BR-026", "BR-027", "SEC-011", "CTRL-010", "ADR-010", "UC-029", "UC-030"]
+
+  - id: "SEQ-011"
+    scenario: "Discord Bot Discovery, Model Routing Configuration and Interaction Dispatch with Quota Deduction"
+    participants: ["ACT-02: Registered User", "Discord Member", "Next.js Settings Bot View", "FastAPI Bot Controller", "Discord API v10 Gateway", "LLM Orchestrator", "SQLite Database"]
+    source_refs: ["FR-044", "FR-045", "FR-046", "FR-047", "BR-031", "BR-032", "BR-033", "BR-034", "SEC-013", "CTRL-012", "ADR-012", "UC-032", "UC-033", "UC-034"]
+
+
+

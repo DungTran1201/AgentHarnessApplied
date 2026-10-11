@@ -1,0 +1,244 @@
+version: "1.0"
+test_model:
+  id: TESTMODEL-001
+  system_name: "AI-Chan Virtual Assistant"
+  source_refs:
+    - "docs/02-requirements/functional-requirements.md"
+    - "docs/02-requirements/acceptance-criteria.md"
+    - "docs/04-use-cases/use-case-catalog.md"
+    - "docs/08-api/api-specifications.md"
+    - "docs/10-security/security-controls.md"
+    - "docs/11-ux/ui-interaction-specs.md"
+  scenarios:
+    - id: SCENARIO-AUTH
+      name: "Authentication & Identity Lifecycle"
+      target_components: ["Backend Auth Module", "PostgreSQL Users Table"]
+    - id: SCENARIO-CONV
+      name: "Conversation Thread CRUD & Data Isolation"
+      target_components: ["Backend Conversation Service", "PostgreSQL Conversations Table"]
+    - id: SCENARIO-CHAT-STREAM
+      name: "Streaming Real-Time Chat & Provider Failover"
+      target_components: ["Backend Chat Service", "LLM Gateway", "SSE Stream Engine"]
+    - id: SCENARIO-SECURITY
+      name: "Security Boundary & Rate Limit Verification"
+      target_components: ["SlowAPI Rate Limiter", "Auth Middleware", "Frontend Markdown Sanitizer"]
+    - id: SCENARIO-RESOURCE-MANAGEMENT
+      name: "Resource Telemetry & Real-Time Dashboard Verification"
+      target_components: ["Telemetry Middleware", "SSE Metrics Broadcaster", "Resource Dashboard UI", "SQLite ApiMetricLog & UserQuota"]
+  test_cases:
+    - id: TC-001
+      title: "User registration with valid email and password"
+      type: "Integration"
+      priority: "P0"
+      trace_req: "FR-001"
+      trace_uc: "UC-001"
+      trace_ac: "AC-001"
+    - id: TC-002
+      title: "Registration fails on duplicate email conflict (HTTP 409)"
+      type: "Integration"
+      priority: "P0"
+      trace_req: "FR-001"
+      trace_uc: "UC-001"
+      trace_ac: "AC-001"
+    - id: TC-003
+      title: "User login issues HttpOnly JWT cookie (HTTP 200)"
+      type: "Integration"
+      priority: "P0"
+      trace_req: "FR-002"
+      trace_uc: "UC-002"
+      trace_ac: "AC-002"
+    - id: TC-004
+      title: "Login fails with invalid credentials (HTTP 401)"
+      type: "Integration"
+      priority: "P0"
+      trace_req: "FR-002"
+      trace_uc: "UC-002"
+      trace_ac: "AC-002"
+    - id: TC-005
+      title: "Logout invalidates HttpOnly cookie (HTTP 200)"
+      type: "Integration"
+      priority: "P1"
+      trace_req: "FR-003"
+      trace_uc: "UC-003"
+      trace_ac: "AC-002"
+    - id: TC-006
+      title: "Fetch current authenticated user profile (HTTP 200)"
+      type: "Integration"
+      priority: "P1"
+      trace_req: "FR-004"
+      trace_uc: "UC-003"
+      trace_ac: "AC-002"
+    - id: TC-007
+      title: "Create conversation thread (HTTP 201)"
+      type: "Integration"
+      priority: "P0"
+      trace_req: "FR-005"
+      trace_uc: "UC-004"
+      trace_ac: "AC-003"
+    - id: TC-008
+      title: "List conversations with pagination (HTTP 200)"
+      type: "Integration"
+      priority: "P0"
+      trace_req: "FR-006"
+      trace_uc: "UC-004"
+      trace_ac: "AC-003"
+    - id: TC-009
+      title: "Rename conversation title (HTTP 200)"
+      type: "Integration"
+      priority: "P1"
+      trace_req: "FR-005"
+      trace_uc: "UC-005"
+      trace_ac: "AC-003"
+    - id: TC-010
+      title: "Delete conversation cascades messages (HTTP 204)"
+      type: "Integration"
+      priority: "P0"
+      trace_req: "FR-006"
+      trace_uc: "UC-006"
+      trace_ac: "AC-003"
+    - id: TC-011
+      title: "Cross-tenant access prevention (HTTP 404)"
+      type: "Security"
+      priority: "P0"
+      trace_req: "SEC-002"
+      trace_uc: "UC-004"
+      trace_ctrl: "CTRL-002"
+    - id: TC-012
+      title: "Message prompt initiates valid SSE token stream"
+      type: "E2E"
+      priority: "P0"
+      trace_req: "FR-013"
+      trace_uc: "UC-007"
+      trace_ac: "AC-004"
+    - id: TC-013
+      title: "LLM Provider failover from Gemini to OpenAI"
+      type: "Integration"
+      priority: "P0"
+      trace_req: "FR-011"
+      trace_uc: "UC-007"
+      trace_adr: "ADR-003"
+    - id: TC-014
+      title: "Rate limiting enforcement 30 req/min (HTTP 429)"
+      type: "Security"
+      priority: "P1"
+      trace_req: "NFR-005"
+      trace_uc: "UC-007"
+      trace_ctrl: "CTRL-004"
+    - id: TC-015
+      title: "XSS prevention in markdown rendering"
+      type: "E2E"
+      priority: "P0"
+      trace_req: "SEC-003"
+      trace_ux: "UX-004"
+      trace_ctrl: "CTRL-003"
+    - id: TC-021
+      title: "User registers new account via Discord OAuth2"
+      type: "Integration"
+      priority: "P0"
+      trace_req: "FR-027"
+      trace_uc: "UC-021"
+    - id: TC-022
+      title: "User logs in and links existing verified account via Discord OAuth2"
+      type: "Integration"
+      priority: "P0"
+      trace_req: "FR-028"
+      trace_uc: "UC-022"
+    - id: TC-023
+      title: "OAuth2 callback rejects forged or invalid CSRF state parameter"
+      type: "Security"
+      priority: "P0"
+      trace_req: "SEC-008"
+      trace_uc: "UC-022"
+    - id: TC-024
+      title: "API response latency and token usage metrics accurately logged to ApiMetricLog"
+      type: "Integration"
+      priority: "P0"
+      trace_req: "FR-029"
+      trace_uc: "UC-023"
+    - id: TC-025
+      title: "SSE metric stream delivers live telemetry ticks to connected dashboard client"
+      type: "E2E"
+      priority: "P0"
+      trace_req: "FR-033"
+      trace_uc: "UC-023"
+    - id: TC-026
+      title: "User token quota exhaustion enforces HTTP 429 and emits dashboard alert"
+      type: "Security"
+      priority: "P0"
+      trace_req: "FR-032"
+      trace_uc: "UC-025"
+    - id: TC-027
+      title: "Register new agent model with ID uniqueness and context bounds validation"
+      type: "Integration"
+      priority: "P0"
+      trace_req: "FR-035"
+      trace_uc: "UC-026"
+    - id: TC-028
+      title: "Update model configuration and verify immutability of model ID and provider"
+      type: "Integration"
+      priority: "P0"
+      trace_req: "FR-036"
+      trace_uc: "UC-027"
+    - id: TC-029
+      title: "Full-text and fuzzy search and multi-attribute filtering with latency under 200ms"
+      type: "E2E"
+      priority: "P1"
+      trace_req: "FR-037"
+      trace_uc: "UC-028"
+    - id: TC-030
+      title: "Reject deletion or archival of current default model (BR-023 invariant)"
+      type: "Security"
+      priority: "P0"
+      trace_req: "FR-039"
+      trace_uc: "UC-027"
+    - id: TC-031
+      title: "Link Discord account to authenticated user successfully"
+      type: "Integration"
+      priority: "P0"
+      trace_req: "FR-040"
+      trace_uc: "UC-029"
+    - id: TC-032
+      title: "Reject Discord account linking when Discord ID is already bound to another user (BR-025)"
+      type: "Security"
+      priority: "P0"
+      trace_req: "FR-040"
+      trace_uc: "UC-029"
+    - id: TC-033
+      title: "Unlink Discord account after password re-authentication with lockout guard check"
+      type: "Integration"
+      priority: "P0"
+      trace_req: "FR-041"
+      trace_uc: "UC-030"
+    - id: TC-034
+      title: "Reject Discord unlinking if user has no password set (Account Lockout Guard BR-026)"
+      type: "Security"
+      priority: "P0"
+      trace_req: "FR-041"
+      trace_uc: "UC-030"
+    - id: TC-039
+      title: "Retrieve and update Discord bot model routing and trigger configuration for linked user successfully"
+      type: "Integration"
+      priority: "P0"
+      trace_req: "FR-045"
+      trace_uc: "UC-033"
+    - id: TC-040
+      title: "Reject bot configuration access for user without linked Discord account (BR-031 Precondition)"
+      type: "Security"
+      priority: "P0"
+      trace_req: "FR-044"
+      trace_uc: "UC-032"
+    - id: TC-041
+      title: "Enforce shared daily token quota and reject Discord bot interactions upon quota exhaustion (BR-032 Invariant)"
+      type: "Integration"
+      priority: "P0"
+      trace_req: "FR-046"
+      trace_uc: "UC-034"
+    - id: TC-042
+      title: "Automatically fallback to default model when bot preferred model is inactive or missing (BR-033 Invariant)"
+      type: "Integration"
+      priority: "P1"
+      trace_req: "FR-045"
+      trace_uc: "UC-033"
+
+
+
