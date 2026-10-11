@@ -96,7 +96,24 @@ export default function ProjectEditorPage() {
         setAvailablePrompts(promptsRes || []);
 
         if (projData.graph_data && projData.graph_data.nodes && projData.graph_data.nodes.length > 0) {
-          setNodes(projData.graph_data.nodes);
+          // Normalize nodes: ensure each node has valid coordinate positions (x, y)
+          const defaultPositionsByType: Record<string, { x: number; y: number }> = {
+            web_input: { x: 80, y: 180 },
+            system_prompt: { x: 80, y: 360 },
+            model: { x: 440, y: 220 },
+            output: { x: 800, y: 220 }
+          };
+
+          const normalizedNodes: GraphNode[] = projData.graph_data.nodes.map((n: GraphNode, index: number) => {
+            const hasValidPos = n.position && typeof n.position.x === 'number' && typeof n.position.y === 'number';
+            const fallbackPos = defaultPositionsByType[n.type] || { x: 80 + (index * 260), y: 200 };
+            return {
+              ...n,
+              position: hasValidPos ? n.position : fallbackPos
+            };
+          });
+
+          setNodes(normalizedNodes);
           setEdges(projData.graph_data.edges || []);
           if (projData.graph_data.viewport) {
             setViewport(projData.graph_data.viewport);
@@ -379,9 +396,11 @@ export default function ProjectEditorPage() {
       const rect = canvasRef.current.getBoundingClientRect();
       const clickX = (e.clientX - rect.left - viewport.x) / viewport.zoom;
       const clickY = (e.clientY - rect.top - viewport.y) / viewport.zoom;
+      const nodeX = (node.position && typeof node.position.x === 'number') ? node.position.x : 80;
+      const nodeY = (node.position && typeof node.position.y === 'number') ? node.position.y : 180;
       setDragOffset({
-        x: clickX - node.position.x,
-        y: clickY - node.position.y
+        x: clickX - nodeX,
+        y: clickY - nodeY
       });
     }
   };
@@ -1088,15 +1107,22 @@ export default function ProjectEditorPage() {
                 const isPromptEdge = srcNode.type === 'system_prompt';
                 const isSelected = selectedEdgeId === edge.id;
 
-                const startX = srcNode.position.x + NODE_WIDTH;
-                const startY = srcNode.position.y + NODE_HEIGHT / 2;
+                const srcPos = (srcNode.position && typeof srcNode.position.x === 'number' && typeof srcNode.position.y === 'number')
+                  ? srcNode.position
+                  : { x: 80, y: 180 };
+                const tgtPos = (tgtNode.position && typeof tgtNode.position.x === 'number' && typeof tgtNode.position.y === 'number')
+                  ? tgtNode.position
+                  : { x: 440, y: 220 };
+
+                const startX = srcPos.x + NODE_WIDTH;
+                const startY = srcPos.y + NODE_HEIGHT / 2;
 
                 // Model Node has two distinct target ports: in (top 32%) and system_instruction (top 72%)
-                let endY = tgtNode.position.y + NODE_HEIGHT / 2;
+                let endY = tgtPos.y + NODE_HEIGHT / 2;
                 if (tgtNode.type === 'model') {
-                  endY = isPromptEdge ? tgtNode.position.y + NODE_HEIGHT * 0.72 : tgtNode.position.y + NODE_HEIGHT * 0.32;
+                  endY = isPromptEdge ? tgtPos.y + NODE_HEIGHT * 0.72 : tgtPos.y + NODE_HEIGHT * 0.32;
                 }
-                const endX = tgtNode.position.x;
+                const endX = tgtPos.x;
 
                 const dx = Math.max(60, Math.abs(endX - startX) * 0.5);
                 const pathData = `M ${startX} ${startY} C ${startX + dx} ${startY}, ${endX - dx} ${endY}, ${endX} ${endY}`;
@@ -1139,8 +1165,11 @@ export default function ProjectEditorPage() {
               {connectingSourceNodeId && (() => {
                 const srcNode = nodes.find(n => n.id === connectingSourceNodeId);
                 if (!srcNode) return null;
-                const startX = srcNode.position.x + NODE_WIDTH;
-                const startY = srcNode.position.y + NODE_HEIGHT / 2;
+                const srcPos = (srcNode.position && typeof srcNode.position.x === 'number' && typeof srcNode.position.y === 'number')
+                  ? srcNode.position
+                  : { x: 80, y: 180 };
+                const startX = srcPos.x + NODE_WIDTH;
+                const startY = srcPos.y + NODE_HEIGHT / 2;
                 const dx = Math.abs(mousePos.x - startX) * 0.5;
                 const pathData = `M ${startX} ${startY} C ${startX + dx} ${startY}, ${mousePos.x - dx} ${mousePos.y}, ${mousePos.x} ${mousePos.y}`;
 
@@ -1175,6 +1204,9 @@ export default function ProjectEditorPage() {
               const isOutput = node.type === 'output';
 
               const accentColor = isInput ? '#06b6d4' : isPrompt ? '#f59e0b' : isModel ? '#a855f7' : '#10b981';
+              const nodePos = (node.position && typeof node.position.x === 'number' && typeof node.position.y === 'number')
+                ? node.position
+                : { x: 80, y: 180 };
 
               return (
                 <div
@@ -1183,8 +1215,8 @@ export default function ProjectEditorPage() {
                   onMouseDown={e => handleNodeMouseDown(e, node)}
                   style={{
                     position: 'absolute',
-                    left: `${node.position.x}px`,
-                    top: `${node.position.y}px`,
+                    left: `${nodePos.x}px`,
+                    top: `${nodePos.y}px`,
                     width: `${NODE_WIDTH}px`,
                     minHeight: `${NODE_HEIGHT}px`,
                     background: 'rgba(15, 23, 42, 0.95)',
