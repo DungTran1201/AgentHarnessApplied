@@ -211,7 +211,7 @@ export interface OutputNodeConfig {
 export interface GraphNode {
   id: string;
   type: NodeType;
-  position: { x: number; y: number };
+  position?: { x: number; y: number };
   data: {
     label: string;
     config: WebInputConfig | SystemPromptNodeConfig | ModelNodeConfig | OutputNodeConfig | any;
