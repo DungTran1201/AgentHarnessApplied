@@ -40,7 +40,7 @@ export default function VRMViewer({
   const controllerRef = useRef<VRMController>(new VRMController());
   const animationFrameIdRef = useRef<number | null>(null);
 
-  // Check WebGL support
+  // Check WebGL support & reduced motion
   useEffect(() => {
     try {
       const canvas = document.createElement('canvas');
@@ -50,6 +50,16 @@ export default function VRMViewer({
       }
     } catch {
       setWebglSupported(false);
+    }
+
+    if (typeof window !== 'undefined') {
+      const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+      controllerRef.current.setReducedMotion(mediaQuery.matches);
+      const listener = (e: MediaQueryListEvent) => {
+        controllerRef.current.setReducedMotion(e.matches);
+      };
+      mediaQuery.addEventListener('change', listener);
+      return () => mediaQuery.removeEventListener('change', listener);
     }
   }, []);
 
@@ -246,6 +256,7 @@ export default function VRMViewer({
       }
 
       controls.dispose();
+      controllerRef.current.dispose();
 
       if (loadedVrm) {
         scene.remove(loadedVrm.scene);
