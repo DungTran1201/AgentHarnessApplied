@@ -147,6 +147,15 @@ def run_migration():
             """)
             conn.commit()
 
+        # 11. Apply 010_agent_skills_management.sql (skills & skill_files tables)
+        migration_010_file = MIGRATIONS_DIR / "010_agent_skills_management.sql"
+        if migration_010_file.exists():
+            print(f"Executing {migration_010_file.name} on {db_path.name}...")
+            with open(migration_010_file, "r", encoding="utf-8") as f:
+                cur.executescript(f.read())
+            conn.commit()
+            print(f"Applied 010 migration successfully to {db_path.name}.")
+
         # Verify tables
         tables = [r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
         print(f"Tables in {db_path.name}: {tables}")
@@ -162,6 +171,9 @@ def run_migration():
         if "system_prompts" in tables:
             sp_count = cur.execute("SELECT COUNT(*) FROM system_prompts").fetchone()[0]
             print(f"Total system prompts in {db_path.name}: {sp_count}")
+        if "skills" in tables:
+            skill_count = cur.execute("SELECT COUNT(*) FROM skills").fetchone()[0]
+            print(f"Total skills in {db_path.name}: {skill_count}")
             
         conn.close()
 

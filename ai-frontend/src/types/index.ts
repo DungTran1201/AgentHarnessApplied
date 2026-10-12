@@ -301,3 +301,105 @@ export interface SystemPromptUpdateRequest {
   content: string;
 }
 
+// ==============================================================================
+// AGENT SKILLS MANAGEMENT (MVP) CONTRACTS
+// ==============================================================================
+
+export type SkillStatus = 'DRAFT' | 'VALID' | 'INVALID' | 'ARCHIVED';
+export type SkillSourceType = 'USER_CREATED' | 'IMPORTED';
+
+export interface FileTreeItem {
+  path: string;
+  category: 'ROOT_DOC' | 'SCRIPT' | 'REFERENCE' | 'ASSET';
+  size_bytes: number;
+  updated_at: number;
+}
+
+export interface ValidationErrorItem {
+  code: string;
+  field: string;
+  message: string;
+  severity: string;
+  remediation: string;
+}
+
+export interface ValidationWarningItem {
+  code: string;
+  field: string;
+  message: string;
+  severity: string;
+  remediation: string;
+}
+
+export interface SkillValidationReport {
+  is_valid: boolean;
+  status: string;
+  metadata: Record<string, any>;
+  body: string;
+  errors: ValidationErrorItem[];
+  warnings: ValidationWarningItem[];
+}
+
+export interface SkillSummary {
+  id: string;
+  name: string;
+  description: string;
+  status: SkillStatus;
+  source_type: SkillSourceType;
+  file_count: number;
+  is_valid: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SkillDetail {
+  id: string;
+  user_id: string;
+  name: string;
+  description: string;
+  license: string | null;
+  compatibility: string | null;
+  allowed_tools: string | null;
+  metadata: Record<string, string>;
+  raw_skill_md: string;
+  status: SkillStatus;
+  source_type: SkillSourceType;
+  storage_path: string;
+  is_valid: boolean;
+  file_tree: FileTreeItem[];
+  validation_report: SkillValidationReport;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SkillListResponse {
+  items: SkillSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface SkillCreateRequest {
+  name: string;
+  description: string;
+  license?: string | null;
+  compatibility?: string | null;
+  allowed_tools?: string | null;
+  metadata?: Record<string, string> | null;
+  content_markdown?: string;
+  action?: 'ACTIVATE' | 'SAVE_DRAFT';
+}
+
+export interface SkillUpdateRequest {
+  name: string;
+  description: string;
+  license?: string | null;
+  compatibility?: string | null;
+  allowed_tools?: string | null;
+  metadata?: Record<string, string> | null;
+  content_markdown?: string;
+  raw_skill_md?: string | null;
+  action?: 'ACTIVATE' | 'SAVE_DRAFT';
+  expected_updated_at?: string | null;
+}
+

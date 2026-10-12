@@ -8,6 +8,7 @@ from src.api.v1.resources import resources_router
 from src.api.v1.bot import bot_router
 from src.api.v1.projects import projects_router
 from src.api.v1.prompts import prompts_router
+from src.api.v1.skills import skills_router
 
 api_router = APIRouter()
 
@@ -31,5 +32,6 @@ api_router.include_router(resources_router)
 api_router.include_router(bot_router)
 api_router.include_router(projects_router)
 api_router.include_router(prompts_router)
+api_router.include_router(skills_router)
 
 
