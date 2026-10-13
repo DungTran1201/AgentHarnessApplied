@@ -78,9 +78,9 @@ export default function MessageComposer({
     <div
       style={{
         width: '100%',
-        maxWidth: '780px',
+        maxWidth: '760px',
         margin: '0 auto',
-        padding: '0 1.25rem 1.25rem',
+        padding: '0 0 1.25rem',
         position: 'relative',
         zIndex: 20,
       }}

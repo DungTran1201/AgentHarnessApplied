@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { AgentModel, ModelSearchResponse, UserConnectionsResponse } from '@/types';
 
 interface UserProfile {
@@ -29,9 +29,18 @@ interface UserStats {
 
 export default function SettingsPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   // Active tab state: 'profile' | 'security' | 'preferences' | 'connections' | 'models'
   const [activeTab, setActiveTab] = useState<'profile' | 'security' | 'preferences' | 'connections' | 'models'>('profile');
+
+  // Sync tab from URL ?tab= param
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (tab && ['profile', 'security', 'preferences', 'connections', 'models'].includes(tab)) {
+      setActiveTab(tab as any);
+    }
+  }, [searchParams]);
 
   // User data
   const [user, setUser] = useState<UserProfile | null>(null);

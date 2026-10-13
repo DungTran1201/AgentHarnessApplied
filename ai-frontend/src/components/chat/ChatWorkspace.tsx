@@ -210,19 +210,25 @@ export default function ChatWorkspace({
         style={{
           flex: 1,
           overflowY: 'auto',
-          padding: '2rem 2rem 1.5rem',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '1.5rem',
+          padding: '1.5rem 1.5rem 0.5rem',
         }}
       >
+        {/* Content column — keeps messages within a readable max-width */}
+        <div
+          style={{
+            maxWidth: '760px',
+            width: '100%',
+            margin: '0 auto',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '1.5rem',
+            paddingBottom: '1rem',
+          }}
+        >
         {/* Empty state: welcome + starter cards */}
         {messages.length === 0 ? (
           <div
             style={{
-              margin: 'auto',
-              maxWidth: '680px',
-              width: '100%',
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'flex-start',
@@ -327,10 +333,10 @@ export default function ChatWorkspace({
                 style={{
                   display: 'flex',
                   flexDirection: 'column',
+                  // User: push to right edge of content column; assistant: stays left
                   alignItems: isUser ? 'flex-end' : 'flex-start',
                   width: '100%',
-                  maxWidth: '780px',
-                  margin: isUser ? '0 0 0 auto' : '0 auto 0 0',
+                  alignSelf: 'stretch',
                 }}
               >
                 {/* Assistant header */}
@@ -461,6 +467,7 @@ export default function ChatWorkspace({
         )}
 
         <div ref={messagesEndRef} style={{ height: '1px' }} />
+        </div> {/* end content column */}
       </div>
 
       {/* Scroll to bottom */}
