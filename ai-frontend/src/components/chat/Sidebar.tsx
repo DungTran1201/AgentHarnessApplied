@@ -23,6 +23,93 @@ interface SidebarProps {
   onToggleCollapse: () => void;
 }
 
+// ── SVG icon set ────────────────────────────────────────────────────
+function Icon({ name, size = 16 }: { name: string; size?: number }) {
+  const icons: Record<string, React.ReactNode> = {
+    home: (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z"/>
+        <path d="M9 21V12h6v9"/>
+      </svg>
+    ),
+    chat: (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+      </svg>
+    ),
+    models: (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+        <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+      </svg>
+    ),
+    prompts: (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+        <line x1="8" y1="13" x2="16" y2="13"/>
+        <line x1="8" y1="17" x2="12" y2="17"/>
+      </svg>
+    ),
+    knowledge: (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/>
+        <path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/>
+      </svg>
+    ),
+    settings: (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+      </svg>
+    ),
+    plus: (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+      </svg>
+    ),
+    search: (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+    ),
+    doc: (
+      <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+      </svg>
+    ),
+    pin: (
+      <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+        <path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/>
+      </svg>
+    ),
+    edit: (
+      <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+        <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+        <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+      </svg>
+    ),
+    trash: (
+      <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+        <polyline points="3 6 5 6 21 6"/>
+        <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/>
+      </svg>
+    ),
+    chevronLeft: (
+      <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+        <polyline points="15 18 9 12 15 6"/>
+      </svg>
+    ),
+    chevronRight: (
+      <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+        <polyline points="9 18 15 12 9 6"/>
+      </svg>
+    ),
+  };
+  return <>{icons[name] ?? null}</>;
+}
+
 export default function Sidebar({
   activeTab,
   onTabChange,
@@ -36,18 +123,13 @@ export default function Sidebar({
   onToggleCollapse,
 }: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState('');
-  const [pinnedIds, setPinnedIds] = useState<string[]>(() => {
-    // Default initial pinned sample IDs for authentic feel
-    return [];
-  });
+  const [pinnedIds, setPinnedIds] = useState<string[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
 
   const togglePin = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    setPinnedIds(prev =>
-      prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]
-    );
+    setPinnedIds(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]);
   };
 
   const handleStartRename = (conv: Conversation, e: React.MouseEvent) => {
@@ -57,48 +139,41 @@ export default function Sidebar({
   };
 
   const handleSaveRename = (id: string) => {
-    if (editTitle.trim()) {
-      onRenameConversation(id, editTitle.trim());
-    }
+    if (editTitle.trim()) onRenameConversation(id, editTitle.trim());
     setEditingId(null);
   };
 
-  // Filter conversations
   const filteredConvs = useMemo(() => {
     if (!searchQuery.trim()) return conversations;
     const q = searchQuery.toLowerCase();
     return conversations.filter(c => c.title.toLowerCase().includes(q));
   }, [conversations, searchQuery]);
 
-  // Separate pinned and unpinned
-  const pinnedList = useMemo(() => {
-    return filteredConvs.filter(c => pinnedIds.includes(c.id));
-  }, [filteredConvs, pinnedIds]);
+  const pinnedList   = useMemo(() => filteredConvs.filter(c => pinnedIds.includes(c.id)), [filteredConvs, pinnedIds]);
+  const regularList  = useMemo(() => filteredConvs.filter(c => !pinnedIds.includes(c.id)), [filteredConvs, pinnedIds]);
 
-  const regularList = useMemo(() => {
-    return filteredConvs.filter(c => !pinnedIds.includes(c.id));
-  }, [filteredConvs, pinnedIds]);
-
-  // Navigation Items definition
   const navItems = [
-    { key: 'home', label: 'Home', icon: '🏠', href: null },
-    { key: 'chat', label: 'Chat', icon: '💬', href: null },
-    { key: 'models', label: 'Model Explorer', icon: '🧩', href: '/dashboard' },
-    { key: 'prompts', label: 'Prompt Library', icon: '📜', href: '/prompts' },
-    { key: 'knowledge', label: 'Knowledge Base', icon: '📚', href: '/projects' },
-    { key: 'settings', label: 'Settings', icon: '⚙️', href: '/settings' },
+    { key: 'home',      label: 'Home',           icon: 'home',      href: null },
+    { key: 'chat',      label: 'Chat',            icon: 'chat',      href: null },
+    { key: 'models',    label: 'Analytics',       icon: 'models',    href: '/dashboard' },
+    { key: 'prompts',   label: 'Prompt Library',  icon: 'prompts',   href: '/prompts' },
+    { key: 'knowledge', label: 'Projects',        icon: 'knowledge', href: '/projects' },
+    { key: 'settings',  label: 'Settings',        icon: 'settings',  href: '/settings' },
   ] as const;
+
+  const w = collapsed ? '56px' : '256px';
 
   return (
     <aside
+      aria-label="Main navigation"
       style={{
-        width: collapsed ? '68px' : '280px',
-        minWidth: collapsed ? '68px' : '280px',
-        backgroundColor: '#0E0F1B',
+        width: w,
+        minWidth: w,
+        backgroundColor: 'var(--bg-base)',
         borderRight: '1px solid var(--border-subtle)',
         display: 'flex',
         flexDirection: 'column',
-        height: 'calc(100vh - 54px)',
+        height: 'calc(100vh - 52px)',
         transition: 'width var(--transition-normal), min-width var(--transition-normal)',
         overflow: 'hidden',
         position: 'relative',
@@ -106,291 +181,254 @@ export default function Sidebar({
         userSelect: 'none',
       }}
     >
-      {/* 1. Header action: + New Chat */}
-      <div style={{ padding: collapsed ? '12px 10px' : '16px 14px 10px' }}>
+      {/* New Chat button */}
+      <div style={{ padding: collapsed ? '10px 8px' : '12px 10px 8px' }}>
         <button
           type="button"
           onClick={onNewChat}
+          aria-label="New chat"
           style={{
             width: '100%',
-            height: '42px',
-            background: 'var(--accent-gradient)',
-            color: '#FFFFFF',
-            border: 'none',
+            height: '34px',
+            background: 'var(--bg-elevated)',
+            color: 'var(--text-secondary)',
+            border: '1px solid var(--border-default)',
             borderRadius: 'var(--radius-md)',
-            fontWeight: 600,
-            fontSize: '0.88rem',
+            fontWeight: 500,
+            fontSize: '0.82rem',
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
             justifyContent: collapsed ? 'center' : 'flex-start',
-            gap: '8px',
-            padding: collapsed ? '0' : '0 16px',
-            boxShadow: 'var(--accent-glow-sm)',
-            transition: 'all var(--transition-fast)',
+            gap: '7px',
+            padding: collapsed ? '0' : '0 10px',
+            transition: 'background var(--transition-fast), color var(--transition-fast)',
+            fontFamily: 'var(--font-sans)',
           }}
-          title="Bắt đầu cuộc trò chuyện mới"
+          onMouseEnter={e => {
+            e.currentTarget.style.background = 'var(--bg-overlay)';
+            e.currentTarget.style.color = 'var(--text-primary)';
+          }}
+          onMouseLeave={e => {
+            e.currentTarget.style.background = 'var(--bg-elevated)';
+            e.currentTarget.style.color = 'var(--text-secondary)';
+          }}
         >
-          <span style={{ fontSize: '1.2rem', lineHeight: 1 }}>+</span>
+          <Icon name="plus" size={14} />
           {!collapsed && <span>New Chat</span>}
         </button>
       </div>
 
-      {/* 2. Search input (hidden when collapsed) */}
+      {/* Search */}
       {!collapsed && (
-        <div style={{ padding: '0 14px 12px' }}>
+        <div style={{ padding: '0 10px 8px' }}>
           <div
             style={{
               display: 'flex',
               alignItems: 'center',
-              gap: '8px',
-              padding: '6px 12px',
-              backgroundColor: '#171821',
+              gap: '7px',
+              padding: '5px 10px',
+              backgroundColor: 'var(--bg-surface)',
               borderRadius: 'var(--radius-sm)',
               border: '1px solid var(--border-subtle)',
             }}
           >
-            <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>🔍</span>
+            <span style={{ color: 'var(--text-muted)', display: 'flex', flexShrink: 0 }} aria-hidden="true">
+              <Icon name="search" size={13} />
+            </span>
             <input
-              type="text"
+              type="search"
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              placeholder="Search chats..."
+              placeholder="Search chats…"
+              autoComplete="off"
               style={{
                 width: '100%',
                 background: 'transparent',
                 border: 'none',
                 color: 'var(--text-primary)',
-                fontSize: '0.82rem',
+                fontSize: '0.8rem',
                 outline: 'none',
+                fontFamily: 'var(--font-sans)',
               }}
             />
             {searchQuery && (
               <button
                 type="button"
                 onClick={() => setSearchQuery('')}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: 'var(--text-muted)',
-                  cursor: 'pointer',
-                  fontSize: '0.8rem',
-                }}
+                aria-label="Clear search"
+                style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', lineHeight: 1 }}
               >
-                ✕
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               </button>
             )}
           </div>
         </div>
       )}
 
-      {/* 3. Main Navigation Links */}
-      <nav style={{ padding: '0 10px 10px', display: 'flex', flexDirection: 'column', gap: '3px' }}>
+      {/* Nav links */}
+      <nav aria-label="Primary" style={{ padding: '0 8px 6px', display: 'flex', flexDirection: 'column', gap: '1px' }}>
         {navItems.map(item => {
           const isActive = activeTab === item.key;
-          const content = (
+          const inner = (
             <div
               onClick={() => onTabChange(item.key as any)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') onTabChange(item.key as any); }}
+              title={collapsed ? item.label : undefined}
+              aria-current={isActive ? 'page' : undefined}
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: '10px',
-                padding: collapsed ? '9px 0' : '9px 12px',
+                gap: '9px',
+                padding: collapsed ? '8px 0' : '7px 10px',
                 justifyContent: collapsed ? 'center' : 'flex-start',
                 borderRadius: 'var(--radius-sm)',
                 cursor: 'pointer',
-                fontSize: '0.85rem',
-                fontWeight: isActive ? 600 : 500,
-                color: isActive ? '#FFFFFF' : 'var(--text-secondary)',
-                backgroundColor: isActive ? 'rgba(167, 139, 250, 0.16)' : 'transparent',
-                border: isActive ? '1px solid rgba(167, 139, 250, 0.3)' : '1px solid transparent',
-                transition: 'all var(--transition-fast)',
+                fontSize: '0.82rem',
+                fontWeight: isActive ? 600 : 400,
+                color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
+                backgroundColor: isActive ? 'var(--bg-selected)' : 'transparent',
+                transition: 'color var(--transition-fast), background var(--transition-fast)',
+                outline: 'none',
               }}
-              title={collapsed ? item.label : undefined}
+              onMouseEnter={e => {
+                if (!isActive) {
+                  e.currentTarget.style.color = 'var(--text-secondary)';
+                  e.currentTarget.style.background = 'var(--bg-hover)';
+                }
+              }}
+              onMouseLeave={e => {
+                if (!isActive) {
+                  e.currentTarget.style.color = 'var(--text-muted)';
+                  e.currentTarget.style.background = 'transparent';
+                }
+              }}
             >
-              <span style={{ fontSize: '1rem', width: '20px', textAlign: 'center' }}>{item.icon}</span>
+              <span style={{ flexShrink: 0, display: 'flex' }} aria-hidden="true">
+                <Icon name={item.icon} size={15} />
+              </span>
               {!collapsed && <span>{item.label}</span>}
             </div>
           );
 
           return item.href ? (
             <Link key={item.key} href={item.href} style={{ textDecoration: 'none' }}>
-              {content}
+              {inner}
             </Link>
           ) : (
-            <React.Fragment key={item.key}>{content}</React.Fragment>
+            <React.Fragment key={item.key}>{inner}</React.Fragment>
           );
         })}
       </nav>
 
       {/* Divider */}
-      <div style={{ height: '1px', backgroundColor: 'var(--border-subtle)', margin: '4px 14px 12px' }} />
+      <div style={{ height: '1px', backgroundColor: 'var(--border-subtle)', margin: '2px 10px 8px' }} />
 
-      {/* 4. Recent Chats Section (with scroll) */}
+      {/* Chat history */}
       <div
-        style={{
-          flex: 1,
-          overflowY: 'auto',
-          padding: '0 10px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '12px',
-        }}
+        style={{ flex: 1, overflowY: 'auto', padding: '0 8px', display: 'flex', flexDirection: 'column', gap: '8px' }}
       >
         {!collapsed && (
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              padding: '0 6px',
-            }}
-          >
-            <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-              Recent Chats
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 4px' }}>
+            <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-disabled)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              Chats
             </span>
-            <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+            <span style={{ fontSize: '0.68rem', color: 'var(--text-disabled)', fontFamily: 'var(--font-mono)' }}>
               {conversations.length}
             </span>
           </div>
         )}
 
-        {/* Pinned Section */}
+        {/* Pinned */}
         {pinnedList.length > 0 && !collapsed && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '0 6px', marginBottom: '4px' }}>
-              <span style={{ fontSize: '0.7rem' }}>📌</span>
-              <span style={{ fontSize: '0.7rem', color: 'var(--accent)', fontWeight: 600 }}>Pinned</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '0 4px', marginBottom: '2px' }}>
+              <span style={{ color: 'var(--text-disabled)', display: 'flex' }} aria-hidden="true"><Icon name="pin" size={11} /></span>
+              <span style={{ fontSize: '0.68rem', color: 'var(--text-disabled)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Pinned</span>
             </div>
             {pinnedList.map(conv => renderConvItem(conv, true))}
           </div>
         )}
 
-        {/* Regular list */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-          {!collapsed && (
-            <div style={{ padding: '0 6px', marginBottom: '4px', fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600 }}>
-              {pinnedList.length > 0 ? 'Today & Earlier' : 'All Conversations'}
+        {/* Regular */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+          {!collapsed && pinnedList.length > 0 && (
+            <div style={{ padding: '0 4px', marginBottom: '2px', fontSize: '0.68rem', color: 'var(--text-disabled)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              Recent
             </div>
           )}
-          {regularList.length === 0 && !collapsed ? (
-            <div style={{ padding: '12px 8px', textAlign: 'center', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-              {searchQuery ? 'Không tìm thấy cuộc trò chuyện' : 'Chưa có cuộc trò chuyện nào'}
+          {regularList.length === 0 && !collapsed && (
+            <div style={{ padding: '12px 6px', textAlign: 'center', fontSize: '0.75rem', color: 'var(--text-disabled)' }}>
+              {searchQuery ? 'No chats found' : 'No conversations yet'}
             </div>
-          ) : (
-            regularList.map(conv => renderConvItem(conv, false))
           )}
+          {regularList.map(conv => renderConvItem(conv, false))}
         </div>
       </div>
 
-      {/* 5. Bottom Cute AI-Chan Quote Card (shown when expanded) */}
-      {!collapsed ? (
-        <div style={{ padding: '12px 14px', borderTop: '1px solid var(--border-subtle)', background: 'rgba(23, 24, 33, 0.6)' }}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '10px',
-              padding: '10px 12px',
-              borderRadius: 'var(--radius-md)',
-              background: 'linear-gradient(135deg, rgba(31, 27, 43, 0.9) 0%, rgba(23, 24, 33, 0.9) 100%)',
-              border: '1px solid rgba(167, 139, 250, 0.25)',
-              boxShadow: '0 4px 16px rgba(0, 0, 0, 0.25)',
-            }}
-          >
-            <div
-              style={{
-                width: '36px',
-                height: '36px',
-                borderRadius: '50%',
-                background: 'linear-gradient(135deg, #A78BFA 0%, #8B5CF6 100%)',
-                border: '2px solid rgba(196, 181, 253, 0.6)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '1.1rem',
-                flexShrink: 0,
-                boxShadow: '0 0 10px rgba(167, 139, 250, 0.4)',
-              }}
-            >
-              🌸
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column' }}>
-              <span style={{ fontSize: '0.75rem', color: '#F3F1FF', fontWeight: 500, lineHeight: 1.3 }}>
-                "Cố lên nhé! Bạn làm được mà! 💜"
-              </span>
-              <span style={{ fontSize: '0.68rem', color: 'var(--accent)', fontWeight: 600, marginTop: '2px' }}>
-                - AI-Chan
-              </span>
-            </div>
-          </div>
-
-          {/* Collapse sidebar button */}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '8px' }}>
-            <button
-              type="button"
-              onClick={onToggleCollapse}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: 'var(--text-muted)',
-                cursor: 'pointer',
-                fontSize: '0.75rem',
-                padding: '4px 8px',
-                borderRadius: 'var(--radius-xs)',
-              }}
-              title="Thu gọn thanh điều hướng"
-            >
-              ◀ Thu gọn
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div style={{ padding: '10px 0', display: 'flex', justifyContent: 'center', borderTop: '1px solid var(--border-subtle)' }}>
-          <button
-            type="button"
-            onClick={onToggleCollapse}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: 'var(--text-muted)',
-              cursor: 'pointer',
-              fontSize: '1rem',
-            }}
-            title="Mở rộng thanh điều hướng"
-          >
-            ▶
-          </button>
-        </div>
-      )}
+      {/* Collapse toggle */}
+      <div
+        style={{
+          padding: '8px 8px',
+          borderTop: '1px solid var(--border-subtle)',
+          display: 'flex',
+          justifyContent: collapsed ? 'center' : 'flex-end',
+        }}
+      >
+        <button
+          type="button"
+          onClick={onToggleCollapse}
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: 'var(--text-disabled)',
+            cursor: 'pointer',
+            padding: '4px',
+            borderRadius: 'var(--radius-sm)',
+            display: 'flex',
+            alignItems: 'center',
+            transition: 'color var(--transition-fast)',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.color = 'var(--text-secondary)'; }}
+          onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-disabled)'; }}
+        >
+          <Icon name={collapsed ? 'chevronRight' : 'chevronLeft'} size={14} />
+        </button>
+      </div>
     </aside>
   );
 
   function renderConvItem(conv: Conversation, isPinned: boolean) {
     const isSelected = activeConvId === conv.id;
-    const isEditing = editingId === conv.id;
+    const isEditing  = editingId === conv.id;
 
     if (collapsed) {
       return (
-        <div
+        <button
           key={conv.id}
+          type="button"
           onClick={() => onSelectConversation(conv.id)}
+          title={conv.title}
+          aria-label={conv.title}
           style={{
-            width: '38px',
-            height: '38px',
+            width: '36px',
+            height: '32px',
             margin: '0 auto',
             borderRadius: 'var(--radius-sm)',
+            border: isSelected ? '1px solid var(--border-default)' : '1px solid transparent',
+            background: isSelected ? 'var(--bg-selected)' : 'transparent',
+            color: isSelected ? 'var(--text-primary)' : 'var(--text-muted)',
+            cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            cursor: 'pointer',
-            backgroundColor: isSelected ? 'rgba(167, 139, 250, 0.2)' : 'transparent',
-            border: isSelected ? '1px solid var(--primary)' : '1px solid transparent',
           }}
-          title={conv.title}
         >
-          📄
-        </div>
+          <Icon name="doc" size={14} />
+        </button>
       );
     }
 
@@ -398,21 +436,40 @@ export default function Sidebar({
       <div
         key={conv.id}
         onClick={() => onSelectConversation(conv.id)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={e => { if (e.key === 'Enter') onSelectConversation(conv.id); }}
         className="conv-item-row"
+        aria-current={isSelected ? 'true' : undefined}
         style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          padding: '8px 10px',
+          padding: '6px 8px',
           borderRadius: 'var(--radius-sm)',
           cursor: 'pointer',
-          backgroundColor: isSelected ? 'rgba(167, 139, 250, 0.14)' : 'transparent',
-          border: isSelected ? '1px solid rgba(167, 139, 250, 0.28)' : '1px solid transparent',
-          transition: 'all var(--transition-fast)',
+          backgroundColor: isSelected ? 'var(--bg-selected)' : 'transparent',
+          border: '1px solid transparent',
+          transition: 'background var(--transition-fast)',
+          outline: 'none',
+          minWidth: 0,
+        }}
+        onMouseEnter={e => {
+          if (!isSelected) e.currentTarget.style.background = 'var(--bg-hover)';
+          // show actions
+          const actions = e.currentTarget.querySelector('.conv-actions') as HTMLElement;
+          if (actions) actions.style.opacity = '1';
+        }}
+        onMouseLeave={e => {
+          if (!isSelected) e.currentTarget.style.background = 'transparent';
+          const actions = e.currentTarget.querySelector('.conv-actions') as HTMLElement;
+          if (actions) actions.style.opacity = '0';
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden', flex: 1 }}>
-          <span style={{ fontSize: '0.85rem', flexShrink: 0 }}>📄</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '7px', overflow: 'hidden', flex: 1, minWidth: 0 }}>
+          <span style={{ color: isSelected ? 'var(--text-secondary)' : 'var(--text-disabled)', flexShrink: 0, display: 'flex' }} aria-hidden="true">
+            <Icon name="doc" size={13} />
+          </span>
           {isEditing ? (
             <input
               type="text"
@@ -427,21 +484,22 @@ export default function Sidebar({
               }}
               style={{
                 width: '100%',
-                background: '#171821',
-                border: '1px solid var(--primary)',
-                color: '#FFFFFF',
-                fontSize: '0.8rem',
-                borderRadius: '4px',
-                padding: '2px 6px',
+                background: 'var(--bg-surface)',
+                border: '1px solid var(--border-focus)',
+                color: 'var(--text-primary)',
+                fontSize: '0.78rem',
+                borderRadius: 'var(--radius-xs)',
+                padding: '2px 5px',
                 outline: 'none',
+                fontFamily: 'var(--font-sans)',
               }}
             />
           ) : (
             <span
               style={{
-                fontSize: '0.8rem',
-                color: isSelected ? '#FFFFFF' : 'var(--text-secondary)',
-                fontWeight: isSelected ? 600 : 400,
+                fontSize: '0.79rem',
+                color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)',
+                fontWeight: isSelected ? 500 : 400,
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
@@ -452,56 +510,53 @@ export default function Sidebar({
           )}
         </div>
 
-        {/* Action icons on row */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0, marginLeft: '6px' }}>
+        {/* Action icons */}
+        <div
+          className="conv-actions"
+          style={{ display: 'flex', alignItems: 'center', gap: '2px', flexShrink: 0, marginLeft: '4px', opacity: 0, transition: 'opacity var(--transition-fast)' }}
+        >
           <button
             type="button"
             onClick={e => togglePin(conv.id, e)}
+            aria-label={isPinned ? 'Unpin conversation' : 'Pin conversation'}
             style={{
-              background: 'transparent',
-              border: 'none',
-              cursor: 'pointer',
-              fontSize: '0.75rem',
-              color: isPinned ? 'var(--accent)' : 'var(--text-muted)',
-              opacity: isPinned ? 1 : 0.6,
-              padding: '2px',
+              background: 'transparent', border: 'none', cursor: 'pointer',
+              color: isPinned ? 'var(--accent)' : 'var(--text-disabled)',
+              padding: '3px', borderRadius: 'var(--radius-xs)', display: 'flex',
+              transition: 'color var(--transition-fast)',
             }}
-            title={isPinned ? 'Bỏ ghim' : 'Ghim lên đầu'}
+            onMouseEnter={e => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+            onMouseLeave={e => { e.currentTarget.style.color = isPinned ? 'var(--accent)' : 'var(--text-disabled)'; }}
           >
-            📌
+            <Icon name="pin" size={12} />
           </button>
           <button
             type="button"
             onClick={e => handleStartRename(conv, e)}
+            aria-label="Rename conversation"
             style={{
-              background: 'transparent',
-              border: 'none',
-              cursor: 'pointer',
-              fontSize: '0.75rem',
-              color: 'var(--text-muted)',
-              padding: '2px',
+              background: 'transparent', border: 'none', cursor: 'pointer',
+              color: 'var(--text-disabled)', padding: '3px', borderRadius: 'var(--radius-xs)', display: 'flex',
+              transition: 'color var(--transition-fast)',
             }}
-            title="Đổi tên"
+            onMouseEnter={e => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+            onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-disabled)'; }}
           >
-            ✏️
+            <Icon name="edit" size={12} />
           </button>
           <button
             type="button"
-            onClick={e => {
-              e.stopPropagation();
-              onDeleteConversation(conv);
-            }}
+            onClick={e => { e.stopPropagation(); onDeleteConversation(conv); }}
+            aria-label="Delete conversation"
             style={{
-              background: 'transparent',
-              border: 'none',
-              cursor: 'pointer',
-              fontSize: '0.75rem',
-              color: 'var(--text-muted)',
-              padding: '2px',
+              background: 'transparent', border: 'none', cursor: 'pointer',
+              color: 'var(--text-disabled)', padding: '3px', borderRadius: 'var(--radius-xs)', display: 'flex',
+              transition: 'color var(--transition-fast)',
             }}
-            title="Xóa cuộc trò chuyện"
+            onMouseEnter={e => { e.currentTarget.style.color = 'var(--danger)'; }}
+            onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-disabled)'; }}
           >
-            🗑
+            <Icon name="trash" size={12} />
           </button>
         </div>
       </div>

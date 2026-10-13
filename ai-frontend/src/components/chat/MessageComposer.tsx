@@ -30,7 +30,7 @@ export default function MessageComposer({
   activeProjects = [],
   selectedProjectId = '',
   onSelectProject,
-  placeholder = 'Message AI-Chan...',
+  placeholder = 'Message AI-Chan…',
 }: MessageComposerProps) {
   const [isFocused, setIsFocused] = useState(false);
   const [showModelDropdown, setShowModelDropdown] = useState(false);
@@ -47,41 +47,40 @@ export default function MessageComposer({
     }
   }, [inputPrompt]);
 
-  // Click outside to close dropdowns
+  // Close dropdowns on outside click
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
+    const handler = (e: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setShowModelDropdown(false);
         setShowProjectDropdown(false);
       }
     };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
   }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (!isStreaming && inputPrompt.trim()) {
-        onSend();
-      }
+      if (!isStreaming && inputPrompt.trim()) onSend();
     }
   };
 
   const currentModel = activeModels.find(m => m.id === selectedModelId) || {
     id: selectedModelId,
-    name: selectedModelId.includes('gemini') ? 'Gemini 2.5 Flash' : selectedModelId.toUpperCase(),
+    name: selectedModelId.includes('gemini') ? 'Gemini 2.5 Flash' : selectedModelId,
   };
 
   const currentProject = activeProjects.find(p => p.id === selectedProjectId);
+  const hasInput = inputPrompt.trim().length > 0;
 
   return (
     <div
       style={{
         width: '100%',
-        maxWidth: '860px',
+        maxWidth: '780px',
         margin: '0 auto',
-        padding: '0 1rem 1rem',
+        padding: '0 1.25rem 1.25rem',
         position: 'relative',
         zIndex: 20,
       }}
@@ -89,53 +88,55 @@ export default function MessageComposer({
       <div
         ref={dropdownRef}
         style={{
-          backgroundColor: '#171821',
-          border: isFocused ? '1px solid var(--border-focus)' : '1px solid var(--border-default)',
-          boxShadow: isFocused ? 'var(--accent-glow)' : '0 8px 32px rgba(0, 0, 0, 0.4)',
-          borderRadius: 'var(--radius-lg)',
-          padding: '12px 16px 10px',
+          backgroundColor: 'var(--bg-surface)',
+          border: isFocused ? '1px solid var(--border-strong)' : '1px solid var(--border-default)',
+          borderRadius: 'var(--radius-xl)',
+          padding: '10px 14px 8px',
           display: 'flex',
           flexDirection: 'column',
-          gap: '8px',
-          transition: 'all var(--transition-fast)',
+          gap: '6px',
+          transition: 'border-color var(--transition-fast)',
+          boxShadow: '0 4px 24px rgba(0,0,0,0.35)',
         }}
       >
-        {/* Active Project Banner if selected */}
+        {/* Active project badge */}
         {currentProject && (
           <div
             style={{
               display: 'inline-flex',
               alignItems: 'center',
               gap: '6px',
-              padding: '4px 10px',
+              padding: '3px 8px',
               borderRadius: 'var(--radius-full)',
-              background: 'rgba(99, 102, 241, 0.15)',
-              border: '1px solid rgba(99, 102, 241, 0.3)',
-              color: '#c7d2fe',
-              fontSize: '0.75rem',
+              background: 'var(--accent-subtle)',
+              border: '1px solid var(--accent-border)',
+              color: 'var(--accent-hover)',
+              fontSize: '0.74rem',
               alignSelf: 'flex-start',
             }}
           >
-            <span>🧩 Workflow: {currentProject.name}</span>
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+            <span>Workflow: {currentProject.name}</span>
             <button
               type="button"
               onClick={() => onSelectProject?.('')}
+              aria-label="Remove workflow"
               style={{
                 background: 'transparent',
                 border: 'none',
-                color: '#c7d2fe',
+                color: 'var(--accent)',
                 cursor: 'pointer',
-                fontSize: '0.75rem',
-                marginLeft: '4px',
+                lineHeight: 1,
+                padding: '0 0 0 2px',
+                display: 'flex',
               }}
-              title="Bỏ chọn workflow"
             >
-              ✕
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </button>
           </div>
         )}
 
-        {/* Multiline Textarea */}
+        {/* Textarea */}
         <textarea
           ref={textareaRef}
           value={inputPrompt}
@@ -144,14 +145,15 @@ export default function MessageComposer({
           onFocus={() => setIsFocused(true)}
           onBlur={() => setIsFocused(false)}
           placeholder={placeholder}
+          aria-label="Message input"
           rows={1}
           style={{
             width: '100%',
             background: 'transparent',
             border: 'none',
             color: 'var(--text-primary)',
-            fontSize: '0.94rem',
-            lineHeight: 1.5,
+            fontSize: '0.9rem',
+            lineHeight: 1.55,
             resize: 'none',
             outline: 'none',
             fontFamily: 'var(--font-sans)',
@@ -161,255 +163,267 @@ export default function MessageComposer({
           }}
         />
 
-        {/* Action Toolbar Row */}
+        {/* Toolbar */}
         <div
           style={{
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
             paddingTop: '4px',
-            borderTop: '1px solid rgba(167, 139, 250, 0.08)',
+            borderTop: '1px solid var(--border-subtle)',
           }}
         >
-          {/* Left Action Buttons */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <button
-              type="button"
-              title="Công cụ bổ sung"
-              style={{
-                width: '32px',
-                height: '32px',
-                borderRadius: '8px',
-                background: 'rgba(255, 255, 255, 0.05)',
-                border: '1px solid rgba(167, 139, 250, 0.15)',
-                color: 'var(--text-secondary)',
-                fontSize: '1rem',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                transition: 'all var(--transition-fast)',
-              }}
-              onMouseEnter={e => e.currentTarget.style.color = '#FFFFFF'}
-              onMouseLeave={e => e.currentTarget.style.color = 'var(--text-secondary)'}
-            >
-              +
-            </button>
-            <button
-              type="button"
-              title="Đính kèm tệp"
-              style={{
-                width: '32px',
-                height: '32px',
-                borderRadius: '8px',
-                background: 'rgba(255, 255, 255, 0.05)',
-                border: '1px solid rgba(167, 139, 250, 0.15)',
-                color: 'var(--text-secondary)',
-                fontSize: '0.85rem',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                transition: 'all var(--transition-fast)',
-              }}
-              onMouseEnter={e => e.currentTarget.style.color = '#FFFFFF'}
-              onMouseLeave={e => e.currentTarget.style.color = 'var(--text-secondary)'}
-            >
-              📎
-            </button>
-            <button
-              type="button"
-              title="Tải ảnh lên"
-              style={{
-                width: '32px',
-                height: '32px',
-                borderRadius: '8px',
-                background: 'rgba(255, 255, 255, 0.05)',
-                border: '1px solid rgba(167, 139, 250, 0.15)',
-                color: 'var(--text-secondary)',
-                fontSize: '0.85rem',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                transition: 'all var(--transition-fast)',
-              }}
-              onMouseEnter={e => e.currentTarget.style.color = '#FFFFFF'}
-              onMouseLeave={e => e.currentTarget.style.color = 'var(--text-secondary)'}
-            >
-              🖼
-            </button>
+          {/* Left: project selector */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            {activeProjects.length > 0 && (
+              <div style={{ position: 'relative' }}>
+                <button
+                  type="button"
+                  onClick={() => { setShowProjectDropdown(v => !v); setShowModelDropdown(false); }}
+                  aria-label="Select project workflow"
+                  style={toolbarBtnStyle}
+                  title="Project Workflow"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+                    <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+                    <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+                  </svg>
+                </button>
+                {showProjectDropdown && (
+                  <Dropdown top style={{ width: '200px' }}>
+                    <DropdownLabel>Project Workflow</DropdownLabel>
+                    <DropdownItem
+                      selected={!selectedProjectId}
+                      onClick={() => { onSelectProject?.(''); setShowProjectDropdown(false); }}
+                    >
+                      None (standard chat)
+                    </DropdownItem>
+                    {activeProjects.map(p => (
+                      <DropdownItem
+                        key={p.id}
+                        selected={selectedProjectId === p.id}
+                        onClick={() => { onSelectProject?.(p.id); setShowProjectDropdown(false); }}
+                      >
+                        {p.name}
+                      </DropdownItem>
+                    ))}
+                  </Dropdown>
+                )}
+              </div>
+            )}
           </div>
 
-          {/* Right Selector and Send Button */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            {/* Model Selector Dropdown Trigger */}
+          {/* Right: model selector + send */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {/* Model selector */}
             <div style={{ position: 'relative' }}>
               <button
                 type="button"
-                onClick={() => setShowModelDropdown(!showModelDropdown)}
+                onClick={() => { setShowModelDropdown(v => !v); setShowProjectDropdown(false); }}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '6px',
-                  padding: '5px 12px',
+                  gap: '5px',
+                  padding: '4px 10px',
                   borderRadius: 'var(--radius-full)',
-                  background: 'rgba(31, 27, 43, 0.9)',
-                  border: '1px solid rgba(167, 139, 250, 0.25)',
-                  color: 'var(--text-primary)',
-                  fontSize: '0.78rem',
+                  background: 'var(--bg-elevated)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-secondary)',
+                  fontSize: '0.76rem',
                   fontWeight: 500,
                   cursor: 'pointer',
-                  transition: 'all var(--transition-fast)',
+                  fontFamily: 'var(--font-sans)',
+                  transition: 'color var(--transition-fast), border-color var(--transition-fast)',
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.color = 'var(--text-primary)';
+                  e.currentTarget.style.borderColor = 'var(--border-default)';
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.color = 'var(--text-secondary)';
+                  e.currentTarget.style.borderColor = 'var(--border-subtle)';
                 }}
               >
-                <span>✨</span>
-                <span>{currentModel.name || selectedModelId}</span>
-                <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>▼</span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '120px' }}>
+                  {currentModel.name || selectedModelId}
+                </span>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                  <polyline points="6 9 12 15 18 9"/>
+                </svg>
               </button>
 
-              {/* Model Dropdown Menu */}
               {showModelDropdown && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    bottom: '100%',
-                    right: 0,
-                    marginBottom: '8px',
-                    width: '240px',
-                    backgroundColor: '#171821',
-                    border: '1px solid var(--border-default)',
-                    borderRadius: 'var(--radius-md)',
-                    boxShadow: '0 8px 30px rgba(0, 0, 0, 0.5)',
-                    padding: '6px',
-                    zIndex: 50,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '2px',
-                  }}
-                >
-                  <div style={{ padding: '6px 10px', fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>
-                    Chọn Mô Hình AI
-                  </div>
+                <Dropdown top style={{ width: '220px' }}>
+                  <DropdownLabel>Select Model</DropdownLabel>
                   {activeModels.length > 0 ? (
                     activeModels.map(m => (
-                      <div
+                      <DropdownItem
                         key={m.id}
-                        onClick={() => {
-                          onSelectModel?.(m.id);
-                          setShowModelDropdown(false);
-                        }}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          padding: '8px 10px',
-                          borderRadius: 'var(--radius-xs)',
-                          cursor: 'pointer',
-                          backgroundColor: selectedModelId === m.id ? 'rgba(167, 139, 250, 0.18)' : 'transparent',
-                          color: selectedModelId === m.id ? '#FFFFFF' : 'var(--text-secondary)',
-                          fontSize: '0.8rem',
-                        }}
+                        selected={selectedModelId === m.id}
+                        onClick={() => { onSelectModel?.(m.id); setShowModelDropdown(false); }}
                       >
-                        <div style={{ display: 'flex', flexDirection: 'column' }}>
-                          <span style={{ fontWeight: selectedModelId === m.id ? 600 : 400 }}>{m.name}</span>
-                          <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{m.provider}</span>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+                          <span>{m.name}</span>
+                          {m.provider && <span style={{ fontSize: '0.7rem', color: 'var(--text-disabled)' }}>{m.provider}</span>}
                         </div>
-                        {selectedModelId === m.id && <span style={{ color: 'var(--primary)' }}>✓</span>}
-                      </div>
+                      </DropdownItem>
                     ))
                   ) : (
                     <>
-                      <div
-                        onClick={() => {
-                          onSelectModel?.('gemini-3.8-flash');
-                          setShowModelDropdown(false);
-                        }}
-                        style={{
-                          padding: '8px 10px',
-                          borderRadius: 'var(--radius-xs)',
-                          cursor: 'pointer',
-                          backgroundColor: selectedModelId === 'gemini-3.8-flash' ? 'rgba(167, 139, 250, 0.18)' : 'transparent',
-                          fontSize: '0.8rem',
-                          color: '#FFFFFF',
-                        }}
-                      >
-                        Gemini 2.5 Flash (Default)
-                      </div>
-                      <div
-                        onClick={() => {
-                          onSelectModel?.('gpt-4o-mini');
-                          setShowModelDropdown(false);
-                        }}
-                        style={{
-                          padding: '8px 10px',
-                          borderRadius: 'var(--radius-xs)',
-                          cursor: 'pointer',
-                          backgroundColor: selectedModelId === 'gpt-4o-mini' ? 'rgba(167, 139, 250, 0.18)' : 'transparent',
-                          fontSize: '0.8rem',
-                          color: '#FFFFFF',
-                        }}
-                      >
-                        OpenAI GPT-4o-mini
-                      </div>
+                      <DropdownItem selected={selectedModelId === 'gemini-3.8-flash'} onClick={() => { onSelectModel?.('gemini-3.8-flash'); setShowModelDropdown(false); }}>
+                        Gemini 2.5 Flash
+                      </DropdownItem>
+                      <DropdownItem selected={selectedModelId === 'gpt-4o-mini'} onClick={() => { onSelectModel?.('gpt-4o-mini'); setShowModelDropdown(false); }}>
+                        GPT-4o mini
+                      </DropdownItem>
                     </>
                   )}
-                </div>
+                </Dropdown>
               )}
             </div>
 
-            {/* Send or Stop Button */}
+            {/* Send / Stop */}
             {isStreaming ? (
               <button
                 type="button"
                 onClick={onStop}
+                aria-label="Stop generation"
                 style={{
-                  width: '36px',
-                  height: '36px',
+                  width: '32px',
+                  height: '32px',
                   borderRadius: '50%',
-                  background: 'rgba(239, 68, 68, 0.25)',
-                  border: '1px solid rgba(239, 68, 68, 0.6)',
-                  color: '#EF4444',
+                  background: 'var(--danger-bg)',
+                  border: '1px solid rgba(239,68,68,0.3)',
+                  color: 'var(--danger)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   cursor: 'pointer',
-                  fontSize: '0.85rem',
-                  transition: 'all var(--transition-fast)',
+                  transition: 'background var(--transition-fast)',
                 }}
-                title="Dừng sinh phản hồi"
               >
-                ⏹
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
               </button>
             ) : (
               <button
                 type="button"
                 onClick={() => onSend()}
-                disabled={!inputPrompt.trim()}
+                disabled={!hasInput}
+                aria-label="Send message"
                 style={{
-                  width: '36px',
-                  height: '36px',
+                  width: '32px',
+                  height: '32px',
                   borderRadius: '50%',
-                  background: inputPrompt.trim() ? 'var(--accent-gradient)' : 'rgba(167, 139, 250, 0.2)',
-                  border: 'none',
-                  color: '#FFFFFF',
+                  background: hasInput ? 'var(--text-primary)' : 'var(--bg-elevated)',
+                  border: hasInput ? 'none' : '1px solid var(--border-subtle)',
+                  color: hasInput ? 'var(--bg-base)' : 'var(--text-disabled)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  cursor: inputPrompt.trim() ? 'pointer' : 'default',
-                  fontSize: '0.95rem',
-                  boxShadow: inputPrompt.trim() ? 'var(--accent-glow-sm)' : 'none',
-                  transition: 'all var(--transition-fast)',
-                  opacity: inputPrompt.trim() ? 1 : 0.5,
+                  cursor: hasInput ? 'pointer' : 'default',
+                  transition: 'background var(--transition-fast), color var(--transition-fast)',
                 }}
-                title="Gửi tin nhắn (Enter)"
               >
-                ➔
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                </svg>
               </button>
             )}
           </div>
         </div>
       </div>
+
+      {/* Footer hint */}
+      <p style={{ textAlign: 'center', fontSize: '0.7rem', color: 'var(--text-disabled)', marginTop: '6px' }}>
+        AI-Chan can make mistakes. Press <kbd style={{ fontFamily: 'var(--font-mono)', fontSize: '0.68rem', padding: '0 3px', border: '1px solid var(--border-subtle)', borderRadius: '3px' }}>Shift+Enter</kbd> for a new line.
+      </p>
     </div>
   );
 }
+
+// ── Shared dropdown primitives ────────────────────────────────────────
+function Dropdown({ children, top, style }: { children: React.ReactNode; top?: boolean; style?: React.CSSProperties }) {
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        ...(top ? { bottom: '100%', marginBottom: '6px' } : { top: '100%', marginTop: '6px' }),
+        right: 0,
+        backgroundColor: 'var(--bg-surface)',
+        border: '1px solid var(--border-default)',
+        borderRadius: 'var(--radius-lg)',
+        boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
+        padding: '4px',
+        zIndex: 50,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '1px',
+        ...style,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function DropdownLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ padding: '5px 8px', fontSize: '0.68rem', color: 'var(--text-disabled)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+      {children}
+    </div>
+  );
+}
+
+function DropdownItem({ children, selected, onClick }: { children: React.ReactNode; selected?: boolean; onClick: () => void }) {
+  return (
+    <div
+      onClick={onClick}
+      role="option"
+      aria-selected={selected}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '7px 8px',
+        borderRadius: 'var(--radius-sm)',
+        cursor: 'pointer',
+        backgroundColor: selected ? 'var(--bg-selected)' : 'transparent',
+        color: selected ? 'var(--text-primary)' : 'var(--text-secondary)',
+        fontSize: '0.8rem',
+        transition: 'background var(--transition-fast), color var(--transition-fast)',
+      }}
+      onMouseEnter={e => {
+        if (!selected) {
+          e.currentTarget.style.background = 'var(--bg-hover)';
+          e.currentTarget.style.color = 'var(--text-primary)';
+        }
+      }}
+      onMouseLeave={e => {
+        if (!selected) {
+          e.currentTarget.style.background = 'transparent';
+          e.currentTarget.style.color = 'var(--text-secondary)';
+        }
+      }}
+    >
+      {children}
+      {selected && (
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+      )}
+    </div>
+  );
+}
+
+const toolbarBtnStyle: React.CSSProperties = {
+  width: '28px',
+  height: '28px',
+  borderRadius: 'var(--radius-sm)',
+  background: 'transparent',
+  border: '1px solid transparent',
+  color: 'var(--text-disabled)',
+  fontSize: '0.85rem',
+  cursor: 'pointer',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  transition: 'color var(--transition-fast), border-color var(--transition-fast)',
+};

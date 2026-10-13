@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useState } from 'react';
-import Link from 'next/link';
 
 export interface Message {
   id: string;
@@ -26,7 +25,7 @@ interface ChatWorkspaceProps {
   scrollToBottom: () => void;
 }
 
-// Markdown & Code Block Formatter Component
+// ── Markdown & Code Block renderer ──────────────────────────────────
 function FormattedMessage({ content, isStreaming }: { content: string; isStreaming?: boolean }) {
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 
@@ -45,7 +44,6 @@ function FormattedMessage({ content, isStreaming }: { content: string; isStreami
           const lines = part.slice(3, -3).trim().split('\n');
           const language = lines[0].match(/^[a-zA-Z0-9_-]+$/) ? lines[0] : 'code';
           const codeBody = language === lines[0] ? lines.slice(1).join('\n') : lines.join('\n');
-
           return (
             <div key={index} className="code-block-wrapper">
               <div className="code-header">
@@ -53,14 +51,12 @@ function FormattedMessage({ content, isStreaming }: { content: string; isStreami
                 <button
                   type="button"
                   onClick={() => copyToClipboard(codeBody, index)}
-                  aria-label="Sao chép mã nguồn"
+                  aria-label={copiedIndex === index ? 'Copied' : 'Copy code'}
                 >
-                  {copiedIndex === index ? '✓ Đã sao chép' : 'Sao chép'}
+                  {copiedIndex === index ? '✓ Copied' : 'Copy'}
                 </button>
               </div>
-              <pre className="code-content">
-                <code>{codeBody}</code>
-              </pre>
+              <pre className="code-content"><code>{codeBody}</code></pre>
             </div>
           );
         }
@@ -70,25 +66,17 @@ function FormattedMessage({ content, isStreaming }: { content: string; isStreami
           <React.Fragment key={index}>
             {paragraphs.map((para, pIdx) => {
               if (!para.trim()) return null;
-
               if (para.includes('\n- ') || para.startsWith('- ')) {
                 const items = para.split('\n').filter(l => l.trim().startsWith('- '));
                 return (
                   <ul key={pIdx}>
                     {items.map((item, itemIdx) => (
-                      <li key={itemIdx}>
-                        {renderInlineFormatting(item.replace(/^- /, ''))}
-                      </li>
+                      <li key={itemIdx}>{renderInline(item.replace(/^- /, ''))}</li>
                     ))}
                   </ul>
                 );
               }
-
-              return (
-                <p key={pIdx}>
-                  {renderInlineFormatting(para)}
-                </p>
-              );
+              return <p key={pIdx}>{renderInline(para)}</p>;
             })}
           </React.Fragment>
         );
@@ -98,14 +86,12 @@ function FormattedMessage({ content, isStreaming }: { content: string; isStreami
   );
 }
 
-function renderInlineFormatting(text: string) {
-  // Bold **bold**
+function renderInline(text: string) {
   const boldParts = text.split(/(\*\*.*?\*\*)/g);
   return boldParts.map((bPart, bIdx) => {
     if (bPart.startsWith('**') && bPart.endsWith('**')) {
       return <strong key={bIdx}>{bPart.slice(2, -2)}</strong>;
     }
-    // Inline code `code`
     const codeParts = bPart.split(/(`.*?`)/g);
     return codeParts.map((cPart, cIdx) => {
       if (cPart.startsWith('`') && cPart.endsWith('`')) {
@@ -114,6 +100,75 @@ function renderInlineFormatting(text: string) {
       return cPart;
     });
   });
+}
+
+// ── Starter prompt cards ─────────────────────────────────────────────
+const STARTER_CARDS = [
+  {
+    title: 'Write code',
+    desc: 'Generate, debug, or explain',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
+      </svg>
+    ),
+    prompt: 'Help me write a high-performance data processing function in TypeScript.',
+  },
+  {
+    title: 'Analyze data',
+    desc: 'Understand & visualize',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/>
+        <line x1="6" y1="20" x2="6" y2="14"/>
+      </svg>
+    ),
+    prompt: 'Analyze and summarize the following dataset for me.',
+  },
+  {
+    title: 'Draft content',
+    desc: 'Blog, email, documentation',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+        <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+      </svg>
+    ),
+    prompt: 'Write a concise technical blog post about modern state management in React.',
+  },
+  {
+    title: 'Learn & research',
+    desc: 'Explain concepts in depth',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+    ),
+    prompt: 'Explain transformer attention mechanisms in simple terms.',
+  },
+];
+
+// ── AI avatar mark ───────────────────────────────────────────────────
+function AvatarMark({ size = 22 }: { size?: number }) {
+  return (
+    <div
+      aria-hidden="true"
+      style={{
+        width: size,
+        height: size,
+        borderRadius: '6px',
+        background: 'var(--accent-gradient)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+      }}
+    >
+      <svg width={size * 0.55} height={size * 0.55} viewBox="0 0 14 14" fill="none">
+        <path d="M7 1L8.8 5.2L13.4 5.8L10.2 8.8L11 13.4L7 11.2L3 13.4L3.8 8.8L0.6 5.8L5.2 5.2L7 1Z" fill="white" fillOpacity="0.95"/>
+      </svg>
+    </div>
+  );
 }
 
 export default function ChatWorkspace({
@@ -137,33 +192,6 @@ export default function ChatWorkspace({
     setTimeout(() => setCopiedMsgId(null), 2000);
   };
 
-  const starterCards = [
-    {
-      title: 'Viết code',
-      desc: 'Generate, debug, explain',
-      icon: '🪄',
-      prompt: 'Hãy giúp tôi viết một hàm phân tích dữ liệu hiệu năng cao với TypeScript và tối ưu hóa bộ nhớ.',
-    },
-    {
-      title: 'Phân tích dữ liệu',
-      desc: 'Tìm hiểu, trực quan hóa',
-      icon: '📊',
-      prompt: 'Hãy phân tích phong cách và bố cục giao diện của dự án ml-tools giúp tôi nhé.',
-    },
-    {
-      title: 'Tạo nội dung',
-      desc: 'Blog, email, social media',
-      icon: '📝',
-      prompt: 'Hãy viết một bài giới thiệu tính năng AI-Chan VRM Companion theo phong cách công nghệ Nhật Bản hiện đại.',
-    },
-    {
-      title: 'Học & nghiên cứu',
-      desc: 'Tìm hiểu tài liệu, giải thích khái niệm',
-      icon: '🎓',
-      prompt: 'Giải thích nguyên lý hoạt động của blendshape và bone rigging trong chuẩn mô hình VRM 3D.',
-    },
-  ];
-
   return (
     <div
       style={{
@@ -175,137 +203,123 @@ export default function ChatWorkspace({
         overflow: 'hidden',
       }}
     >
-      {/* Scrollable Message Thread */}
+      {/* Scrollable message thread */}
       <div
         ref={chatScrollContainerRef}
         onScroll={onScroll}
         style={{
           flex: 1,
           overflowY: 'auto',
-          padding: '1.5rem 2rem 2rem',
+          padding: '2rem 2rem 1.5rem',
           display: 'flex',
           flexDirection: 'column',
-          gap: '1.75rem',
+          gap: '1.5rem',
         }}
       >
-        {/* Welcome Greeting & Starter Cards when thread is empty */}
+        {/* Empty state: welcome + starter cards */}
         {messages.length === 0 ? (
           <div
             style={{
               margin: 'auto',
-              maxWidth: '720px',
+              maxWidth: '680px',
               width: '100%',
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'flex-start',
-              padding: '2rem 1rem',
+              padding: '2rem 0',
             }}
           >
-            {/* Sparkle Header */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '0.75rem' }}>
-              <div
-                style={{
-                  width: '42px',
-                  height: '42px',
-                  borderRadius: '12px',
-                  background: 'var(--accent-gradient)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: '1.35rem',
-                  boxShadow: 'var(--accent-glow)',
-                }}
-              >
-                ✨
-              </div>
-              <h2
-                style={{
-                  fontSize: '1.75rem',
-                  fontWeight: 700,
-                  letterSpacing: '-0.02em',
-                  color: '#FFFFFF',
-                }}
-              >
-                Good evening, {currentUser?.username || 'Dũng'}! ✨
-              </h2>
-            </div>
-
-            <p style={{ fontSize: '0.95rem', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: '2rem' }}>
-              AI-Chan is here to help you turn your ideas into reality. What would you like to work on today?
+            <h1
+              style={{
+                fontSize: '1.6rem',
+                fontWeight: 600,
+                letterSpacing: '-0.025em',
+                color: 'var(--text-primary)',
+                marginBottom: '0.5rem',
+                textWrap: 'balance',
+              } as React.CSSProperties}
+            >
+              Good {getGreeting()},{' '}
+              <span style={{ color: 'var(--text-secondary)' }}>
+                {currentUser?.username || 'there'}
+              </span>
+            </h1>
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', lineHeight: 1.55, marginBottom: '2rem' }}>
+              What would you like to work on today?
             </p>
 
-            {/* 4 Action Cards Grid */}
+            {/* 2 × 2 card grid */}
             <div
               style={{
                 display: 'grid',
                 gridTemplateColumns: 'repeat(2, 1fr)',
-                gap: '14px',
+                gap: '10px',
                 width: '100%',
               }}
             >
-              {starterCards.map((card, idx) => (
-                <div
+              {STARTER_CARDS.map((card, idx) => (
+                <button
                   key={idx}
+                  type="button"
                   onClick={() => onSelectPrompt(card.prompt)}
                   style={{
-                    backgroundColor: 'rgba(23, 24, 33, 0.8)',
+                    background: 'var(--bg-surface)',
                     border: '1px solid var(--border-subtle)',
-                    borderRadius: 'var(--radius-md)',
-                    padding: '16px 18px',
+                    borderRadius: 'var(--radius-lg)',
+                    padding: '14px 16px',
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'flex-start',
                     gap: '12px',
-                    transition: 'all var(--transition-fast)',
+                    textAlign: 'left',
+                    transition: 'border-color var(--transition-fast), background var(--transition-fast)',
+                    fontFamily: 'var(--font-sans)',
                   }}
                   onMouseEnter={e => {
                     e.currentTarget.style.borderColor = 'var(--border-default)';
-                    e.currentTarget.style.backgroundColor = 'rgba(31, 27, 43, 0.9)';
-                    e.currentTarget.style.boxShadow = '0 6px 20px rgba(0, 0, 0, 0.35)';
-                    e.currentTarget.style.transform = 'translateY(-2px)';
+                    e.currentTarget.style.background = 'var(--bg-elevated)';
                   }}
                   onMouseLeave={e => {
                     e.currentTarget.style.borderColor = 'var(--border-subtle)';
-                    e.currentTarget.style.backgroundColor = 'rgba(23, 24, 33, 0.8)';
-                    e.currentTarget.style.boxShadow = 'none';
-                    e.currentTarget.style.transform = 'translateY(0)';
+                    e.currentTarget.style.background = 'var(--bg-surface)';
                   }}
                 >
                   <div
+                    aria-hidden="true"
                     style={{
-                      width: '36px',
-                      height: '36px',
-                      borderRadius: '10px',
-                      background: 'rgba(167, 139, 250, 0.12)',
-                      border: '1px solid rgba(167, 139, 250, 0.25)',
+                      width: '32px',
+                      height: '32px',
+                      borderRadius: 'var(--radius-sm)',
+                      background: 'var(--bg-elevated)',
+                      border: '1px solid var(--border-subtle)',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      fontSize: '1.1rem',
+                      color: 'var(--text-secondary)',
                       flexShrink: 0,
                     }}
                   >
                     {card.icon}
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column' }}>
-                    <span style={{ fontSize: '0.9rem', fontWeight: 600, color: '#FFFFFF', marginBottom: '2px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                    <span style={{ fontSize: '0.84rem', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '2px' }}>
                       {card.title}
                     </span>
-                    <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                    <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {card.desc}
                     </span>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           </div>
         ) : (
-          /* Active Message Stream Thread */
+          // Message thread
           messages.map((msg, index) => {
             const isUser = msg.role === 'user';
             const timeStr = msg.created_at
-              ? new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-              : 'Vừa xong';
+              ? new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit' }).format(new Date(msg.created_at))
+              : '';
 
             return (
               <div
@@ -315,188 +329,119 @@ export default function ChatWorkspace({
                   flexDirection: 'column',
                   alignItems: isUser ? 'flex-end' : 'flex-start',
                   width: '100%',
-                  maxWidth: '820px',
+                  maxWidth: '780px',
                   margin: isUser ? '0 0 0 auto' : '0 auto 0 0',
                 }}
               >
-                {/* Message Header (Avatar + Name for Assistant) */}
+                {/* Assistant header */}
                 {!isUser && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                    <div
-                      style={{
-                        width: '24px',
-                        height: '24px',
-                        borderRadius: '50%',
-                        background: 'linear-gradient(135deg, #A78BFA 0%, #8B5CF6 100%)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '0.75rem',
-                        boxShadow: 'var(--accent-glow-sm)',
-                      }}
-                    >
-                      🌸
-                    </div>
-                    <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#FFFFFF' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '7px', marginBottom: '6px' }}>
+                    <AvatarMark size={22} />
+                    <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>
                       AI-Chan
                     </span>
-                    <span
-                      style={{
-                        fontSize: '0.65rem',
-                        color: 'var(--success)',
-                        background: 'rgba(34, 197, 94, 0.15)',
-                        padding: '1px 5px',
-                        borderRadius: '4px',
-                      }}
-                    >
-                      ✔
-                    </span>
-                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginLeft: '4px' }}>
-                      {timeStr}
-                    </span>
+                    {timeStr && (
+                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{timeStr}</span>
+                    )}
                   </div>
                 )}
 
-                {/* Message Bubble Card */}
+                {/* Bubble */}
                 <div
                   style={{
-                    backgroundColor: isUser
-                      ? 'linear-gradient(135deg, #7C3AED 0%, #6D28D9 100%)'
-                      : 'rgba(23, 24, 33, 0.95)',
                     background: isUser
-                      ? 'linear-gradient(135deg, rgba(139, 92, 246, 0.35) 0%, rgba(124, 58, 237, 0.45) 100%)'
-                      : 'rgba(23, 24, 33, 0.95)',
+                      ? 'var(--bg-elevated)'
+                      : 'transparent',
                     border: isUser
-                      ? '1px solid rgba(167, 139, 250, 0.4)'
-                      : '1px solid var(--border-subtle)',
-                    borderRadius: isUser ? '16px 16px 4px 16px' : '4px 16px 16px 16px',
-                    padding: '14px 18px',
-                    color: '#F3F1FF',
+                      ? '1px solid var(--border-default)'
+                      : 'none',
+                    borderRadius: isUser ? 'var(--radius-lg)' : '0',
+                    padding: isUser ? '10px 14px' : '0',
+                    color: 'var(--text-primary)',
                     maxWidth: '100%',
-                    boxShadow: isUser
-                      ? '0 4px 16px rgba(124, 58, 237, 0.2)'
-                      : '0 4px 20px rgba(0, 0, 0, 0.35)',
                     wordBreak: 'break-word',
                   }}
                 >
                   {isUser ? (
-                    <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6, fontSize: '0.94rem' }}>
+                    <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6, fontSize: '0.9rem' }}>
                       {msg.content}
                     </div>
                   ) : (
                     <>
                       <FormattedMessage content={msg.content} isStreaming={msg.isStreaming} />
 
-                      {/* Tool / Generating Status Card during streaming analysis */}
+                      {/* Generating indicator */}
                       {msg.isStreaming && (
                         <div
                           style={{
-                            marginTop: '12px',
-                            padding: '10px 14px',
-                            background: 'rgba(14, 15, 27, 0.75)',
-                            border: '1px solid rgba(167, 139, 250, 0.2)',
+                            marginTop: '10px',
+                            padding: '8px 12px',
+                            background: 'var(--bg-surface)',
+                            border: '1px solid var(--border-subtle)',
                             borderRadius: 'var(--radius-md)',
                             display: 'flex',
-                            flexDirection: 'column',
-                            gap: '6px',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            fontSize: '0.75rem',
                           }}
                         >
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.75rem' }}>
-                            <span style={{ color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              <span>⚡</span>
-                              <span>Đang suy luận phản hồi...</span>
+                          <span style={{ color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span aria-hidden="true">
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                                <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>
+                              </svg>
                             </span>
-                            {onStop && (
-                              <button
-                                type="button"
-                                onClick={onStop}
-                                style={{
-                                  background: 'rgba(239, 68, 68, 0.15)',
-                                  border: '1px solid rgba(239, 68, 68, 0.3)',
-                                  color: 'var(--danger)',
-                                  borderRadius: '4px',
-                                  padding: '2px 8px',
-                                  fontSize: '0.7rem',
-                                  cursor: 'pointer',
-                                }}
-                              >
-                                ⏹ Stop
-                              </button>
-                            )}
-                          </div>
-                          {/* Animated progress line */}
-                          <div
-                            style={{
-                              width: '100%',
-                              height: '3px',
-                              background: 'rgba(255, 255, 255, 0.1)',
-                              borderRadius: '9999px',
-                              overflow: 'hidden',
-                            }}
-                          >
-                            <div
+                            Generating…
+                          </span>
+                          {onStop && (
+                            <button
+                              type="button"
+                              onClick={onStop}
+                              aria-label="Stop generation"
                               style={{
-                                width: '60%',
-                                height: '100%',
-                                background: 'linear-gradient(90deg, var(--primary) 0%, var(--accent-cyan) 100%)',
-                                borderRadius: '9999px',
-                                animation: 'progressFlow 1.5s ease-in-out infinite',
+                                background: 'var(--danger-bg)',
+                                border: '1px solid rgba(239,68,68,0.25)',
+                                color: 'var(--danger)',
+                                borderRadius: 'var(--radius-xs)',
+                                padding: '2px 8px',
+                                fontSize: '0.72rem',
+                                cursor: 'pointer',
+                                fontFamily: 'var(--font-sans)',
                               }}
-                            />
-                            <style jsx>{`
-                              @keyframes progressFlow {
-                                0% { transform: translateX(-100%); }
-                                100% { transform: translateX(200%); }
-                              }
-                            `}</style>
-                          </div>
+                            >
+                              Stop
+                            </button>
+                          )}
                         </div>
                       )}
 
-                      {/* Message Actions Footer for Assistant */}
+                      {/* Assistant actions */}
                       {!msg.isStreaming && msg.content && (
                         <div
                           style={{
                             display: 'flex',
                             alignItems: 'center',
-                            gap: '12px',
-                            marginTop: '10px',
-                            paddingTop: '8px',
-                            borderTop: '1px solid rgba(167, 139, 250, 0.1)',
+                            gap: '4px',
+                            marginTop: '8px',
                           }}
                         >
                           <button
                             type="button"
                             onClick={() => handleCopyMessage(msg.id, msg.content)}
-                            style={{
-                              background: 'transparent',
-                              border: 'none',
-                              color: 'var(--text-muted)',
-                              cursor: 'pointer',
-                              fontSize: '0.78rem',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '4px',
-                            }}
-                            title="Sao chép nội dung"
+                            aria-label={copiedMsgId === msg.id ? 'Copied' : 'Copy message'}
+                            style={actionBtnStyle}
                           >
-                            <span>📋</span>
-                            <span>{copiedMsgId === msg.id ? 'Đã sao chép' : 'Sao chép'}</span>
+                            {copiedMsgId === msg.id ? (
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>
+                            ) : (
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                            )}
                           </button>
-
-                          <button
-                            type="button"
-                            style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.78rem' }}
-                            title="Thích câu trả lời"
-                          >
-                            👍
+                          <button type="button" aria-label="Thumbs up" style={actionBtnStyle}>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3H14z"/><path d="M7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3"/></svg>
                           </button>
-                          <button
-                            type="button"
-                            style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.78rem' }}
-                            title="Chưa hài lòng"
-                          >
-                            👎
+                          <button type="button" aria-label="Thumbs down" style={actionBtnStyle}>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M10 15v4a3 3 0 003 3l4-9V2H5.72a2 2 0 00-2 1.7l-1.38 9a2 2 0 002 2.3H10z"/><path d="M17 2h2.67A2.31 2.31 0 0122 4v7a2.31 2.31 0 01-2.33 2H17"/></svg>
                           </button>
                         </div>
                       )}
@@ -504,9 +449,9 @@ export default function ChatWorkspace({
                   )}
                 </div>
 
-                {/* User message timestamp */}
-                {isUser && (
-                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px', marginRight: '4px' }}>
+                {/* User timestamp */}
+                {isUser && timeStr && (
+                  <span style={{ fontSize: '0.68rem', color: 'var(--text-disabled)', marginTop: '3px', marginRight: '2px' }}>
                     {timeStr}
                   </span>
                 )}
@@ -518,34 +463,56 @@ export default function ChatWorkspace({
         <div ref={messagesEndRef} style={{ height: '1px' }} />
       </div>
 
-      {/* Floating Scroll to Bottom Button */}
+      {/* Scroll to bottom */}
       {showScrollBottom && (
         <button
           type="button"
           onClick={scrollToBottom}
+          aria-label="Scroll to latest message"
           style={{
             position: 'absolute',
             bottom: '16px',
-            right: '24px',
-            backgroundColor: '#1F1B2B',
-            border: '1px solid var(--primary)',
-            color: '#FFFFFF',
-            width: '36px',
-            height: '36px',
+            right: '20px',
+            width: '32px',
+            height: '32px',
             borderRadius: '50%',
+            background: 'var(--bg-elevated)',
+            border: '1px solid var(--border-default)',
+            color: 'var(--text-secondary)',
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            boxShadow: 'var(--accent-glow-sm)',
             zIndex: 30,
-            transition: 'all var(--transition-fast)',
+            transition: 'color var(--transition-fast)',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
           }}
-          title="Cuộn xuống tin nhắn mới nhất"
         >
-          ↓
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
         </button>
       )}
     </div>
   );
+}
+
+const actionBtnStyle: React.CSSProperties = {
+  background: 'transparent',
+  border: 'none',
+  color: 'var(--text-disabled)',
+  cursor: 'pointer',
+  padding: '4px',
+  borderRadius: 'var(--radius-xs)',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  transition: 'color var(--transition-fast)',
+};
+
+function getGreeting() {
+  const h = new Date().getHours();
+  if (h < 12) return 'morning';
+  if (h < 17) return 'afternoon';
+  return 'evening';
 }

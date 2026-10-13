@@ -197,7 +197,7 @@ export default function HomePage() {
               marginBottom: '1.75rem',
             }}
           >
-            <span>✨ Anime Minimalism × Technical AI Workspace × 3D VRM Companion</span>
+            <span>✦ AI-Chan — Professional AI Workspace</span>
           </div>
 
           <h1
@@ -210,7 +210,7 @@ export default function HomePage() {
               color: '#FFFFFF',
             }}
           >
-            AI-Chan Desktop <br />
+            AI-Chan
             <span
               style={{
                 background: 'var(--accent-gradient)',
@@ -218,9 +218,8 @@ export default function HomePage() {
                 WebkitTextFillColor: 'transparent',
               }}
             >
-              Virtual Companion
-            </span>{' '}
-            & AI Workspace
+              {' '}AI Workspace
+            </span>
           </h1>
 
           <p
@@ -233,7 +232,7 @@ export default function HomePage() {
               margin: '0 auto 2.5rem',
             }}
           >
-            Trải nghiệm trợ lý ảo AI cao cấp tích hợp nhân vật 3D VRM sống động, chuyển đổi linh hoạt giữa Workspace Mode và Companion Mode, hỗ trợ streaming SSE thời gian thực, Multi-Provider Failover và quản lý luồng trực quan.
+            A professional AI assistant with real-time streaming, multi-provider failover, project workflows, and a clean workspace designed for productivity.
           </p>
 
           <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
@@ -254,8 +253,8 @@ export default function HomePage() {
                 transition: 'transform 0.2s ease',
               }}
             >
-              <span>Vào AI-Chan Workspace Ngay</span>
-              <span>➔</span>
+              <span>Open Workspace</span>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
             </Link>
 
             <Link
@@ -274,7 +273,7 @@ export default function HomePage() {
                 textDecoration: 'none',
               }}
             >
-              Đăng Nhập Tài Khoản
+              Sign In
             </Link>
           </div>
         </div>
@@ -294,35 +293,35 @@ export default function HomePage() {
         >
           {[
             {
-              icon: '🌸',
-              title: '3D VRM Companion Tương Tác',
-              desc: 'Tích hợp mô hình VRM 3D thực thụ qua Three.js với cử động thở nhẹ, chớp mắt tự nhiên và khẩu hình nói đồng bộ với phản hồi của AI.',
-            },
-            {
-              icon: '🎭',
-              title: 'Chế Độ Kép Workspace / Companion',
-              desc: 'Chuyển đổi liền mạch giữa Workspace Mode tập trung năng suất và Companion Mode 3D toàn cảnh không làm gián đoạn hội thoại.',
-            },
-            {
               icon: '⚡',
-              title: 'Streaming SSE Thời Gian Thực',
-              desc: 'Từng token phản hồi được truyền trực tiếp về trình duyệt với độ trễ dưới 2 giây và hỗ trợ hủy luồng tức thì.',
+              title: 'Real-time Streaming',
+              desc: 'Each token streams directly to your browser via SSE with sub-2s latency and instant stop support.',
             },
             {
               icon: '🛡️',
               title: 'Multi-Provider Failover',
-              desc: 'Tự động bắt lỗi và chuyển đổi dự phòng thông minh giữa Gemini và OpenAI trong suốt với người dùng.',
-            },
-            {
-              icon: '🎨',
-              title: 'Giao Diện Chuẩn UX & Markdown',
-              desc: 'Hỗ trợ định dạng bảng, toán học, tô màu mã nguồn và sao chép code chỉ với một cú nhấp chuột.'
+              desc: 'Automatic failover between Gemini and OpenAI — seamless and transparent to the user.',
             },
             {
               icon: '🧩',
-              title: 'Visual Project Editor',
-              desc: 'Thiết kế đồ thị dự án trực quan: Web Input, Model Node, System Prompt và Output Node với xác thực chu trình DAG an toàn.'
-            }
+              title: 'Project Workflows',
+              desc: 'Build visual agent pipelines: web input, model nodes, system prompts and outputs with DAG validation.',
+            },
+            {
+              icon: '📋',
+              title: 'Prompt Library',
+              desc: 'Organize, search, and reuse system prompts across projects and conversations.',
+            },
+            {
+              icon: '💬',
+              title: 'Conversation Management',
+              desc: 'Pin, search, rename and manage unlimited conversation threads from a single sidebar.',
+            },
+            {
+              icon: '✦',
+              title: 'Rich Markdown Output',
+              desc: 'Tables, code blocks with copy, inline formatting and structured responses out of the box.',
+            },
           ].map((item, idx) => (
             <div
               key={idx}
@@ -354,7 +353,7 @@ export default function HomePage() {
           color: 'var(--text-muted)',
         }}
       >
-        © 2026 AI-Chan Platform. Anime Minimalism × Technical AI Workspace × 3D VRM Companion.
+        © 2026 AI-Chan Platform. Professional AI Workspace.
       </footer>
     </div>
   );
