@@ -108,17 +108,30 @@ export default function HomePage() {
             <span>📜</span>
             <span>Prompts</span>
           </Link>
-          <Link
-            href="/login"
-            style={{
-              color: 'var(--text-secondary)',
-              textDecoration: 'none',
-              fontSize: '0.88rem',
-              fontWeight: 500,
-              padding: '8px 14px',
-              borderRadius: 'var(--radius-sm)',
-            }}
-          >
+          <Link href="/skills" style={{
+            color: 'var(--text-secondary)',
+            textDecoration: 'none',
+            fontSize: '0.9rem',
+            fontWeight: 500,
+            padding: '8px 16px',
+            borderRadius: 'var(--radius-sm)',
+            transition: 'color 0.2s',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '6px'
+          }}>
+            <span>🧩</span>
+            <span>Skills</span>
+          </Link>
+          <Link href="/login" style={{
+            color: 'var(--text-secondary)',
+            textDecoration: 'none',
+            fontSize: '0.9rem',
+            fontWeight: 500,
+            padding: '8px 16px',
+            borderRadius: 'var(--radius-sm)',
+            transition: 'color 0.2s'
+          }}>
             Đăng nhập
           </Link>
           <Link
@@ -300,7 +313,6 @@ export default function HomePage() {
               title: 'Multi-Provider Failover',
               desc: 'Tự động bắt lỗi và chuyển đổi dự phòng thông minh giữa Gemini và OpenAI trong suốt với người dùng.',
             },
-<<<<<<< HEAD
             {
               icon: '🎨',
               title: 'Giao Diện Chuẩn UX & Markdown',
@@ -311,8 +323,6 @@ export default function HomePage() {
               title: 'Visual Project Editor',
               desc: 'Thiết kế đồ thị dự án trực quan: Web Input, Model Node, System Prompt và Output Node với xác thực chu trình DAG an toàn.'
             }
-=======
->>>>>>> recover_doc
           ].map((item, idx) => (
             <div
               key={idx}
