@@ -1,0 +1,46 @@
+version: "1.0"
+gates:
+  G0_DISCOVERY:
+    entry: "user request or project idea"
+    exit:
+      - scope understood
+      - actors/external systems identified
+      - facts separated from assumptions
+      - blockers recorded
+  G1_REQUIREMENT:
+    entry: "discovery complete"
+    exit:
+      - applicable requirements identified
+      - acceptance criteria defined
+      - conflicts surfaced
+  G2_DESIGN:
+    entry: "requirements accepted enough for design"
+    exit:
+      - applicable canonical models updated
+      - impact map completed
+      - architecture decisions recorded
+      - security implications reviewed when applicable
+  G3_PLAN_REVIEW:
+    entry: "design ready"
+    exit:
+      - Antigravity /plan reviewed
+      - implementation scope accepted
+      - dependencies/tests/rollback understood
+  G4_IMPLEMENT:
+    entry: "approved implementation plan"
+    exit:
+      - code implemented
+      - migrations/config changes recorded
+  G5_VERIFY:
+    entry: "implementation complete"
+    exit:
+      - tests/checks pass
+      - independent review complete for relevant risk
+      - models/docs synchronized
+  G6_RELEASE:
+    entry: "verification complete"
+    exit:
+      - release checks pass
+      - rollback/recovery understood
+      - observability available
+      - unresolved blockers explicitly accepted or closed

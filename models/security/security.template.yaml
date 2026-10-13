@@ -1,0 +1,11 @@
+version: "1.0"
+threat_model:
+  id: THREATMODEL-001
+  scope: ""
+  assets: []
+  entry_points: []
+  trust_boundaries: []
+  attacker_capabilities: []
+  threats: []
+  controls: []
+  source_refs: []

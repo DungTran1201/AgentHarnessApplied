@@ -1,0 +1,9 @@
+version: "1.0"
+ux_model:
+  id: UXMODEL-001
+  actors: []
+  goals: []
+  information_architecture: []
+  flows: []
+  screens: []
+  source_refs: []

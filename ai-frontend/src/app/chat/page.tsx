@@ -2,122 +2,28 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
 import { AgentModel, Project } from '@/types';
 import { ProjectService } from '@/services/projectService';
-
-interface Conversation {
-  id: string;
-  title: string;
-  updated_at: string;
-}
-
-interface Message {
-  id: string;
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-  model?: string;
-  created_at?: string;
-  isStreaming?: boolean;
-}
-
-// Markdown & Code Block Formatter Component with Copy Button
-function FormattedMessage({ content, isStreaming }: { content: string; isStreaming?: boolean }) {
-  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
-
-  const copyToClipboard = (text: string, index: number) => {
-    navigator.clipboard.writeText(text);
-    setCopiedIndex(index);
-    setTimeout(() => setCopiedIndex(null), 2000);
-  };
-
-  // Tách đoạn văn bản và khối code ```
-  const parts = content.split(/(```[\s\S]*?```)/g);
-
-  return (
-    <div className="markdown-body">
-      {parts.map((part, index) => {
-        if (part.startsWith('```') && part.endsWith('```')) {
-          const lines = part.slice(3, -3).trim().split('\n');
-          const language = lines[0].match(/^[a-zA-Z0-9_-]+$/) ? lines[0] : 'code';
-          const codeBody = language === lines[0] ? lines.slice(1).join('\n') : lines.join('\n');
-
-          return (
-            <div key={index} className="code-block-wrapper">
-              <div className="code-header">
-                <span>{language.toUpperCase()}</span>
-                <button
-                  type="button"
-                  onClick={() => copyToClipboard(codeBody, index)}
-                  aria-label="Sao chép mã nguồn"
-                >
-                  {copiedIndex === index ? '✓ Đã sao chép' : 'Sao chép'}
-                </button>
-              </div>
-              <pre className="code-content">
-                <code>{codeBody}</code>
-              </pre>
-            </div>
-          );
-        }
-
-        // Render đoạn văn bản thông thường, hỗ trợ in đậm và xuống dòng
-        const paragraphs = part.split('\n\n');
-        return (
-          <React.Fragment key={index}>
-            {paragraphs.map((para, pIdx) => {
-              if (!para.trim()) return null;
-              
-              // Xử lý danh sách gạch đầu dòng
-              if (para.includes('\n- ') || para.startsWith('- ')) {
-                const items = para.split('\n').filter(l => l.trim().startsWith('- '));
-                return (
-                  <ul key={pIdx}>
-                    {items.map((item, itemIdx) => (
-                      <li key={itemIdx}>
-                        {renderInlineFormatting(item.replace(/^- /, ''))}
-                      </li>
-                    ))}
-                  </ul>
-                );
-              }
-
-              return (
-                <p key={pIdx}>
-                  {renderInlineFormatting(para)}
-                </p>
-              );
-            })}
-          </React.Fragment>
-        );
-      })}
-      {isStreaming && <span className="cursor-blink" aria-hidden="true" />}
-    </div>
-  );
-}
-
-function renderInlineFormatting(text: string) {
-  // Thay thế **in đậm**
-  const boldParts = text.split(/(\*\*.*?\*\*)/g);
-  return boldParts.map((bPart, bIdx) => {
-    if (bPart.startsWith('**') && bPart.endsWith('**')) {
-      return <strong key={bIdx}>{bPart.slice(2, -2)}</strong>;
-    }
-    // Inline code `code`
-    const codeParts = bPart.split(/(`.*?`)/g);
-    return codeParts.map((cPart, cIdx) => {
-      if (cPart.startsWith('`') && cPart.endsWith('`')) {
-        return <code key={cIdx}>{cPart.slice(1, -1)}</code>;
-      }
-      return cPart;
-    });
-  });
-}
+import DesktopHeader from '@/components/chat/DesktopHeader';
+import Sidebar, { Conversation } from '@/components/chat/Sidebar';
+import ChatWorkspace, { Message } from '@/components/chat/ChatWorkspace';
+import MessageComposer from '@/components/chat/MessageComposer';
+import AIChanStatusPanel from '@/components/chat/AIChanStatusPanel';
+import CompanionStage from '@/components/chat/CompanionStage';
+import VRMViewer from '@/components/vrm/VRMViewer';
+import { AvatarState, VRMController } from '@/components/vrm/vrmController';
 
 export default function ChatWorkspacePage() {
   const router = useRouter();
 
-  // State quản lý danh sách hội thoại và tin nhắn
+  // Mode: Workspace Mode (default) or Companion Mode
+  const [viewMode, setViewMode] = useState<'workspace' | 'companion'>('workspace');
+
+  // VRM Avatar State Machine
+  const [avatarState, setAvatarState] = useState<AvatarState>('idle');
+  const vrmControllerRef = useRef<VRMController | null>(null);
+
+  // Conversations & Messages State
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -125,27 +31,24 @@ export default function ChatWorkspacePage() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
 
+  // Active Navigation Tab
+  const [activeTab, setActiveTab] = useState<'home' | 'chat' | 'models' | 'prompts' | 'knowledge' | 'settings'>('home');
+
   // UI state
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
-  const [newTitleValue, setNewTitleValue] = useState('');
-  const [deleteModalConv, setDeleteModalConv] = useState<Conversation | null>(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
 
-  // Active Models & Model Selector state (FR-021, FR-026, ADR-003)
+  // Active Models & Model Selector state
   const [activeModels, setActiveModels] = useState<AgentModel[]>([]);
   const [selectedModelId, setSelectedModelId] = useState<string>('gemini-3.8-flash');
-  const [showModelDropdown, setShowModelDropdown] = useState(false);
 
-  // Active Projects state (FR-012, FR-013, FR-014)
+  // Active Projects state
   const [activeProjects, setActiveProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
-  const [showProjectDropdown, setShowProjectDropdown] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatScrollContainerRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // 1. Kiểm tra xác thực người dùng
   useEffect(() => {
@@ -166,7 +69,7 @@ export default function ChatWorkspacePage() {
     fetchMe();
   }, [router]);
 
-  // Load Active Models for selector
+  // Load Active Models
   useEffect(() => {
     const fetchActiveModels = async () => {
       try {
@@ -182,13 +85,13 @@ export default function ChatWorkspacePage() {
           }
         }
       } catch {
-        // Fallback to default
+        // Fallback
       }
     };
     fetchActiveModels();
   }, []);
 
-  // Load Active Projects for workflow selector
+  // Load Active Projects
   useEffect(() => {
     const fetchActiveProjects = async () => {
       try {
@@ -212,13 +115,14 @@ export default function ChatWorkspacePage() {
         router.push('/login');
       }
     } catch {
-      // Tránh console.error gây overlay cảnh báo khi backend đang khởi động
+      // Ignored
     }
   };
 
   // 3. Tải tin nhắn của thread đang chọn
   const loadConversationMessages = async (convId: string) => {
     setActiveConvId(convId);
+    setActiveTab('chat');
     try {
       const res = await fetch(`/api/v1/conversations/${convId}/messages`);
       if (res.ok) {
@@ -236,13 +140,14 @@ export default function ChatWorkspacePage() {
       const res = await fetch('/api/v1/conversations/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: 'Cuộc trò chuyện mới' })
+        body: JSON.stringify({ title: 'Cuộc trò chuyện mới' }),
       });
       if (res.ok) {
         const data = await res.json();
         const newConv = data.conversation;
         setConversations(prev => [newConv, ...prev]);
         setActiveConvId(newConv.id);
+        setActiveTab('chat');
         setMessages([]);
       }
     } catch (err) {
@@ -251,48 +156,39 @@ export default function ChatWorkspacePage() {
   };
 
   // 5. Đổi tên cuộc trò chuyện
-  const handleRename = async (convId: string) => {
-    if (!newTitleValue.trim()) {
-      setEditingTitleId(null);
-      return;
-    }
+  const handleRename = async (convId: string, newTitle: string) => {
     try {
       const res = await fetch(`/api/v1/conversations/${convId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: newTitleValue.trim() })
+        body: JSON.stringify({ title: newTitle }),
       });
       if (res.ok) {
         setConversations(prev =>
-          prev.map(c => c.id === convId ? { ...c, title: newTitleValue.trim() } : c)
+          prev.map(c => (c.id === convId ? { ...c, title: newTitle } : c))
         );
       }
     } catch (err) {
       console.error('Lỗi đổi tên:', err);
-    } finally {
-      setEditingTitleId(null);
-      setNewTitleValue('');
     }
   };
 
   // 6. Xóa cuộc trò chuyện
-  const handleDelete = async () => {
-    if (!deleteModalConv) return;
+  const handleDelete = async (conv: Conversation) => {
+    if (!confirm(`Bạn có chắc muốn xóa cuộc trò chuyện "${conv.title}"?`)) return;
     try {
-      const res = await fetch(`/api/v1/conversations/${deleteModalConv.id}`, {
-        method: 'DELETE'
+      const res = await fetch(`/api/v1/conversations/${conv.id}`, {
+        method: 'DELETE',
       });
       if (res.status === 204 || res.ok) {
-        setConversations(prev => prev.filter(c => c.id !== deleteModalConv.id));
-        if (activeConvId === deleteModalConv.id) {
+        setConversations(prev => prev.filter(c => c.id !== conv.id));
+        if (activeConvId === conv.id) {
           setActiveConvId(null);
           setMessages([]);
         }
       }
     } catch (err) {
       console.error('Lỗi xóa conversation:', err);
-    } finally {
-      setDeleteModalConv(null);
     }
   };
 
@@ -319,7 +215,6 @@ export default function ChatWorkspacePage() {
     }
   }, [messages, isStreaming, showScrollBottom]);
 
-  // Kiểm tra vị trí scroll người dùng để hiện nút "Cuộn xuống"
   const handleScroll = () => {
     if (!chatScrollContainerRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = chatScrollContainerRef.current;
@@ -327,20 +222,30 @@ export default function ChatWorkspacePage() {
     setShowScrollBottom(!isAtBottom);
   };
 
-  // 9. Gửi tin nhắn và tiếp nhận phản hồi streaming SSE (FLOW-CHAT-STREAM)
+  // 9. Dừng sinh phản hồi (Stop Generation)
+  const handleStopGeneration = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+      setIsStreaming(false);
+      vrmControllerRef.current?.handleStopGeneration();
+      setAvatarState('idle');
+    }
+  };
+
+  // 10. Gửi tin nhắn và tiếp nhận phản hồi streaming SSE với Avatar Synchronization
   const handleSendMessage = async (customPrompt?: string) => {
     const textToSend = customPrompt || inputPrompt;
     if (!textToSend.trim() || isStreaming) return;
 
     let targetConvId = activeConvId;
 
-    // Nếu chưa chọn thread nào, tự động tạo mới
     if (!targetConvId) {
       try {
         const createRes = await fetch('/api/v1/conversations/', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: 'Cuộc trò chuyện mới' })
+          body: JSON.stringify({ title: 'Cuộc trò chuyện mới' }),
         });
         if (createRes.ok) {
           const createData = await createRes.json();
@@ -354,12 +259,14 @@ export default function ChatWorkspacePage() {
       }
     }
 
-    // Optimistic UI: Render tin nhắn của User ngay lập tức (UX-002)
+    setActiveTab('chat');
+
+    // Optimistic UI
     const userMsg: Message = {
       id: `user-${Date.now()}`,
       role: 'user',
       content: textToSend.trim(),
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
     };
 
     const assistantPlaceholderId = `assistant-${Date.now()}`;
@@ -369,28 +276,30 @@ export default function ChatWorkspacePage() {
       content: '',
       model: selectedModelId,
       created_at: new Date().toISOString(),
-      isStreaming: true
+      isStreaming: true,
     };
 
     setMessages(prev => [...prev, userMsg, assistantMsgPlaceholder]);
     setInputPrompt('');
     setIsStreaming(true);
 
-    if (textareaRef.current) {
-      textareaRef.current.style.height = '48px';
-    }
+    // AI Avatar Synchronization: thinking -> speaking
+    setAvatarState('thinking');
 
     // Nếu người dùng đang chọn Project Workflow
     if (selectedProjectId) {
       const activeProj = activeProjects.find(p => p.id === selectedProjectId);
       if (activeProj) {
-        const maxWords = activeProj.max_words_limit || (activeProj.graph_data?.nodes.find(n => n.type === 'web_input')?.data?.config as any)?.max_words_limit;
+        const maxWords =
+          activeProj.max_words_limit ||
+          (activeProj.graph_data?.nodes.find(n => n.type === 'web_input')?.data?.config as any)?.max_words_limit;
         if (maxWords && typeof maxWords === 'number') {
           const wordCount = textToSend.trim().split(/\s+/).filter(Boolean).length;
           if (wordCount > maxWords) {
             alert(`⚠️ Số lượng từ (${wordCount}) vượt quá giới hạn cấu hình của Project (${maxWords} từ).`);
             setMessages(prev => prev.filter(m => m.id !== assistantPlaceholderId && m.id !== userMsg.id));
             setIsStreaming(false);
+            setAvatarState('idle');
             return;
           }
         }
@@ -407,11 +316,10 @@ export default function ChatWorkspacePage() {
           targetConvId,
           (chunk: string) => {
             accumulatedText += chunk;
+            setAvatarState('speaking');
             setMessages(prev =>
               prev.map(m =>
-                m.id === assistantPlaceholderId
-                  ? { ...m, content: accumulatedText }
-                  : m
+                m.id === assistantPlaceholderId ? { ...m, content: accumulatedText } : m
               )
             );
           },
@@ -421,26 +329,27 @@ export default function ChatWorkspacePage() {
             }
           },
           (err: any) => {
-            if (err?.name === 'AbortError') {
-              console.log('Project stream aborted by user.');
-              return;
-            }
+            if (err?.name === 'AbortError') return;
             const errMsg = err?.message || 'Đã xảy ra lỗi khi xử lý luồng Project.';
             accumulatedText = `⚠️ **Lỗi Workflow:** ${errMsg}`;
+            setAvatarState('error');
             setMessages(prev =>
               prev.map(m =>
-                m.id === assistantPlaceholderId
-                  ? { ...m, content: accumulatedText }
-                  : m
+                m.id === assistantPlaceholderId ? { ...m, content: accumulatedText } : m
               )
             );
           },
           controller.signal
         );
+        if (accumulatedText) {
+          vrmControllerRef.current?.handleAIResponseComplete(targetConvId || 'project', accumulatedText);
+        }
+        setAvatarState('success');
+        setTimeout(() => setAvatarState('idle'), 2500);
       } catch (err: any) {
-        if (err?.name === 'AbortError') {
-          console.log('Project stream aborted by user.');
-        } else {
+        if (err?.name !== 'AbortError') {
+          setAvatarState('error');
+          setTimeout(() => setAvatarState('idle'), 3000);
           setMessages(prev =>
             prev.map(m =>
               m.id === assistantPlaceholderId
@@ -464,6 +373,7 @@ export default function ChatWorkspacePage() {
       return;
     }
 
+    // Standard Chat Streaming
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
@@ -473,15 +383,15 @@ export default function ChatWorkspacePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           content: textToSend.trim(),
-          model: selectedModelId
+          model: selectedModelId,
         }),
-        signal: controller.signal
+        signal: controller.signal,
       });
 
       if (!response.ok) {
         if (response.status === 429) {
           const errData = await response.json().catch(() => null);
-          const msg = errData?.detail?.message || 'Hạn ngạch token trong ngày đã hết. Vui lòng kiểm tra trên Dashboard.';
+          const msg = errData?.detail?.message || 'Hạn ngạch token trong ngày đã hết.';
           throw new Error(`🚨 ${msg}`);
         }
         throw new Error('Lỗi kết nối tới luồng AI.');
@@ -509,35 +419,29 @@ export default function ChatWorkspacePage() {
                   const chunkObj = JSON.parse(dataMatch[1]);
                   if (chunkObj.token) {
                     accumulatedText += chunkObj.token;
+                    setAvatarState('speaking');
                     setMessages(prev =>
                       prev.map(m =>
-                        m.id === assistantPlaceholderId
-                          ? { ...m, content: accumulatedText }
-                          : m
+                        m.id === assistantPlaceholderId ? { ...m, content: accumulatedText } : m
                       )
                     );
                   }
-                } catch {
-                  // Skip parse errors
-                }
+                } catch {}
               }
             } else if (line.includes('event: error')) {
               const dataMatch = line.match(/data:\s*(.*)/);
               if (dataMatch) {
                 try {
                   const errorObj = JSON.parse(dataMatch[1]);
-                  const errorMessage = errorObj.message || 'Đã xảy ra lỗi trong quá trình xử lý phản hồi từ AI.';
+                  const errorMessage = errorObj.message || 'Đã xảy ra lỗi khi xử lý phản hồi.';
                   accumulatedText = `⚠️ **Lỗi:** ${errorMessage}`;
+                  setAvatarState('error');
                   setMessages(prev =>
                     prev.map(m =>
-                      m.id === assistantPlaceholderId
-                        ? { ...m, content: accumulatedText }
-                        : m
+                      m.id === assistantPlaceholderId ? { ...m, content: accumulatedText } : m
                     )
                   );
-                } catch {
-                  // Skip parse errors
-                }
+                } catch {}
               }
             } else if (line.includes('event: done')) {
               // Hoàn tất luồng
@@ -545,14 +449,22 @@ export default function ChatWorkspacePage() {
           }
         }
       }
+
+      if (accumulatedText) {
+        vrmControllerRef.current?.handleAIResponseComplete(targetConvId || 'chat', accumulatedText);
+      }
+      setAvatarState('success');
+      setTimeout(() => setAvatarState('idle'), 2500);
     } catch (err: any) {
       if (err.name === 'AbortError') {
         console.log('Stream đã được dừng bởi người dùng.');
       } else {
+        setAvatarState('error');
+        setTimeout(() => setAvatarState('idle'), 3000);
         setMessages(prev =>
           prev.map(m =>
             m.id === assistantPlaceholderId
-              ? { ...m, content: m.content || 'Đã xảy ra lỗi khi kết nối với AI Assistant. Vui lòng thử lại.' }
+              ? { ...m, content: m.content || `⚠️ Lỗi kết nối: ${err.message}` }
               : m
           )
         );
@@ -563,7 +475,7 @@ export default function ChatWorkspacePage() {
       setMessages(prev =>
         prev.map(m =>
           m.id === assistantPlaceholderId
-            ? { ...m, isStreaming: false, content: m.content || 'Không nhận được phản hồi từ mô hình. Vui lòng kiểm tra lại cấu hình hoặc thử lại.' }
+            ? { ...m, isStreaming: false, content: m.content || 'Không có phản hồi.' }
             : m
         )
       );
@@ -571,1123 +483,233 @@ export default function ChatWorkspacePage() {
     }
   };
 
-  // 10. Dừng sinh phản hồi (UX-003: Stop Generation)
-  const handleStopGeneration = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      setIsStreaming(false);
+  // Quick tool clicks from status panel
+  const handleQuickToolClick = (toolType: 'code' | 'image' | 'file' | 'web') => {
+    switch (toolType) {
+      case 'code':
+        setInputPrompt('Hãy viết mã nguồn phân tích: ');
+        break;
+      case 'image':
+        setInputPrompt('Mô tả ý tưởng hình ảnh anime: ');
+        break;
+      case 'file':
+        setInputPrompt('Hãy tóm tắt và đánh giá tệp tài liệu: ');
+        break;
+      case 'web':
+        setInputPrompt('Tìm kiếm và tổng hợp thông tin về: ');
+        break;
     }
   };
 
-  // Tự co giãn Textarea khi gõ
-  const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInputPrompt(e.target.value);
-    e.target.style.height = '48px';
-    const newHeight = Math.min(e.target.scrollHeight, 180);
-    e.target.style.height = `${newHeight}px`;
-  };
-
-  // Phím Enter gửi / Shift+Enter xuống dòng (UX-005)
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSendMessage();
-    }
-  };
-
-  const activeConversation = conversations.find(c => c.id === activeConvId);
+  const activeConv = conversations.find(c => c.id === activeConvId);
 
   return (
-    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: 'var(--bg-primary)' }}>
-      {/* LEFT SIDEBAR (UX-001) */}
-      <aside style={{
-        width: sidebarOpen ? '280px' : '0px',
-        minWidth: sidebarOpen ? '280px' : '0px',
-        transition: 'width 0.25s ease',
-        background: 'var(--bg-secondary)',
-        borderRight: '1px solid var(--border-subtle)',
+    <div
+      style={{
         display: 'flex',
         flexDirection: 'column',
+        height: '100vh',
+        width: '100vw',
         overflow: 'hidden',
-        zIndex: 20
-      }}>
-        {/* Sidebar Header */}
-        <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border-subtle)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <button
-            type="button"
-            onClick={handleCreateNewConversation}
-            style={{
-              width: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '8px',
-              padding: '10px',
-              background: 'var(--accent-gradient)',
-              border: 'none',
-              borderRadius: 'var(--radius-sm)',
-              color: '#ffffff',
-              fontSize: '0.9rem',
-              fontWeight: 600,
-              cursor: 'pointer',
-              boxShadow: 'var(--accent-glow)'
-            }}
-          >
-            <span>+</span>
-            <span>Cuộc trò chuyện mới</span>
-          </button>
+        backgroundColor: '#0E0F1B',
+      }}
+    >
+      {/* 1. Global Desktop Header */}
+      <DesktopHeader
+        mode={viewMode}
+        onModeChange={newMode => setViewMode(newMode)}
+        currentUser={currentUser}
+        onLogout={handleLogout}
+      />
 
-          <Link
-            href="/projects"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '8px',
-              padding: '8px',
-              background: 'rgba(255, 255, 255, 0.04)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 'var(--radius-sm)',
-              color: 'var(--text-secondary)',
-              fontSize: '0.82rem',
-              fontWeight: 500,
-              textDecoration: 'none',
-              transition: 'background 0.2s'
-            }}
-          >
-            <span>🧩</span>
-            <span>Quản lý Projects ({activeProjects.length} Active)</span>
-          </Link>
-        </div>
-
-        {/* Conversation List */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '10px 8px' }}>
-          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', padding: '6px 10px', letterSpacing: '0.05em' }}>
-            Lịch sử trò chuyện
-          </div>
-
-          {conversations.length === 0 ? (
-            <div style={{ padding: '20px 10px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-              Chưa có cuộc trò chuyện nào. Bấm nút trên để bắt đầu!
-            </div>
-          ) : (
-            conversations.map(conv => {
-              const isActive = conv.id === activeConvId;
-              const isEditing = editingTitleId === conv.id;
-
-              return (
-                <div
-                  key={conv.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '8px 10px',
-                    borderRadius: 'var(--radius-sm)',
-                    marginBottom: '4px',
-                    background: isActive ? 'var(--bg-active)' : 'transparent',
-                    border: isActive ? '1px solid rgba(99, 102, 241, 0.3)' : '1px solid transparent',
-                    cursor: 'pointer'
-                  }}
-                  onClick={() => !isEditing && loadConversationMessages(conv.id)}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}>
-                    <span style={{ fontSize: '0.9rem' }}>
-                      {conv.title.startsWith('Discord Bot:') ? '🤖' : '💬'}
-                    </span>
-                    {isEditing ? (
-                      <input
-                        type="text"
-                        value={newTitleValue}
-                        onChange={(e) => setNewTitleValue(e.target.value)}
-                        onBlur={() => handleRename(conv.id)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') handleRename(conv.id);
-                          if (e.key === 'Escape') setEditingTitleId(null);
-                        }}
-                        autoFocus
-                        style={{
-                          width: '100%',
-                          background: 'rgba(0,0,0,0.3)',
-                          border: '1px solid var(--border-focus)',
-                          borderRadius: '4px',
-                          color: '#fff',
-                          padding: '2px 6px',
-                          fontSize: '0.85rem'
-                        }}
-                      />
-                    ) : (
-                      <span style={{
-                        fontSize: '0.875rem',
-                        color: isActive ? '#ffffff' : 'var(--text-secondary)',
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px'
-                      }}>
-                        {conv.title.startsWith('Discord Bot:') && (
-                          <span style={{
-                            fontSize: '0.65rem',
-                            padding: '1px 5px',
-                            borderRadius: '4px',
-                            background: 'rgba(88, 101, 242, 0.25)',
-                            color: '#5865F2',
-                            fontWeight: 600,
-                            flexShrink: 0
-                          }}>
-                            DISCORD
-                          </span>
-                        )}
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{conv.title}</span>
-                      </span>
-                    )}
-                  </div>
-
-                  {isActive && !isEditing && (
-                    <div style={{ display: 'flex', gap: '4px' }} onClick={(e) => e.stopPropagation()}>
-                      <button
-                        type="button"
-                        aria-label="Đổi tên"
-                        onClick={() => {
-                          setEditingTitleId(conv.id);
-                          setNewTitleValue(conv.title);
-                        }}
-                        style={{
-                          background: 'transparent',
-                          border: 'none',
-                          color: 'var(--text-muted)',
-                          cursor: 'pointer',
-                          padding: '2px 4px',
-                          fontSize: '0.8rem'
-                        }}
-                      >
-                        ✏️
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="Xóa"
-                        onClick={() => setDeleteModalConv(conv)}
-                        style={{
-                          background: 'transparent',
-                          border: 'none',
-                          color: 'var(--danger)',
-                          cursor: 'pointer',
-                          padding: '2px 4px',
-                          fontSize: '0.8rem'
-                        }}
-                      >
-                        🗑️
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })
-          )}
-        </div>
-
-        {/* Sidebar Footer: User Profile & Brand */}
-        <div style={{
-          padding: '12px 16px',
-          borderTop: '1px solid var(--border-subtle)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          background: 'rgba(0,0,0,0.2)'
-        }}>
-          <Link
-            href="/settings"
-            title="Xem hồ sơ & Cài đặt"
-            style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, textDecoration: 'none', cursor: 'pointer' }}
-          >
-            <div style={{
-              width: '32px',
-              height: '32px',
-              borderRadius: '50%',
-              background: currentUser?.avatar_url ? `url(${currentUser.avatar_url}) center/cover no-repeat` : 'var(--accent-gradient)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '0.85rem',
-              fontWeight: 700,
-              color: '#fff',
-              flexShrink: 0
-            }}>
-              {!currentUser?.avatar_url && (currentUser?.email?.[0]?.toUpperCase() || 'U')}
-            </div>
-            <div style={{ overflow: 'hidden' }}>
-              <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {currentUser?.full_name || currentUser?.email?.split('@')[0] || 'User'}
-              </div>
-              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {currentUser?.email || ''}
-              </div>
-            </div>
-          </Link>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
-            <Link
-              href="/projects"
-              id="btn-sidebar-goto-projects"
-              title="Quản lý Visual Canvas Projects"
-              aria-label="Quản lý Visual Canvas Projects"
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: 'var(--text-muted)',
-                fontSize: '1rem',
-                cursor: 'pointer',
-                padding: '6px',
-                display: 'flex',
-                alignItems: 'center',
-                textDecoration: 'none'
-              }}
-            >
-              🧩
-            </Link>
-            <Link
-              href="/prompts"
-              id="btn-sidebar-goto-prompts"
-              title="Quản lý System Prompts"
-              aria-label="Quản lý System Prompts"
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: 'var(--text-muted)',
-                fontSize: '1rem',
-                cursor: 'pointer',
-                padding: '6px',
-                display: 'flex',
-                alignItems: 'center',
-                textDecoration: 'none'
-              }}
-            >
-              📜
-            </Link>
-            <Link
-              href="/bot/discord"
-              id="btn-sidebar-goto-bot"
-              title="Quản lý Discord Bot"
-              aria-label="Quản lý Discord Bot"
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: 'var(--text-muted)',
-                fontSize: '1rem',
-                cursor: 'pointer',
-                padding: '6px',
-                display: 'flex',
-                alignItems: 'center',
-                textDecoration: 'none'
-              }}
-            >
-              🤖
-            </Link>
-            <Link
-              href="/settings"
-              title="Cài đặt tài khoản"
-              aria-label="Cài đặt tài khoản"
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: 'var(--text-muted)',
-                fontSize: '1rem',
-                cursor: 'pointer',
-                padding: '6px',
-                display: 'flex',
-                alignItems: 'center',
-                textDecoration: 'none'
-              }}
-            >
-              ⚙️
-            </Link>
-            <button
-              type="button"
-              onClick={handleLogout}
-              title="Đăng xuất"
-              aria-label="Đăng xuất"
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: 'var(--text-muted)',
-                fontSize: '1rem',
-                cursor: 'pointer',
-                padding: '6px'
-              }}
-            >
-              🚪
-            </button>
-          </div>
-        </div>
-      </aside>
-
-      {/* MAIN CHAT CANVAS */}
-      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
-        {/* Top Navigation Header */}
-        <header style={{
-          height: '56px',
-          padding: '0 18px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          borderBottom: '1px solid var(--border-subtle)',
-          background: 'rgba(10, 15, 29, 0.7)',
-          backdropFilter: 'blur(8px)',
-          zIndex: 10
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <button
-              type="button"
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              aria-label="Toggle Sidebar"
-              style={{
-                background: 'rgba(255, 255, 255, 0.05)',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: '6px',
-                color: 'var(--text-secondary)',
-                width: '32px',
-                height: '32px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer'
-              }}
-            >
-              ☰
-            </button>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontSize: '1rem', fontWeight: 600, color: '#f8fafc' }}>
-                {activeConversation?.title || 'Cuộc trò chuyện mới'}
-              </span>
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            {/* Model Selector Dropdown */}
-            <div style={{ position: 'relative' }}>
-              <button
-                type="button"
-                onClick={() => setShowModelDropdown(!showModelDropdown)}
-                title="Chọn mô hình AI phục vụ hội thoại"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  padding: '5px 12px',
-                  borderRadius: 'var(--radius-sm)',
-                  background: 'rgba(99, 102, 241, 0.12)',
-                  border: '1px solid rgba(99, 102, 241, 0.35)',
-                  fontSize: '0.78rem',
-                  color: '#c7d2fe',
-                  fontWeight: 600,
-                  cursor: 'pointer'
-                }}
-              >
-                <span>🤖</span>
-                <span>{activeModels.find(m => m.id === selectedModelId)?.name || selectedModelId || 'Mô hình AI'}</span>
-                <span style={{ fontSize: '0.65rem', marginLeft: '2px' }}>▼</span>
-              </button>
-
-              {showModelDropdown && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: '120%',
-                    right: 0,
-                    minWidth: '270px',
-                    background: 'rgba(15, 23, 42, 0.95)',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: 'var(--radius-md)',
-                    boxShadow: '0 12px 30px rgba(0, 0, 0, 0.5)',
-                    padding: '8px',
-                    zIndex: 100,
-                    backdropFilter: 'blur(16px)'
-                  }}
-                >
-                  <div style={{ padding: '6px 10px', fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                    Chọn Mô Hình Hoạt Động ({activeModels.length})
-                  </div>
-
-                  {activeModels.map(am => (
-                    <div
-                      key={am.id}
-                      onClick={() => {
-                        setSelectedModelId(am.id);
-                        setShowModelDropdown(false);
-                      }}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '8px 10px',
-                        borderRadius: 'var(--radius-sm)',
-                        background: am.id === selectedModelId ? 'var(--bg-active)' : 'transparent',
-                        border: am.id === selectedModelId ? '1px solid rgba(99, 102, 241, 0.3)' : '1px solid transparent',
-                        cursor: 'pointer',
-                        marginBottom: '4px'
-                      }}
-                    >
-                      <div>
-                        <div style={{ fontSize: '0.82rem', fontWeight: am.id === selectedModelId ? 700 : 500, color: '#fff' }}>
-                          {am.name}
-                        </div>
-                        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                          {am.provider.toUpperCase()} • {am.is_default ? '⭐ Mặc định' : `${Math.round(am.context_window / 1000)}k ctx`}
-                        </div>
-                      </div>
-                      {am.id === selectedModelId && <span style={{ color: '#818cf8', fontSize: '0.85rem' }}>✓</span>}
-                    </div>
-                  ))}
-
-                  <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: '6px', paddingTop: '6px' }}>
-                    <Link
-                      href="/settings?tab=models"
-                      onClick={() => setShowModelDropdown(false)}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        padding: '6px 10px',
-                        borderRadius: 'var(--radius-sm)',
-                        color: '#38bdf8',
-                        fontSize: '0.78rem',
-                        fontWeight: 600,
-                        textDecoration: 'none'
-                      }}
-                    >
-                      <span>⚙️</span>
-                      <span>Quản lý & Kích hoạt Models</span>
-                    </Link>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Project Workflow Selector Dropdown */}
-            <div style={{ position: 'relative' }}>
-              <button
-                type="button"
-                onClick={() => setShowProjectDropdown(!showProjectDropdown)}
-                title="Chọn quy trình Project Active để chạy hội thoại"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  padding: '5px 12px',
-                  borderRadius: 'var(--radius-sm)',
-                  background: selectedProjectId ? 'rgba(16, 185, 129, 0.15)' : 'rgba(255, 255, 255, 0.05)',
-                  border: selectedProjectId ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid var(--border-subtle)',
-                  fontSize: '0.78rem',
-                  color: selectedProjectId ? '#34d399' : 'var(--text-secondary)',
-                  fontWeight: 600,
-                  cursor: 'pointer'
-                }}
-              >
-                <span>🧩</span>
-                <span>
-                  {selectedProjectId
-                    ? (activeProjects.find(p => p.id === selectedProjectId)?.name || 'Project Active')
-                    : 'Chat Tiêu Chuẩn'}
-                </span>
-                <span style={{ fontSize: '0.65rem', marginLeft: '2px' }}>▼</span>
-              </button>
-
-              {showProjectDropdown && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: '120%',
-                    right: 0,
-                    minWidth: '270px',
-                    background: 'rgba(15, 23, 42, 0.95)',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: 'var(--radius-md)',
-                    boxShadow: '0 12px 30px rgba(0, 0, 0, 0.5)',
-                    padding: '8px',
-                    zIndex: 100,
-                    backdropFilter: 'blur(16px)'
-                  }}
-                >
-                  <div style={{ padding: '6px 10px', fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                    Chọn Workflow ({activeProjects.length}/3 Active)
-                  </div>
-
-                  <div
-                    onClick={() => {
-                      setSelectedProjectId('');
-                      setShowProjectDropdown(false);
-                    }}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '8px 10px',
-                      borderRadius: 'var(--radius-sm)',
-                      background: selectedProjectId === '' ? 'var(--bg-active)' : 'transparent',
-                      border: selectedProjectId === '' ? '1px solid rgba(99, 102, 241, 0.3)' : '1px solid transparent',
-                      cursor: 'pointer',
-                      marginBottom: '4px'
-                    }}
-                  >
-                    <div>
-                      <div style={{ fontSize: '0.82rem', fontWeight: selectedProjectId === '' ? 700 : 500, color: '#fff' }}>
-                        Chat Tiêu Chuẩn
-                      </div>
-                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                        Trò chuyện trực tiếp qua AI Model
-                      </div>
-                    </div>
-                    {selectedProjectId === '' && <span style={{ color: '#818cf8', fontSize: '0.85rem' }}>✓</span>}
-                  </div>
-
-                  {activeProjects.map(proj => (
-                    <div
-                      key={proj.id}
-                      onClick={() => {
-                        setSelectedProjectId(proj.id);
-                        setShowProjectDropdown(false);
-                      }}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '8px 10px',
-                        borderRadius: 'var(--radius-sm)',
-                        background: selectedProjectId === proj.id ? 'var(--bg-active)' : 'transparent',
-                        border: selectedProjectId === proj.id ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid transparent',
-                        cursor: 'pointer',
-                        marginBottom: '4px'
-                      }}
-                    >
-                      <div>
-                        <div style={{ fontSize: '0.82rem', fontWeight: selectedProjectId === proj.id ? 700 : 500, color: '#fff' }}>
-                          {proj.name}
-                        </div>
-                        <div style={{ fontSize: '0.7rem', color: '#34d399' }}>
-                          🟢 ACTIVE • 3-Node Workflow
-                        </div>
-                      </div>
-                      {selectedProjectId === proj.id && <span style={{ color: '#34d399', fontSize: '0.85rem' }}>✓</span>}
-                    </div>
-                  ))}
-
-                  <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: '6px', paddingTop: '6px' }}>
-                    <Link
-                      href="/projects"
-                      onClick={() => setShowProjectDropdown(false)}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        padding: '6px 10px',
-                        borderRadius: 'var(--radius-sm)',
-                        color: '#38bdf8',
-                        fontSize: '0.78rem',
-                        fontWeight: 600,
-                        textDecoration: 'none'
-                      }}
-                    >
-                      <span>🧩</span>
-                      <span>Quản lý Visual Canvas Projects</span>
-                    </Link>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '4px 10px',
-              borderRadius: 'var(--radius-full)',
-              background: 'rgba(16, 185, 129, 0.1)',
-              border: '1px solid rgba(16, 185, 129, 0.3)',
-              fontSize: '0.75rem',
-              color: '#34d399'
-            }}>
-              <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981' }} />
-              <span>AI-Chan Online (SSE Active)</span>
-            </div>
-
-            <Link
-              href="/dashboard"
-              title="Quản lý tài nguyên & Telemetry Dashboard"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '6px 12px',
-                borderRadius: 'var(--radius-sm)',
-                background: 'rgba(56, 189, 248, 0.12)',
-                border: '1px solid rgba(56, 189, 248, 0.35)',
-                fontSize: '0.8rem',
-                color: '#38bdf8',
-                textDecoration: 'none',
-                fontWeight: 600
-              }}
-            >
-              <span>📊 Dashboard</span>
-            </Link>
-
-            <Link
-              href="/settings"
-              title="Cài đặt tài khoản"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '6px 12px',
-                borderRadius: 'var(--radius-sm)',
-                background: 'rgba(255, 255, 255, 0.06)',
-                border: '1px solid var(--border-subtle)',
-                fontSize: '0.8rem',
-                color: 'var(--text-primary)',
-                textDecoration: 'none',
-                fontWeight: 500
-              }}
-            >
-              <span>⚙️ Cài đặt</span>
-            </Link>
-          </div>
-        </header>
-
-        {/* Chat Feed Canvas */}
+      {/* 2. Main Body View (Workspace Mode vs Companion Mode) */}
+      {viewMode === 'companion' ? (
+        /* Companion Mode: Fullscreen 3D Immersion */
+        <CompanionStage
+          messages={messages}
+          inputPrompt={inputPrompt}
+          onInputChange={setInputPrompt}
+          onSend={handleSendMessage}
+          onStop={handleStopGeneration}
+          isStreaming={isStreaming}
+          avatarState={avatarState}
+          onReturnToWorkspace={() => setViewMode('workspace')}
+          activeModels={activeModels}
+          selectedModelId={selectedModelId}
+          onSelectModel={setSelectedModelId}
+          activeProjects={activeProjects}
+          selectedProjectId={selectedProjectId}
+          onSelectProject={setSelectedProjectId}
+          activeConvTitle={activeConv?.title}
+          onControllerReady={ctrl => {
+            vrmControllerRef.current = ctrl;
+          }}
+        />
+      ) : (
+        /* Workspace Mode: Productivity Layout with Integrated VRM Area */
         <div
-          ref={chatScrollContainerRef}
-          onScroll={handleScroll}
           style={{
-            flex: 1,
-            overflowY: 'auto',
-            padding: '24px 16px',
             display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center'
+            flex: 1,
+            height: 'calc(100vh - 54px)',
+            overflow: 'hidden',
+            position: 'relative',
           }}
         >
-          <div style={{ width: '100%', maxWidth: '820px' }}>
-            {messages.length === 0 ? (
-              /* EMPTY STATE: GREETING & SUGGESTION CHIPS (UX-005) */
-              <div style={{
-                padding: '60px 20px',
-                textAlign: 'center',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center'
-              }}>
-                <div style={{
-                  width: '64px',
-                  height: '64px',
-                  borderRadius: '18px',
-                  background: 'var(--accent-gradient)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: '2rem',
-                  boxShadow: 'var(--accent-glow)',
-                  marginBottom: '1.25rem'
-                }}>
-                  ✨
-                </div>
-                <h2 style={{ fontSize: '1.6rem', fontWeight: 700, marginBottom: '0.5rem', color: '#fff' }}>
-                  Xin chào! Tôi có thể hỗ trợ gì cho bạn?
-                </h2>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', maxWidth: '480px', marginBottom: '2rem', lineHeight: 1.5 }}>
-                  Tôi là AI-Chan, trợ lý ảo thông minh hỗ trợ giải đáp lập trình, tư vấn kiến trúc phần mềm, và soạn thảo văn bản.
-                </p>
+          {/* Left Sidebar */}
+          <Sidebar
+            activeTab={activeTab}
+            onTabChange={tab => {
+              setActiveTab(tab);
+              if (tab === 'home') {
+                setActiveConvId(null);
+                setMessages([]);
+              }
+            }}
+            conversations={conversations}
+            activeConvId={activeConvId}
+            onSelectConversation={loadConversationMessages}
+            onNewChat={handleCreateNewConversation}
+            onRenameConversation={handleRename}
+            onDeleteConversation={handleDelete}
+            collapsed={sidebarCollapsed}
+            onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+          />
 
-                {/* 4 Interactive Suggestion Chips */}
-                <div style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-                  gap: '12px',
-                  width: '100%',
-                  textAlign: 'left'
-                }}>
-                  {[
-                    {
-                      label: 'Giải thích thuật toán Dijkstra bằng Python kèm code mẫu',
-                      icon: '🐍'
-                    },
-                    {
-                      label: 'So sánh cơ chế Server-Sent Events (SSE) và WebSockets',
-                      icon: '⚡'
-                    },
-                    {
-                      label: 'Hướng dẫn bảo mật ứng dụng web chống tấn công XSS & CSRF',
-                      icon: '🛡️'
-                    },
-                    {
-                      label: 'Tóm tắt các nguyên tắc thiết kế phần mềm SOLID với ví dụ',
-                      icon: '📐'
-                    }
-                  ].map((chip, idx) => (
-                    <button
-                      key={idx}
-                      type="button"
-                      onClick={() => handleSendMessage(chip.label)}
-                      style={{
-                        padding: '14px',
-                        background: 'var(--bg-card)',
-                        border: '1px solid var(--border-subtle)',
-                        borderRadius: 'var(--radius-md)',
-                        color: 'var(--text-primary)',
-                        fontSize: '0.88rem',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'flex-start',
-                        gap: '10px',
-                        textAlign: 'left',
-                        transition: 'all 0.2s ease',
-                        boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
-                      }}
-                    >
-                      <span style={{ fontSize: '1.2rem' }}>{chip.icon}</span>
-                      <span style={{ lineHeight: 1.4 }}>{chip.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              /* MESSAGE LIST */
-              messages.map(msg => (
-                <div
-                  key={msg.id}
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start',
-                    marginBottom: '20px'
-                  }}
-                >
-                  <div style={{
-                    display: 'flex',
-                    gap: '10px',
-                    maxWidth: '85%',
-                    flexDirection: msg.role === 'user' ? 'row-reverse' : 'row'
-                  }}>
-                    {/* Avatar */}
-                    <div style={{
-                      width: '34px',
-                      height: '34px',
-                      borderRadius: '10px',
-                      background: msg.role === 'user' ? 'var(--bg-tertiary)' : 'var(--accent-gradient)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: '0.9rem',
-                      fontWeight: 700,
-                      flexShrink: 0,
-                      boxShadow: msg.role === 'assistant' ? 'var(--accent-glow)' : 'none'
-                    }}>
-                      {msg.role === 'user' ? '👤' : '✨'}
-                    </div>
-
-                    {/* Bubble Content */}
-                    <div>
-                      {msg.role === 'assistant' && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                          <span style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>AI-Chan</span>
-                          {msg.model && (
-                            <span style={{
-                              padding: '1px 6px',
-                              borderRadius: 'var(--radius-full)',
-                              background: 'rgba(99, 102, 241, 0.12)',
-                              border: '1px solid rgba(99, 102, 241, 0.25)',
-                              color: '#a5b4fc',
-                              fontSize: '0.68rem',
-                              fontFamily: 'var(--font-mono)'
-                            }}>
-                              {msg.model}
-                            </span>
-                          )}
-                        </div>
-                      )}
-                      <div style={{
-                        padding: '14px 18px',
-                        borderRadius: 'var(--radius-md)',
-                        background: msg.role === 'user'
-                          ? 'linear-gradient(135deg, rgba(99,102,241,0.2) 0%, rgba(168,85,247,0.2) 100%)'
-                          : 'var(--bg-secondary)',
-                        border: msg.role === 'user'
-                          ? '1px solid rgba(99,102,241,0.4)'
-                          : '1px solid var(--border-subtle)',
-                        boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
-                        wordBreak: 'break-word'
-                      }}>
-                        {msg.role === 'user' ? (
-                          <p style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5, margin: 0, fontSize: '0.95rem' }}>
-                            {msg.content}
-                          </p>
-                        ) : (
-                          <FormattedMessage content={msg.content} isStreaming={msg.isStreaming} />
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-            <div ref={messagesEndRef} />
-          </div>
-        </div>
-
-        {/* Quick Scroll-To-Bottom Floating Button */}
-        {showScrollBottom && (
-          <button
-            type="button"
-            onClick={() => scrollToBottom()}
-            aria-label="Cuộn xuống tin nhắn mới nhất"
+          {/* Central Chat Workspace */}
+          <main
             style={{
-              position: 'absolute',
-              bottom: '90px',
-              right: '30px',
-              padding: '8px 14px',
-              borderRadius: 'var(--radius-full)',
-              background: 'var(--bg-card)',
-              border: '1px solid var(--border-subtle)',
-              color: 'var(--text-primary)',
-              fontSize: '0.85rem',
+              flex: 1,
               display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              cursor: 'pointer',
-              boxShadow: '0 6px 16px rgba(0,0,0,0.4)',
-              zIndex: 30
+              flexDirection: 'column',
+              height: '100%',
+              backgroundColor: '#0E0F1B',
+              overflow: 'hidden',
+              position: 'relative',
             }}
           >
-            <span>↓</span>
-            <span>Xuống tin nhắn mới nhất</span>
-          </button>
-        )}
+            {/* Thread Area */}
+            <ChatWorkspace
+              messages={messages}
+              isStreaming={isStreaming}
+              onSelectPrompt={p => {
+                setInputPrompt(p);
+                handleSendMessage(p);
+              }}
+              onStop={handleStopGeneration}
+              activeConvTitle={activeConv?.title}
+              currentUser={currentUser}
+              chatScrollContainerRef={chatScrollContainerRef}
+              messagesEndRef={messagesEndRef}
+              onScroll={handleScroll}
+              showScrollBottom={showScrollBottom}
+              scrollToBottom={() => scrollToBottom(true)}
+            />
 
-        {/* COMPOSER BAR & CONTROLS (UX-003, UX-005) */}
-        <div style={{
-          padding: '14px 18px',
-          background: 'var(--bg-primary)',
-          borderTop: '1px solid var(--border-subtle)',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center'
-        }}>
-          <div style={{ width: '100%', maxWidth: '820px', position: 'relative' }}>
-            {/* Dừng phản hồi Button (khi đang stream) */}
-            {isStreaming && (
-              <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
-                <button
-                  type="button"
-                  onClick={handleStopGeneration}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    padding: '8px 18px',
-                    background: 'var(--danger-bg)',
-                    border: '1px solid rgba(239, 68, 68, 0.4)',
-                    color: '#f87171',
-                    borderRadius: 'var(--radius-full)',
-                    fontSize: '0.85rem',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    boxShadow: '0 4px 12px rgba(239, 68, 68, 0.2)'
-                  }}
-                >
-                  <span style={{ fontSize: '0.8rem' }}>■</span>
-                  <span>Dừng phản hồi</span>
-                </button>
-              </div>
-            )}
+            {/* Bottom Message Composer */}
+            <MessageComposer
+              inputPrompt={inputPrompt}
+              onInputChange={setInputPrompt}
+              onSend={handleSendMessage}
+              onStop={handleStopGeneration}
+              isStreaming={isStreaming}
+              activeModels={activeModels}
+              selectedModelId={selectedModelId}
+              onSelectModel={setSelectedModelId}
+              activeProjects={activeProjects}
+              selectedProjectId={selectedProjectId}
+              onSelectProject={setSelectedProjectId}
+              placeholder="Message AI-Chan..."
+            />
+          </main>
 
-            {/* Active Project Workflow Indicator Banner */}
-            {selectedProjectId && (
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: '6px 12px',
-                marginBottom: '8px',
-                borderRadius: 'var(--radius-sm)',
-                background: 'rgba(16, 185, 129, 0.12)',
-                border: '1px solid rgba(16, 185, 129, 0.3)',
-                fontSize: '0.8rem',
-                color: '#34d399'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span>🧩</span>
-                  <span>
-                    Chạy qua Workflow: <strong>{activeProjects.find(p => p.id === selectedProjectId)?.name}</strong>
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setSelectedProjectId('')}
-                  style={{
-                    background: 'transparent',
-                    border: 'none',
-                    color: 'var(--text-muted)',
-                    cursor: 'pointer',
-                    fontSize: '0.75rem',
-                    textDecoration: 'underline'
-                  }}
-                >
-                  Quay lại Chat Tiêu Chuẩn ✕
-                </button>
-              </div>
-            )}
-
-            {/* Input Box Wrapper */}
-            <div style={{
+          {/* Right Side: Integrated VRM 3D Area & Ambient Background */}
+          <div
+            className="vrm-companion-sidebar"
+            style={{
+              width: '420px',
+              minWidth: '360px',
+              height: '100%',
+              position: 'relative',
               display: 'flex',
-              alignItems: 'flex-end',
-              gap: '10px',
-              background: 'var(--bg-secondary)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 'var(--radius-lg)',
-              padding: '8px 12px',
-              boxShadow: '0 6px 20px rgba(0,0,0,0.25)'
-            }}>
-              <textarea
-                ref={textareaRef}
-                value={inputPrompt}
-                onChange={handleTextareaChange}
-                onKeyDown={handleKeyDown}
-                placeholder="Nhập câu hỏi cho AI-Chan... (Enter để gửi, Shift+Enter để xuống dòng)"
-                rows={1}
-                disabled={isStreaming}
-                style={{
-                  flex: 1,
-                  background: 'transparent',
-                  border: 'none',
-                  outline: 'none',
-                  color: '#fff',
-                  fontSize: '0.95rem',
-                  lineHeight: '1.5',
-                  resize: 'none',
-                  maxHeight: '180px',
-                  padding: '6px 4px',
-                  fontFamily: 'inherit'
+              flexDirection: 'column',
+              backgroundColor: '#0E0F1B',
+              borderLeft: '1px solid var(--border-subtle)',
+              overflow: 'hidden',
+            }}
+          >
+            {/* Ambient Background with subtle illustration blend */}
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                backgroundImage: 'radial-gradient(circle at 60% 40%, rgba(139, 92, 246, 0.18) 0%, rgba(14, 15, 27, 0.95) 75%), url(/assets/ai-chan-bg.jpg)',
+                backgroundSize: 'cover',
+                backgroundPosition: 'center right',
+                opacity: 0.55,
+                filter: 'blur(2px)',
+                pointerEvents: 'none',
+                zIndex: 1,
+              }}
+            />
+
+            {/* Cute Speech Bubble Float */}
+            <div
+              style={{
+                position: 'absolute',
+                top: '28px',
+                left: '24px',
+                zIndex: 15,
+                padding: '8px 16px',
+                borderRadius: 'var(--radius-full)',
+                background: 'rgba(23, 24, 33, 0.85)',
+                backdropFilter: 'blur(12px)',
+                border: '1px solid rgba(167, 139, 250, 0.3)',
+                boxShadow: 'var(--accent-glow-sm)',
+                fontSize: '0.82rem',
+                color: 'var(--accent)',
+                fontWeight: 600,
+                pointerEvents: 'none',
+                animation: 'floatSoft 3.5s ease-in-out infinite',
+              }}
+            >
+              Anything you want to know? 💜
+            </div>
+
+            {/* 3D VRM Canvas */}
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                zIndex: 5,
+              }}
+            >
+              <VRMViewer
+                modelUrl="/models/ai-chan.vrm"
+                avatarState={avatarState}
+                companionMode={false}
+                onControllerReady={ctrl => {
+                  vrmControllerRef.current = ctrl;
                 }}
               />
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                {/* Character Counter (UX-005) */}
-                <span style={{
-                  fontSize: '0.75rem',
-                  fontWeight: 500,
-                  color: inputPrompt.length >= 4000
-                    ? 'var(--danger)'
-                    : inputPrompt.length >= 3800
-                    ? '#fbbf24'
-                    : 'var(--text-muted)'
-                }}>
-                  {inputPrompt.length}/4000
-                </span>
-
-                {/* Send Button */}
-                <button
-                  type="button"
-                  onClick={() => handleSendMessage()}
-                  disabled={!inputPrompt.trim() || isStreaming}
-                  aria-label="Gửi tin nhắn"
-                  style={{
-                    width: '38px',
-                    height: '38px',
-                    borderRadius: '10px',
-                    background: (!inputPrompt.trim() || isStreaming)
-                      ? 'rgba(255, 255, 255, 0.08)'
-                      : 'var(--accent-gradient)',
-                    border: 'none',
-                    color: '#fff',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    cursor: (!inputPrompt.trim() || isStreaming) ? 'not-allowed' : 'pointer',
-                    boxShadow: (!inputPrompt.trim() || isStreaming) ? 'none' : 'var(--accent-glow)',
-                    transition: 'all 0.2s ease'
-                  }}
-                >
-                  ➔
-                </button>
-              </div>
             </div>
 
-            <div style={{
-              textAlign: 'center',
-              fontSize: '0.72rem',
-              color: 'var(--text-muted)',
-              marginTop: '6px'
-            }}>
-              AI-Chan có thể đưa ra kết quả chưa hoàn hảo. Vui lòng kiểm chứng lại các thông tin chuyên môn quan trọng.
-            </div>
-          </div>
-        </div>
-      </main>
-
-      {/* CONFIRM DELETE MODAL */}
-      {deleteModalConv && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'rgba(0, 0, 0, 0.65)',
-          backdropFilter: 'blur(6px)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 100,
-          padding: '1.5rem'
-        }}>
-          <div style={{
-            background: 'var(--bg-secondary)',
-            border: '1px solid var(--border-subtle)',
-            borderRadius: 'var(--radius-md)',
-            padding: '24px',
-            maxWidth: '420px',
-            width: '100%',
-            boxShadow: '0 20px 40px rgba(0,0,0,0.6)'
-          }}>
-            <h3 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '8px', color: '#fff' }}>
-              Xác nhận xóa cuộc trò chuyện?
-            </h3>
-            <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: '20px' }}>
-              Toàn bộ tin nhắn trong cuộc trò chuyện <strong>&quot;{deleteModalConv.title}&quot;</strong> sẽ bị xóa vĩnh viễn khỏi cơ sở dữ liệu. Thao tác này không thể hoàn tác.
-            </p>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-              <button
-                type="button"
-                onClick={() => setDeleteModalConv(null)}
-                style={{
-                  padding: '8px 16px',
-                  background: 'rgba(255, 255, 255, 0.08)',
-                  border: 'none',
-                  borderRadius: 'var(--radius-sm)',
-                  color: 'var(--text-primary)',
-                  fontSize: '0.85rem',
-                  cursor: 'pointer'
-                }}
-              >
-                Hủy bỏ
-              </button>
-              <button
-                type="button"
-                onClick={handleDelete}
-                style={{
-                  padding: '8px 18px',
-                  background: 'var(--danger)',
-                  border: 'none',
-                  borderRadius: 'var(--radius-sm)',
-                  color: '#fff',
-                  fontSize: '0.85rem',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  boxShadow: '0 4px 12px rgba(239, 68, 68, 0.3)'
-                }}
-              >
-                Xác nhận xóa
-              </button>
+            {/* Floating AI-Chan Status Panel (bottom right dock) */}
+            <div
+              style={{
+                position: 'absolute',
+                bottom: '20px',
+                right: '20px',
+                zIndex: 20,
+              }}
+            >
+              <AIChanStatusPanel
+                modelName={activeModels.find(m => m.id === selectedModelId)?.name || 'GPT-4o'}
+                temperature={0.7}
+                maxTokens={4096}
+                tokensUsed="1.2K / 8K"
+                onQuickToolClick={handleQuickToolClick}
+              />
             </div>
           </div>
         </div>

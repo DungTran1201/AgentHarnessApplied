@@ -1,0 +1,52 @@
+version: "2.0"
+
+common:
+  every_nontrivial_change:
+    - work-item
+    - discovery
+    - impact-analysis
+    - verification-plan
+
+change_types:
+  feature:
+    baseline:
+      - requirements
+      - implementation-plan
+    conditional:
+      business_process: [use-case, process-model, bpmn, swimlane]
+      api: [api-contract, api-documentation, sequence]
+      data: [domain-model, data-model]
+      lifecycle: [state-model]
+      external_integration: [system-context, sequence, threat-model]
+      security: [security-spec, threat-model, security-tests]
+      ui: [ia, user-flow, ux-review]
+      infrastructure: [architecture, deployment, runbook]
+      ai_or_agent: [agent-behavior, sequence, state-model, threat-model, evaluation]
+
+  bugfix:
+    baseline: [discovery, impact-analysis, regression-tests]
+    conditional:
+      api: [api-contract-review, sequence-review]
+      ui: [user-flow-review, ux-review]
+      security: [threat-model-review, security-test]
+      data: [data-model-review, migration-review]
+
+  refactor:
+    baseline: [architecture-review, implementation-plan, regression-tests]
+    conditional:
+      public_contract: [api-contract-review, sequence-review]
+
+  security_change:
+    baseline: [requirements, threat-model, security-spec, implementation-plan, verification-plan]
+    approval: explicit-human-security-review
+
+  infrastructure_change:
+    baseline: [architecture-review, deployment, runbook, rollback-plan, implementation-plan, verification-plan]
+    approval: explicit-human-infrastructure-review
+
+risk_tiers:
+  R0: {approval: normal}
+  R1: {approval: normal}
+  R2: {approval: plan-review}
+  R3: {approval: plan-plus-domain-review}
+  R4: {approval: explicit-human-approval}

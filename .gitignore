@@ -33,3 +33,16 @@ venv/
 .idea/
 
 # System Construction, Modeling & Internal Agent Artifacts
+.agents/
+docs/
+diagrams/
+diagram/
+examples/
+models/
+tools/
+work-items/
+
+AGENT_TASKS.md
+AGENTS.md
+
+MIGRATION-v2-to-v3.md

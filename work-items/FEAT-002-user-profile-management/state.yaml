@@ -1,0 +1,37 @@
+work_item:
+  id: FEAT-002
+  slug: user-profile-management
+  type: feature
+  risk: R3
+  status: IMPLEMENTED
+  ready_for_stop: true
+  selected_artifacts:
+    - "docs/02-requirements/functional-requirements.md"
+    - "docs/02-requirements/business-rules.md"
+    - "docs/02-requirements/acceptance-criteria.md"
+    - "docs/02-requirements/requirement-traceability.md"
+    - "docs/03-business-process/business-process-catalog.md"
+    - "docs/04-use-cases/use-case-catalog.md"
+    - "docs/04-use-cases/specifications/UC-USER-001-view-profile.md"
+    - "docs/04-use-cases/specifications/UC-USER-002-update-profile.md"
+    - "docs/04-use-cases/specifications/UC-USER-003-update-avatar.md"
+    - "docs/04-use-cases/specifications/UC-USER-004-change-email.md"
+    - "docs/04-use-cases/specifications/UC-USER-005-change-password.md"
+    - "docs/04-use-cases/specifications/UC-USER-006-update-preferences.md"
+    - "docs/07-domain/entities.md"
+    - "docs/08-api/api-specifications.md"
+    - "docs/08-api/openapi.yaml"
+    - "docs/10-security/security-specification.md"
+    - "docs/11-ux/ui-interaction-specs.md"
+    - "diagrams/bpmn/user-profile-bpmn.md"
+    - "diagrams/bpmn/change-security-bpmn.md"
+    - "diagrams/swimlane/user-management-swimlane.md"
+    - "diagrams/sequence/change-password-sequence.md"
+    - "diagrams/sequence/change-email-sequence.md"
+    - "diagrams/sequence/update-profile-sequence.md"
+    - "diagrams/state/user-account-state.md"
+    - "ai-backend/database/schema.sql"
+    - "ai-backend/database/migrations/002_user_management_extension.sql"
+    - "ai-backend/src/api/v1/users.py"
+    - "ai-frontend/src/app/settings/page.tsx"
+    - "ai-backend/tests/test_user_management.py"
