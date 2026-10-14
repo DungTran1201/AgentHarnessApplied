@@ -4,6 +4,7 @@ export type IconName =
   | 'home'
   | 'chat'
   | 'projects'
+  | 'bot'
   | 'prompts'
   | 'skills'
   | 'dashboard'
@@ -35,6 +36,7 @@ export type IconName =
   | 'link'
   | 'sparkles'
   | 'key'
+  | 'lock'
   | 'cpu';
 
 interface IconProps extends React.SVGProps<SVGSVGElement> {
@@ -65,6 +67,17 @@ export default function Icon({ name, size = 16, style, ...rest }: IconProps) {
         <svg {...s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...rest}>
           <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
           <path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16" />
+        </svg>
+      );
+    case 'bot':
+      return (
+        <svg {...s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...rest}>
+          <path d="M12 8V4H8" />
+          <rect width="16" height="12" x="4" y="8" rx="2" />
+          <path d="M2 14h2" />
+          <path d="M20 14h2" />
+          <path d="M15 13v2" />
+          <path d="M9 13v2" />
         </svg>
       );
     case 'prompts':
@@ -283,6 +296,13 @@ export default function Icon({ name, size = 16, style, ...rest }: IconProps) {
       return (
         <svg {...s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...rest}>
           <path d="M21 2l-2 2m-1.5 1.5L14 9l-1.5-1.5L11 9l-1.5-1.5L8 9a5 5 0 1 0 3 3l6.5-6.5" />
+        </svg>
+      );
+    case 'lock':
+      return (
+        <svg {...s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...rest}>
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
         </svg>
       );
     case 'cpu':

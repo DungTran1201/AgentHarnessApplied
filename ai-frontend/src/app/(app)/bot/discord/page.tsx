@@ -66,6 +66,11 @@ export default function DiscordBotManagementPage() {
         router.push('/login');
         return;
       }
+      if (!connRes.ok) {
+        setIsDiscordLinked(false);
+        setLoading(false);
+        return;
+      }
       const connData = await connRes.json();
       const discordDetails = connData?.connections?.discord;
       const linked = Boolean(discordDetails?.connected && discordDetails?.discord_id);
@@ -123,6 +128,7 @@ export default function DiscordBotManagementPage() {
         setQuota(qData);
       }
     } catch (err: any) {
+      setIsDiscordLinked(false);
       showToast('error', getErrorMessage(err, 'Failed to load Discord bot configuration.'));
     } finally {
       setLoading(false);
@@ -307,7 +313,7 @@ export default function DiscordBotManagementPage() {
             margin: '0 auto 1rem',
             border: '1px solid rgba(88, 101, 242, 0.3)'
           }}>
-            <Icon name="chat" size={24} />
+            <Icon name="lock" size={24} />
           </div>
           <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '0.5rem', color: 'var(--text-primary)' }}>
             Discord Account Connection Required

@@ -18,19 +18,23 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   const [authChecked, setAuthChecked] = useState(false);
 
   // ── Auth check ───────────────────────────────────────────────────────
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch('/api/v1/auth/me');
-        if (!res.ok) { router.push('/login'); return; }
-        const data = await res.json();
-        setCurrentUser(data.user);
-        setAuthChecked(true);
-      } catch {
-        router.push('/login');
-      }
-    })();
+  const fetchCurrentUser = useCallback(async () => {
+    try {
+      const res = await fetch('/api/v1/auth/me');
+      if (!res.ok) { router.push('/login'); return; }
+      const data = await res.json();
+      setCurrentUser(data.user);
+      setAuthChecked(true);
+    } catch {
+      router.push('/login');
+    }
   }, [router]);
+
+  useEffect(() => {
+    fetchCurrentUser();
+  }, [fetchCurrentUser]);
+
+  const isDiscordLinked = Boolean(currentUser?.discord_id);
 
   // ── Conversations ────────────────────────────────────────────────────
   const fetchConversations = useCallback(async () => {
@@ -135,6 +139,8 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
 
   const ctx: AppContextValue = {
     currentUser,
+    isDiscordLinked,
+    refreshUser: fetchCurrentUser,
     conversations,
     activeConvId,
     setActiveConvId,
@@ -167,12 +173,12 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
         {/* Body: sidebar + main */}
         <div
           style={{
-            display: 'flex',
-            flex: 1,
-            overflow: 'hidden',
-            minHeight: 0,
-          }}
-        >
+          display: 'flex',
+          flex: 1,
+          overflow: 'hidden',
+          minHeight: 0,
+        }}
+      >
           <Sidebar
             conversations={conversations}
             activeConvId={activeConvId}
@@ -182,6 +188,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
             onDeleteConversation={deleteConversation}
             collapsed={sidebarCollapsed}
             onToggleCollapse={() => setSidebarCollapsed(v => !v)}
+            isDiscordLinked={isDiscordLinked}
           />
 
           <main

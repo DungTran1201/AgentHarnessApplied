@@ -5,6 +5,8 @@ import { Conversation } from '@/components/chat/Sidebar';
 
 export interface AppContextValue {
   currentUser: any;
+  isDiscordLinked: boolean;
+  refreshUser: () => Promise<void>;
   conversations: Conversation[];
   activeConvId: string | null;
   setActiveConvId: (id: string | null) => void;
@@ -19,6 +21,8 @@ export interface AppContextValue {
 
 export const AppContext = createContext<AppContextValue>({
   currentUser: null,
+  isDiscordLinked: false,
+  refreshUser: async () => {},
   conversations: [],
   activeConvId: null,
   setActiveConvId: () => {},

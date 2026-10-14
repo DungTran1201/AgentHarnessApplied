@@ -41,6 +41,16 @@ ux_model:
           - "Token Breakdown Chart: Prompt vs Completion Tokens per Model Provider"
           - "HTTP Status Code Distribution Ring Chart"
           - "Live Request Telemetry Stream Feed Table"
+      - path: "/bot/discord"
+        title: "Discord Bot Management Hub"
+        auth_required: true
+        access_requirement: "Discord linked account or Discord OAuth authenticated session"
+        subsections:
+          - "Global Sidebar: First-class navigation item with locked/unlocked state indicators"
+          - "Bot Status & Quota Bar: Guild Selector, Status Badges, Quota Usage Gauge"
+          - "Configuration Form: Model Routing, Trigger Mode, Persona Prompt, Token Ceiling"
+          - "Interactive Test Dispatch Console: Simulation with automatic failover and Web history sync"
+          - "Access Guard Card: Clear connection call-to-action for ineligible accounts"
   screens:
     - id: SCR-001
       name: "Authentication View"
@@ -90,7 +100,7 @@ ux_model:
         - "Account Lockout Warning Alert for Passwordless Users (BR-026)"
     - id: SCR-006
       name: "Discord Bot Management Canvas & Integration View"
-      routes: ["/settings?tab=bot", "/settings/bot"]
+      routes: ["/bot", "/bot/discord", "/settings?tab=connections"]
       components:
         - "Bot Status Overview Card (Online Indicator, Bot ID, Invitation Button)"
         - "Manageable Discord Servers (Guilds) Selector with Installation Badges"

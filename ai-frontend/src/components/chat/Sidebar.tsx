@@ -20,25 +20,29 @@ interface SidebarProps {
   onDeleteConversation: (conv: Conversation) => void;
   collapsed: boolean;
   onToggleCollapse: () => void;
+  isDiscordLinked?: boolean;
   // Legacy compat – no longer needed but kept so old consumers don't break
   activeTab?: string;
   onTabChange?: (tab: any) => void;
 }
 
 import Icon, { IconName } from '@/components/ui/Icon';
+import { useApp } from '@/context/AppContext';
 
 // ── Nav items – driven by pathname ─────────────────────────────────────
-const NAV_ITEMS: { key: string; label: string; icon: IconName; href: string }[] = [
+export const NAV_ITEMS: { key: string; label: string; icon: IconName; href: string }[] = [
   { key: 'chat',      label: 'Chat',            icon: 'chat',      href: '/chat' },
   { key: 'projects',  label: 'Projects',        icon: 'projects',  href: '/projects' },
+  { key: 'bot',       label: 'Bot',             icon: 'bot',       href: '/bot/discord' },
   { key: 'prompts',   label: 'System Prompts',  icon: 'prompts',   href: '/prompts' },
   { key: 'skills',    label: 'Skills',          icon: 'skills',    href: '/skills' },
   { key: 'dashboard', label: 'Dashboard',       icon: 'dashboard', href: '/dashboard' },
   { key: 'settings',  label: 'Settings',        icon: 'settings',  href: '/settings' },
 ];
 
-function navIsActive(pathname: string, href: string): boolean {
+export function navIsActive(pathname: string, href: string): boolean {
   if (href === '/') return pathname === '/';
+  if (href.startsWith('/bot') && (pathname === '/bot' || pathname.startsWith('/bot/'))) return true;
   return pathname === href || pathname.startsWith(href + '/');
 }
 
@@ -51,8 +55,11 @@ export default function Sidebar({
   onDeleteConversation,
   collapsed,
   onToggleCollapse,
+  isDiscordLinked: propDiscordLinked,
 }: SidebarProps) {
   const pathname = usePathname();
+  const appContext = useApp();
+  const isDiscordLinked = propDiscordLinked !== undefined ? propDiscordLinked : appContext?.isDiscordLinked ?? false;
   const [searchQuery, setSearchQuery] = useState('');
   const [pinnedIds, setPinnedIds] = useState<string[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -170,13 +177,24 @@ export default function Sidebar({
       {/* Primary nav */}
       <nav aria-label="Primary" style={{ padding: '0 8px 6px', display: 'flex', flexDirection: 'column', gap: '1px' }}>
         {NAV_ITEMS.map(item => {
+          const isBot = item.key === 'bot';
+          const isLocked = isBot && !isDiscordLinked;
           const isActive = navIsActive(pathname, item.href);
+          const href = isLocked ? '/settings?tab=connections' : item.href;
+          const tooltip = isLocked
+            ? (collapsed ? 'Bot (Locked: Connect Discord account)' : 'Connect your Discord account to unlock Bot Management')
+            : (collapsed ? item.label : undefined);
+          const ariaLabel = isLocked
+            ? 'Bot (Locked: Connect your Discord account to unlock Bot Management)'
+            : item.label;
+
           return (
             <Link
               key={item.key}
-              href={item.href}
-              aria-current={isActive ? 'page' : undefined}
-              title={collapsed ? item.label : undefined}
+              href={href}
+              aria-current={isActive && !isLocked ? 'page' : undefined}
+              aria-label={ariaLabel}
+              title={tooltip}
               style={{ textDecoration: 'none' }}
             >
               <div
@@ -185,18 +203,73 @@ export default function Sidebar({
                   padding: collapsed ? '8px 0' : '7px 10px',
                   justifyContent: collapsed ? 'center' : 'flex-start',
                   borderRadius: 'var(--radius-sm)', cursor: 'pointer',
-                  fontSize: '0.82rem', fontWeight: isActive ? 600 : 400,
-                  color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
-                  backgroundColor: isActive ? 'var(--bg-selected)' : 'transparent',
+                  fontSize: '0.82rem', fontWeight: isActive && !isLocked ? 600 : 400,
+                  color: isLocked
+                    ? 'var(--text-disabled)'
+                    : (isActive ? 'var(--text-primary)' : 'var(--text-muted)'),
+                  backgroundColor: isActive && !isLocked ? 'var(--bg-selected)' : 'transparent',
                   transition: 'color var(--transition-fast), background var(--transition-fast)',
                 }}
-                onMouseEnter={e => { if (!isActive) { (e.currentTarget as HTMLElement).style.color = 'var(--text-secondary)'; (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'; } }}
-                onMouseLeave={e => { if (!isActive) { (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'; (e.currentTarget as HTMLElement).style.background = 'transparent'; } }}
+                onMouseEnter={e => {
+                  if (isLocked) {
+                    (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)';
+                    (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)';
+                  } else if (!isActive) {
+                    (e.currentTarget as HTMLElement).style.color = 'var(--text-secondary)';
+                    (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)';
+                  }
+                }}
+                onMouseLeave={e => {
+                  if (isLocked) {
+                    (e.currentTarget as HTMLElement).style.color = 'var(--text-disabled)';
+                    (e.currentTarget as HTMLElement).style.background = 'transparent';
+                  } else if (!isActive) {
+                    (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)';
+                    (e.currentTarget as HTMLElement).style.background = 'transparent';
+                  }
+                }}
               >
-                <span style={{ flexShrink: 0, display: 'flex' }} aria-hidden="true">
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                   <Icon name={item.icon} size={15} />
-                </span>
-                {!collapsed && <span>{item.label}</span>}
+                  {isLocked && (
+                    <span
+                      style={{
+                        position: 'absolute',
+                        bottom: -3,
+                        right: -4,
+                        backgroundColor: 'var(--bg-base)',
+                        borderRadius: '50%',
+                        padding: '1px',
+                        display: 'flex',
+                        color: 'var(--text-disabled)',
+                      }}
+                      aria-hidden="true"
+                    >
+                      <Icon name="lock" size={9} />
+                    </span>
+                  )}
+                </div>
+                {!collapsed && (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flex: 1, minWidth: 0 }}>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {item.label}
+                    </span>
+                    {isLocked && (
+                      <span
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          marginLeft: '6px',
+                          color: 'var(--text-disabled)',
+                          flexShrink: 0,
+                        }}
+                        aria-hidden="true"
+                      >
+                        <Icon name="lock" size={11} />
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             </Link>
           );

@@ -23,9 +23,14 @@ Hệ thống AI-Chan được thiết kế với cấu trúc phân cấp tinh g�
   └── /register       (Đăng ký tài khoản mới)
 
 [Khu vực Người dùng Xác thực / Authenticated Workspace]
-  └── /chat           (Giao diện làm việc chính)
-        ├── /chat                 (Màn hình cuộc trò chuyện mới - New Chat / Empty State)
-        └── /chat/[id]            (Màn hình cuộc trò chuyện cụ thể với lịch sử tin nhắn)
+  ├── /chat           (Giao diện hội thoại chính)
+  ├── /projects       (Quản lý đồ thị AI Workflow Canvas)
+  ├── /bot            (Điều hướng Bot Discord - redirect -> /bot/discord)
+  │     └── /bot/discord (Canvas quản trị Discord Bot, model routing, quota sync)
+  ├── /prompts        (Thư viện System Prompts)
+  ├── /skills         (Kho công cụ mở rộng Skills)
+  ├── /dashboard      (Bảng điều khiển Telemetry & Token Quota)
+  └── /settings       (Cấu hình cá nhân, bảo mật, và liên kết tài khoản)
 ```
 
 ---
@@ -94,6 +99,7 @@ Giao diện `/chat` được tổ chức thành 3 khu vực chức năng chính 
 | `SCR-002-A` | Khung Chat Mới (Empty) | `/chat` | Empty State with Prompt Chips, Focused Input |
 | `SCR-002-B` | Khung Chat Hoạt Động | `/chat/[id]` | Loading History (Skeleton), Idle Message Thread, Streaming SSE Active, Aborted, Error Toast |
 | `SCR-002-C` | Hộp Thoại Xác Nhận Xóa | Modal Trigger | Confirm Delete Modal (Backdrop, Cancel, Confirm Danger Button) |
+| `SCR-006`   | Quản Trị Discord Bot | `/bot/discord` | Locked (Connect Discord CTA), Active (Config Form, Guild Selector, Model Routing, Test Dispatch Console) |
 
 ---
 

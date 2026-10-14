@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AgentModel, ModelSearchResponse, UserConnectionsResponse } from '@/types';
 import Icon from '@/components/ui/Icon';
+import { useApp } from '@/context/AppContext';
 
 interface UserProfile {
   id: string;
@@ -31,6 +32,7 @@ interface UserStats {
 export default function SettingsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { refreshUser } = useApp();
 
   // Active tab state: 'profile' | 'security' | 'preferences' | 'connections' | 'models'
   const [activeTab, setActiveTab] = useState<'profile' | 'security' | 'preferences' | 'connections' | 'models'>('profile');
@@ -200,6 +202,7 @@ export default function SettingsPage() {
       if (statusParam === 'linked_success') {
         showToast('success', 'Discord account linked successfully.');
         fetchConnections();
+        refreshUser();
       } else if (errorParam === 'discord_already_linked') {
         showToast('error', 'This Discord account is already linked to another AI-Chan account (BR-025).');
       } else if (errorParam === 'invalid_state') {
@@ -255,6 +258,7 @@ export default function SettingsPage() {
       setShowUnlinkModal(false);
       setUnlinkPassword('');
       fetchConnections();
+      refreshUser();
       if (user) {
         setUser({ ...user, discord_id: undefined } as any);
       }
