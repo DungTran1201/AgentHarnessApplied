@@ -100,42 +100,83 @@ def validate_project_graph(graph_data: Dict[str, Any], user_id: Optional[str] = 
     if len(prompt_nodes) > 1:
         errors.append(f"Mỗi Model chỉ được kết nối tối đa 1 System Prompt Node trong MVP (hiện tại có {len(prompt_nodes)}).")
 
+    bot_nodes = node_by_type.get("bot", [])
+    if len(bot_nodes) > 1:
+        errors.append("This model can be connected to only one bot. Remove the existing bot connection before selecting another.")
+
+    skill_nodes = node_by_type.get("skill", [])
+
     # Kiểm tra loại node không hợp lệ
-    valid_types = {"web_input", "model", "output", "system_prompt"}
+    valid_types = {"web_input", "model", "output", "system_prompt", "bot", "skill"}
     for ntype in node_by_type.keys():
         if ntype not in valid_types:
             errors.append(f"Phát hiện loại node không được hỗ trợ: '{ntype}'.")
+
+    # Kiểm tra tính duy nhất của node IDs
+    node_ids = [n.get("id") for n in nodes if n.get("id")]
+    if len(node_ids) != len(set(node_ids)):
+        errors.append("Phát hiện ID node bị trùng lặp trong graph.")
+
+    # Kiểm tra tính duy nhất của edge IDs
+    edge_ids = [e.get("id") for e in edges if e.get("id")]
+    if len(edge_ids) != len(set(edge_ids)):
+        errors.append("Phát hiện ID edge bị trùng lặp trong graph.")
 
     input_node = input_nodes[0] if input_nodes else None
     model_node = model_nodes[0] if model_nodes else None
     output_node = output_nodes[0] if output_nodes else None
     prompt_node = prompt_nodes[0] if prompt_nodes else None
+    bot_node = bot_nodes[0] if bot_nodes else None
 
-    # 2. Kiểm tra các Edge
+    # 2. Kiểm tra các Edge và ràng buộc kết nối
     has_prompt = prompt_node is not None
-    expected_edge_count = 3 if has_prompt else 2
+    has_bot = bot_node is not None
+    expected_edge_count = 2 + (1 if has_prompt else 0) + (1 if has_bot else 0) + len(skill_nodes)
     if len(edges) != expected_edge_count:
-        errors.append(f"Graph yêu cầu chính xác {expected_edge_count} cạnh kết nối liền mạch (hiện tại có {len(edges)} cạnh).")
+        errors.append(f"Graph yêu cầu chính xác {expected_edge_count} cạnh kết nối hợp lệ (hiện tại có {len(edges)} cạnh).")
+
+    # Kiểm tra duplicate edges
+    edge_pairs = [(e.get("source"), e.get("target")) for e in edges]
+    if len(edge_pairs) != len(set(edge_pairs)):
+        errors.append("Duplicate connections are rejected.")
 
     input_to_model_edge = False
     model_to_output_edge = False
     prompt_to_model_edge = False
+    model_to_bot_edge = False
+    connected_skill_ids: List[str] = []
 
     if input_node and model_node and output_node:
         in_id = input_node.get("id")
         model_id_node = model_node.get("id")
         out_id = output_node.get("id")
         prompt_id_node = prompt_node.get("id") if prompt_node else None
+        bot_id_node = bot_node.get("id") if bot_node else None
+        skill_id_nodes = {s.get("id"): s for s in skill_nodes if s.get("id")}
 
         for e in edges:
             src = e.get("source")
             tgt = e.get("target")
+            src_node = node_by_id.get(src)
+            tgt_node = node_by_id.get(tgt)
+            src_type = src_node.get("type") if src_node else None
+            tgt_type = tgt_node.get("type") if tgt_node else None
+
+            # Kiểm tra hướng và loại hợp lệ
             if src == in_id and tgt == model_id_node:
                 input_to_model_edge = True
             elif src == model_id_node and tgt == out_id:
                 model_to_output_edge = True
             elif prompt_id_node and src == prompt_id_node and tgt == model_id_node:
                 prompt_to_model_edge = True
+            elif bot_id_node and src == model_id_node and tgt == bot_id_node:
+                model_to_bot_edge = True
+            elif src == model_id_node and tgt in skill_id_nodes:
+                connected_skill_ids.append(tgt)
+            elif src == bot_id_node and tgt == model_id_node:
+                errors.append("Invalid reverse connection: Bot cannot connect to Model. Direction must be Model -> Bot.")
+            elif tgt == model_id_node and src in skill_id_nodes:
+                errors.append("Invalid reverse connection: Skill cannot connect to Model. Direction must be Model -> Skill.")
             elif src == in_id and tgt == out_id:
                 errors.append("Phát hiện cạnh nối tắt trực tiếp từ Web Input sang Output (không được phép bỏ qua Model Node).")
             elif tgt == in_id:
@@ -144,6 +185,8 @@ def validate_project_graph(graph_data: Dict[str, Any], user_id: Optional[str] = 
                 errors.append("Phát hiện cạnh nối từ System Prompt sang Output Node (không hợp lệ).")
             elif prompt_id_node and tgt == prompt_id_node:
                 errors.append("Phát hiện cạnh nối đi vào System Prompt Node (System Prompt Node chỉ có cổng xuất).")
+            else:
+                errors.append(f"Kết nối không hợp lệ từ '{src_type}' sang '{tgt_type}'.")
 
         if not input_to_model_edge:
             errors.append("Thiếu kết nối có hướng từ Web Input Node sang Model Node.")
@@ -151,6 +194,11 @@ def validate_project_graph(graph_data: Dict[str, Any], user_id: Optional[str] = 
             errors.append("Thiếu kết nối có hướng từ Model Node sang Output Node.")
         if has_prompt and not prompt_to_model_edge:
             errors.append("System Prompt Node chưa được kết nối vào Model Node.")
+        if has_bot and not model_to_bot_edge:
+            errors.append("Bot Node chưa được kết nối từ Model Node.")
+        for sid, snode in skill_id_nodes.items():
+            if sid not in connected_skill_ids:
+                errors.append(f"Skill Node '{snode.get('data', {}).get('label', sid)}' chưa được kết nối từ Model Node.")
 
     # 3. Kiểm tra System Prompt Node cấu hình & tồn tại trong DB
     target_prompt_id = None
@@ -169,6 +217,53 @@ def validate_project_graph(graph_data: Dict[str, Any], user_id: Optional[str] = 
                 p_rec = query_one("SELECT id, name FROM system_prompts WHERE id = ?", (target_prompt_id,))
             if not p_rec:
                 errors.append(f"System Prompt tham chiếu '{target_prompt_id}' không tồn tại hoặc đã bị xóa khỏi thư viện.")
+
+    # 3.1 Kiểm tra Bot Node cấu hình & phân quyền Discord
+    target_bot_id = None
+    if bot_node:
+        b_cfg = bot_node.get("data", {}).get("config", {})
+        target_bot_id = b_cfg.get("bot_id")
+        if not target_bot_id:
+            errors.append("Bot Node chưa được gắn bot_id hợp lệ.")
+        else:
+            if user_id and user_id != 'guest_user':
+                user_rec = query_one("SELECT id, discord_id FROM users WHERE id = ?", (user_id,))
+                if not user_rec or not user_rec.get("discord_id"):
+                    errors.append("Tài khoản chưa liên kết Discord để sử dụng Bot Node trong project.")
+                bot_rec = query_one("SELECT id, is_enabled FROM discord_bot_configs WHERE id = ? AND user_id = ?", (target_bot_id, user_id))
+                if not bot_rec:
+                    errors.append(f"Bot cấu hình '{target_bot_id}' không tồn tại hoặc bạn không có quyền truy cập.")
+            else:
+                bot_rec = query_one("SELECT id, is_enabled FROM discord_bot_configs WHERE id = ?", (target_bot_id,))
+                if not bot_rec:
+                    errors.append(f"Bot cấu hình '{target_bot_id}' không tồn tại.")
+
+    # 3.2 Kiểm tra Skill Nodes cấu hình & trạng thái VALID
+    valid_skill_ids: List[str] = []
+    seen_skill_ids: set = set()
+    for s_node in skill_nodes:
+        s_cfg = s_node.get("data", {}).get("config", {})
+        ref_skill_id = s_cfg.get("skill_id")
+        if not ref_skill_id:
+            errors.append("Skill Node chưa được gắn skill_id hợp lệ.")
+            continue
+        if ref_skill_id in seen_skill_ids:
+            errors.append(f"Phát hiện kỹ năng trùng lặp '{ref_skill_id}' trong cùng một Model.")
+        seen_skill_ids.add(ref_skill_id)
+
+        if user_id and user_id != 'guest_user':
+            s_rec = query_one(
+                "SELECT id, name, status FROM skills WHERE id = ? AND (user_id = ? OR user_id = 'guest_user')",
+                (ref_skill_id, user_id)
+            )
+        else:
+            s_rec = query_one("SELECT id, name, status FROM skills WHERE id = ?", (ref_skill_id,))
+        if not s_rec:
+            errors.append(f"Kỹ năng tham chiếu '{ref_skill_id}' không tồn tại hoặc đã bị xóa khỏi thư viện.")
+        elif s_rec.get("status") != "VALID":
+            errors.append(f"Kỹ năng '{s_rec.get('name', ref_skill_id)}' không ở trạng thái VALID (hiện tại: {s_rec.get('status')}).")
+        else:
+            valid_skill_ids.append(ref_skill_id)
 
     # 4. Kiểm tra cấu hình Web Input Node
     max_words = 500
@@ -223,7 +318,9 @@ def validate_project_graph(graph_data: Dict[str, Any], user_id: Optional[str] = 
         "errors": errors,
         "target_model_id": target_model_id,
         "max_words_limit": max_words,
-        "prompt_id": target_prompt_id
+        "prompt_id": target_prompt_id,
+        "bot_id": target_bot_id if bot_nodes else None,
+        "skill_ids": valid_skill_ids
     }
 
 # ==============================================================================
@@ -662,19 +759,25 @@ async def chat_through_project(
             }
         )
 
-    # 2.5. Phân giải System Prompt liên kết nếu có trong graph (DEC-SPN-01, DEC-SPN-03, DEC-SPN-04)
+    # 2.5. Phân giải System Prompt, Bot và Skills liên kết nếu có trong graph (DEC-SPN-01, DEC-SPN-03, DEC-SPN-04)
     system_prompt_instruction: Optional[str] = None
+    connected_bot_info: Optional[Dict[str, Any]] = None
+    connected_skills_info: List[Dict[str, Any]] = []
+    skill_instructions: List[str] = []
+
     if proj.get("graph_data"):
         try:
             g_data = json.loads(proj["graph_data"])
             g_nodes = g_data.get("nodes", [])
             g_edges = g_data.get("edges", [])
+            model_nodes = [n for n in g_nodes if n.get("type") == "model"]
+            m_node_id = model_nodes[0].get("id") if model_nodes else None
+
+            # Phân giải System Prompt
             prompt_nodes = [n for n in g_nodes if n.get("type") == "system_prompt"]
-            if prompt_nodes:
+            if prompt_nodes and m_node_id:
                 p_node = prompt_nodes[0]
                 p_node_id = p_node.get("id")
-                model_nodes = [n for n in g_nodes if n.get("type") == "model"]
-                m_node_id = model_nodes[0].get("id") if model_nodes else None
                 is_connected = any(
                     e.get("source") == p_node_id and e.get("target") == m_node_id
                     for e in g_edges
@@ -704,10 +807,111 @@ async def chat_through_project(
                             }
                         )
                     system_prompt_instruction = prompt_record.get("content")
+
+            # Phân giải Bot liên kết (Model -> Bot)
+            bot_nodes = [n for n in g_nodes if n.get("type") == "bot"]
+            if bot_nodes and m_node_id:
+                b_node = bot_nodes[0]
+                b_node_id = b_node.get("id")
+                is_bot_connected = any(
+                    e.get("source") == m_node_id and e.get("target") == b_node_id
+                    for e in g_edges
+                )
+                if is_bot_connected:
+                    ref_bot_id = b_node.get("data", {}).get("config", {}).get("bot_id")
+                    if not ref_bot_id:
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail={
+                                "error_code": "BOT_UNAVAILABLE",
+                                "message": "Bot Node chưa được gắn ID bot hợp lệ."
+                            }
+                        )
+                    if user_id and user_id != 'guest_user':
+                        user_rec = query_one("SELECT id, discord_id FROM users WHERE id = ?", (user_id,))
+                        if not user_rec or not user_rec.get("discord_id"):
+                            raise HTTPException(
+                                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                detail={
+                                    "error_code": "DISCORD_NOT_LINKED",
+                                    "message": "Tài khoản chưa liên kết Discord để sử dụng Bot đã kết nối."
+                                }
+                            )
+                        bot_rec = query_one(
+                            "SELECT id, guild_name, trigger_mode, is_enabled FROM discord_bot_configs WHERE id = ? AND user_id = ?",
+                            (ref_bot_id, user_id)
+                        )
+                    else:
+                        bot_rec = query_one("SELECT id, guild_name, trigger_mode, is_enabled FROM discord_bot_configs WHERE id = ?", (ref_bot_id,))
+                    if not bot_rec:
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail={
+                                "error_code": "BOT_UNAVAILABLE",
+                                "message": f"Bot liên kết (ID: '{ref_bot_id}') không tồn tại hoặc bạn không có quyền truy cập."
+                            }
+                        )
+                    connected_bot_info = {
+                        "id": bot_rec["id"],
+                        "name": bot_rec.get("guild_name") or "Discord Bot",
+                        "platform": "discord",
+                        "is_enabled": bool(bot_rec.get("is_enabled", 1)),
+                        "trigger_mode": bot_rec.get("trigger_mode") or "MENTION"
+                    }
+
+            # Phân giải Skills liên kết (Model -> Skill)
+            skill_nodes = [n for n in g_nodes if n.get("type") == "skill"]
+            if skill_nodes and m_node_id:
+                seen_skills: set = set()
+                from src.core.skill_storage import read_skill_md_content
+                for s_node in skill_nodes:
+                    s_node_id = s_node.get("id")
+                    is_skill_connected = any(
+                        e.get("source") == m_node_id and e.get("target") == s_node_id
+                        for e in g_edges
+                    )
+                    if is_skill_connected:
+                        ref_skill_id = s_node.get("data", {}).get("config", {}).get("skill_id")
+                        if not ref_skill_id or ref_skill_id in seen_skills:
+                            continue
+                        seen_skills.add(ref_skill_id)
+
+                        if user_id and user_id != 'guest_user':
+                            skill_rec = query_one(
+                                "SELECT id, name, description, status, storage_path FROM skills WHERE id = ? AND (user_id = ? OR user_id = 'guest_user')",
+                                (ref_skill_id, user_id)
+                            )
+                        else:
+                            skill_rec = query_one("SELECT id, name, description, status, storage_path FROM skills WHERE id = ?", (ref_skill_id,))
+
+                        if not skill_rec or skill_rec.get("status") != "VALID":
+                            raise HTTPException(
+                                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                detail={
+                                    "error_code": "SKILL_UNAVAILABLE",
+                                    "message": f"Kỹ năng liên kết '{ref_skill_id}' không tồn tại hoặc không ở trạng thái VALID."
+                                }
+                            )
+                        content = read_skill_md_content(skill_rec.get("storage_path", ""))
+                        if content:
+                            skill_instructions.append(f"### Skill: {skill_rec['name']}\n{content}")
+                        elif skill_rec.get("description"):
+                            skill_instructions.append(f"### Skill: {skill_rec['name']}\nDescription: {skill_rec['description']}")
+                        connected_skills_info.append({
+                            "id": skill_rec["id"],
+                            "name": skill_rec["name"],
+                            "status": skill_rec["status"]
+                        })
         except HTTPException:
             raise
         except Exception as e:
             pass
+
+    # Kết hợp chỉ dẫn: System Prompt + Skills (deterministic)
+    combined_instruction = system_prompt_instruction or ""
+    if skill_instructions:
+        skills_block = "\n\n--- ACTIVE SKILLS INSTRUCTIONS ---\n" + "\n\n".join(skill_instructions) + "\n--- END SKILLS INSTRUCTIONS ---"
+        combined_instruction = (combined_instruction + skills_block).strip()
 
     # 3. Quản lý conversation
     conv_id = payload.conversation_id
@@ -740,7 +944,9 @@ async def chat_through_project(
         start_payload = json.dumps({
             "project_id": project_id,
             "model": target_model_id,
-            "conversation_id": conv_id
+            "conversation_id": conv_id,
+            "bot": connected_bot_info,
+            "skills": connected_skills_info
         }, ensure_ascii=False)
         yield f"event: start\ndata: {start_payload}\n\n"
         
@@ -752,7 +958,7 @@ async def chat_through_project(
                 prompt=payload.message,
                 history=context_msgs,
                 model_override=target_model_id,
-                system_instruction=system_prompt_instruction
+                system_instruction=combined_instruction if combined_instruction else None
             ):
                 if event.get("status") == "streaming":
                     token_str = event.get("token", "")

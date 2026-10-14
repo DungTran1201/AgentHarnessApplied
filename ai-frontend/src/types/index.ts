@@ -186,7 +186,7 @@ export interface DiscordBotTestDispatchResponse {
 
 export type ProjectStatus = 'ACTIVE' | 'STOP' | 'DEACTIVE' | 'DELETED';
 
-export type NodeType = 'web_input' | 'system_prompt' | 'model' | 'output';
+export type NodeType = 'web_input' | 'system_prompt' | 'model' | 'output' | 'bot' | 'skill';
 
 export interface WebInputConfig {
   max_words: number;
@@ -208,13 +208,41 @@ export interface OutputNodeConfig {
   streaming: boolean;
 }
 
+export interface BotNodeConfig {
+  bot_id: string;
+  bot_name?: string;
+  platform?: string;
+  is_enabled?: boolean;
+  guild_name?: string;
+  trigger_mode?: string;
+}
+
+export interface SkillNodeConfig {
+  skill_id: string;
+  skill_name?: string;
+  description?: string;
+  version?: string;
+  capability?: string;
+}
+
+export interface AvailableBotItem {
+  id: string;
+  name: string;
+  platform: string;
+  is_enabled: boolean;
+  guild_id: string;
+  guild_name?: string;
+  trigger_mode?: string;
+  status?: string;
+}
+
 export interface GraphNode {
   id: string;
   type: NodeType;
   position?: { x: number; y: number };
   data: {
     label: string;
-    config: WebInputConfig | SystemPromptNodeConfig | ModelNodeConfig | OutputNodeConfig | any;
+    config: WebInputConfig | SystemPromptNodeConfig | ModelNodeConfig | OutputNodeConfig | BotNodeConfig | SkillNodeConfig | any;
   };
 }
 

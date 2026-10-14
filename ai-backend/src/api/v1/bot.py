@@ -55,6 +55,16 @@ class DiscordGuildItem(BaseModel):
     has_admin_rights: bool
     has_bot: bool
 
+class AvailableBotItemResponse(BaseModel):
+    id: str
+    name: str
+    platform: str = "discord"
+    is_enabled: bool
+    guild_id: str
+    guild_name: Optional[str] = None
+    trigger_mode: str
+    status: str
+
 class TestDispatchPromptRequest(BaseModel):
     query: str = Field(min_length=1, max_length=2000, description="Câu hỏi hoặc lệnh gửi thử tới bot")
     model_id: Optional[str] = Field(default=None, description="Mô hình tùy chọn để kiểm thử định tuyến")
@@ -212,6 +222,31 @@ async def update_discord_bot_config(
         "is_enabled": bool(updated_cfg["is_enabled"]),
         "sync_to_web": bool(updated_cfg["sync_to_web"])
     }
+
+@bot_router.get("/available", response_model=List[AvailableBotItemResponse])
+async def list_available_bots(current_user: dict = Depends(get_current_user)):
+    """
+    OP-034: Retrieves authorized bot instances available to the authenticated user for project graph integration.
+    Enforces verified Discord linkage (BR-031).
+    """
+    check_discord_linked(current_user)
+    user_id = current_user["id"]
+    cfg = get_or_create_bot_config(user_id)
+
+    guild_name = cfg.get("guild_name")
+    bot_name = f"{guild_name} Bot" if guild_name else "AI-Chan Discord Bot"
+
+    bot_item = {
+        "id": cfg["id"],
+        "name": bot_name,
+        "platform": "discord",
+        "is_enabled": bool(cfg.get("is_enabled", 1)),
+        "guild_id": cfg.get("guild_id") or "",
+        "guild_name": guild_name,
+        "trigger_mode": cfg.get("trigger_mode") or "MENTION",
+        "status": "ACTIVE" if cfg.get("is_enabled", 1) else "INACTIVE"
+    }
+    return [bot_item]
 
 @bot_router.get("/guilds", response_model=List[DiscordGuildItem])
 async def list_manageable_discord_guilds(current_user: dict = Depends(get_current_user)):

@@ -10,10 +10,13 @@ import {
   GraphEdge,
   NodeType,
   AgentModel,
-  SystemPromptSummary
+  SystemPromptSummary,
+  AvailableBotItem,
+  SkillSummary
 } from '@/types';
 import { ProjectService } from '@/services/projectService';
 import { SystemPromptService } from '@/services/systemPromptService';
+import { SkillService } from '@/services/skillService';
 import Icon from '@/components/ui/Icon';
 import { getErrorMessage } from '@/lib/errors';
 import FloatingProjectChat from '@/components/chat/FloatingProjectChat';
@@ -37,15 +40,26 @@ export default function ProjectEditorPage() {
   const [availablePrompts, setAvailablePrompts] = useState<SystemPromptSummary[]>([]);
   const [loadingPrompts, setLoadingPrompts] = useState(false);
 
+  // Available bots from authorized Discord integration
+  const [availableBots, setAvailableBots] = useState<AvailableBotItem[]>([]);
+  const [loadingBots, setLoadingBots] = useState(false);
+  const [discordLinked, setDiscordLinked] = useState<boolean | null>(null);
+
+  // Available skills from skills library
+  const [availableSkills, setAvailableSkills] = useState<SkillSummary[]>([]);
+  const [loadingSkills, setLoadingSkills] = useState(false);
+
   // Node Catalog UI state: Collapsible groups, Search & Category Filter
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({
     input: false,
     system_prompt: false,
     model: false,
-    output: false
+    output: false,
+    bot: false,
+    skill: false
   });
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterCategory, setFilterCategory] = useState<'all' | 'input' | 'system_prompt' | 'model' | 'output'>('all');
+  const [filterCategory, setFilterCategory] = useState<'all' | 'input' | 'system_prompt' | 'model' | 'output' | 'bot' | 'skill'>('all');
 
   const toggleGroup = (key: string) => {
     setCollapsedGroups(prev => ({ ...prev, [key]: !prev[key] }));
@@ -82,28 +96,42 @@ export default function ProjectEditorPage() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  // Load project, models & prompts on mount
+  // Load project, models, prompts, bots & skills on mount
   useEffect(() => {
     const fetchData = async () => {
       try {
         setLoading(true);
         setLoadingPrompts(true);
-        const [projData, modelsRes, promptsRes] = await Promise.all([
+        setLoadingBots(true);
+        setLoadingSkills(true);
+
+        const [projData, modelsRes, promptsRes, botRes, skillsRes] = await Promise.all([
           ProjectService.getProject(projectId),
           fetch('/api/v1/models').then(r => r.ok ? r.json() : []).catch(() => []),
-          SystemPromptService.getPrompts().then(r => r.items).catch(() => [])
+          SystemPromptService.getPrompts().then(r => r.items).catch(() => []),
+          fetch('/api/v1/bot/discord/available').then(async r => {
+            if (r.status === 403) return { linked: false, items: [] };
+            if (r.ok) return { linked: true, items: await r.json() };
+            return { linked: null, items: [] };
+          }).catch(() => ({ linked: null, items: [] })),
+          SkillService.getSkills(undefined, 'VALID').then(r => r.items).catch(() => [])
         ]);
 
         setProject(projData);
         setAvailableModels(modelsRes.filter((m: AgentModel) => m.status === 'ACTIVE'));
         setAvailablePrompts(promptsRes || []);
+        setDiscordLinked(botRes.linked);
+        setAvailableBots(botRes.items || []);
+        setAvailableSkills(skillsRes || []);
 
         if (projData.graph_data && projData.graph_data.nodes && projData.graph_data.nodes.length > 0) {
           const defaultPositionsByType: Record<string, { x: number; y: number }> = {
             web_input: { x: 80, y: 180 },
             system_prompt: { x: 80, y: 360 },
             model: { x: 440, y: 220 },
-            output: { x: 800, y: 220 }
+            output: { x: 800, y: 220 },
+            bot: { x: 440, y: 400 },
+            skill: { x: 800, y: 380 }
           };
 
           const normalizedNodes: GraphNode[] = projData.graph_data.nodes.map((n: GraphNode, index: number) => {
@@ -164,6 +192,8 @@ export default function ProjectEditorPage() {
       } finally {
         setLoading(false);
         setLoadingPrompts(false);
+        setLoadingBots(false);
+        setLoadingSkills(false);
       }
     };
 
@@ -176,9 +206,12 @@ export default function ProjectEditorPage() {
     const modelNode = nodes.find(n => n.type === 'model');
     const outputNode = nodes.find(n => n.type === 'output');
     const promptNodes = nodes.filter(n => n.type === 'system_prompt');
+    const botNodes = nodes.filter(n => n.type === 'bot');
+    const skillNodes = nodes.filter(n => n.type === 'skill');
 
     if (!inputNode || !modelNode || !outputNode) return false;
     if (promptNodes.length > 1) return false;
+    if (botNodes.length > 1) return false;
 
     const hasInToModel = edges.some(e => e.source === inputNode.id && e.target === modelNode.id);
     const hasModelToOut = edges.some(e => e.source === modelNode.id && e.target === outputNode.id);
@@ -192,7 +225,20 @@ export default function ProjectEditorPage() {
       if (!pNode.data.config?.prompt_id) return false;
     }
 
-    const expectedEdgeCount = promptNodes.length === 1 ? 3 : 2;
+    if (botNodes.length === 1) {
+      const bNode = botNodes[0];
+      const hasModelToBot = edges.some(e => e.source === modelNode.id && e.target === bNode.id);
+      if (!hasModelToBot) return false;
+      if (!bNode.data.config?.bot_id) return false;
+    }
+
+    for (const sNode of skillNodes) {
+      const hasModelToSkill = edges.some(e => e.source === modelNode.id && e.target === sNode.id);
+      if (!hasModelToSkill) return false;
+      if (!sNode.data.config?.skill_id) return false;
+    }
+
+    const expectedEdgeCount = 2 + (promptNodes.length === 1 ? 1 : 0) + (botNodes.length === 1 ? 1 : 0) + skillNodes.length;
     return edges.length === expectedEdgeCount;
   };
 
@@ -257,14 +303,18 @@ export default function ProjectEditorPage() {
       web_input: 'Web Input',
       model: 'Model LLM',
       output: 'Web Output',
-      system_prompt: 'System Prompt'
+      system_prompt: 'System Prompt',
+      bot: 'Bot Agent',
+      skill: 'Skill Agent'
     };
 
     const defaultConfigs: Record<NodeType, any> = {
       web_input: { max_words: 500 },
       model: { model_id: availableModels[0]?.id || 'gemini-3.8-flash', temperature: 0.7, max_tokens: 2048 },
       output: { streaming: true },
-      system_prompt: {}
+      system_prompt: {},
+      bot: { bot_id: '', name: 'Bot Agent' },
+      skill: { skill_id: '', name: 'Skill' }
     };
 
     const posX = type === 'web_input' ? 100 : type === 'model' ? 420 : 740;
@@ -311,6 +361,66 @@ export default function ProjectEditorPage() {
     setHasUnsavedChanges(true);
     setSelectedNodeId(newId);
     showToast('success', `Added System Prompt: "${prompt.name}" to canvas.`);
+  };
+
+  // Add Bot Node from Authorized Bots
+  const handleAddBotNode = (bot: AvailableBotItem) => {
+    if (nodes.some(n => n.type === 'bot')) {
+      showToast('error', 'This model can be connected to only one bot. Remove the existing bot connection before selecting another.');
+      return;
+    }
+
+    const newId = `node_bot_${Date.now()}`;
+    const newNode: GraphNode = {
+      id: newId,
+      type: 'bot',
+      position: { x: 440, y: 400 },
+      data: {
+        label: bot.name,
+        config: {
+          bot_id: bot.id,
+          bot_name: bot.name,
+          platform: bot.platform,
+          is_enabled: bot.is_enabled,
+          guild_name: bot.guild_name,
+          trigger_mode: bot.trigger_mode
+        }
+      }
+    };
+
+    setNodes(prev => [...prev, newNode]);
+    setHasUnsavedChanges(true);
+    setSelectedNodeId(newId);
+    showToast('success', `Added Bot: "${bot.name}" to canvas.`);
+  };
+
+  // Add Skill Node from Skills Library
+  const handleAddSkillNode = (skill: SkillSummary) => {
+    if (nodes.some(n => n.type === 'skill' && n.data.config?.skill_id === skill.id)) {
+      showToast('error', `Skill "${skill.name}" is already on the canvas.`);
+      return;
+    }
+
+    const skillIndex = nodes.filter(n => n.type === 'skill').length;
+    const newId = `node_skill_${Date.now()}`;
+    const newNode: GraphNode = {
+      id: newId,
+      type: 'skill',
+      position: { x: 800, y: 360 + (skillIndex * 120) },
+      data: {
+        label: skill.name,
+        config: {
+          skill_id: skill.id,
+          skill_name: skill.name,
+          description: skill.description
+        }
+      }
+    };
+
+    setNodes(prev => [...prev, newNode]);
+    setHasUnsavedChanges(true);
+    setSelectedNodeId(newId);
+    showToast('success', `Added Skill: "${skill.name}" to canvas.`);
   };
 
   // Delete node
@@ -422,6 +532,18 @@ export default function ProjectEditorPage() {
       return;
     }
 
+    // Check and reject reverse connections
+    if (srcNode.type === 'bot' && tgtNode.type === 'model') {
+      showToast('error', 'Reverse connection rejected. Connect Model to Bot, not Bot to Model.');
+      setConnectingSourceNodeId(null);
+      return;
+    }
+    if (srcNode.type === 'skill' && tgtNode.type === 'model') {
+      showToast('error', 'Reverse connection rejected. Connect Model to Skill, not Skill to Model.');
+      setConnectingSourceNodeId(null);
+      return;
+    }
+
     let isValid = false;
     let edgeType = 'data_flow';
 
@@ -434,6 +556,12 @@ export default function ProjectEditorPage() {
     } else if (srcNode.type === 'model' && tgtNode.type === 'output' && targetHandle === 'in') {
       isValid = true;
       edgeType = 'data_flow';
+    } else if (srcNode.type === 'model' && tgtNode.type === 'bot' && targetHandle === 'bot_in') {
+      isValid = true;
+      edgeType = 'bot_binding';
+    } else if (srcNode.type === 'model' && tgtNode.type === 'skill' && targetHandle === 'skill_in') {
+      isValid = true;
+      edgeType = 'skill_binding';
     }
 
     if (!isValid) {
@@ -442,17 +570,32 @@ export default function ProjectEditorPage() {
       } else if (srcNode.type === 'web_input' && targetHandle !== 'in') {
         showToast('error', 'Web Input node must connect to the Data input (blue port) of the Model node.');
       } else {
-        showToast('error', `Cannot connect ${srcNode.type} to ${tgtNode.type}. Valid edges: Web Input -> Model, System Prompt -> Model, Model -> Output.`);
+        showToast('error', `Cannot connect ${srcNode.type} to ${tgtNode.type}. Valid edges: Web Input -> Model, System Prompt -> Model, Model -> Output, Model -> Bot, Model -> Skill.`);
       }
       setConnectingSourceNodeId(null);
       return;
     }
 
+    // Duplicate connection check
     if (edges.some(e => e.source === srcNode.id && e.target === tgtNode.id)) {
+      showToast('error', 'Duplicate connection rejected. This connection already exists.');
       setConnectingSourceNodeId(null);
       return;
     }
 
+    // One Model to at most one Bot rule (Requirement 7.1)
+    if (srcNode.type === 'model' && tgtNode.type === 'bot') {
+      const existingBotEdge = edges.find(
+        e => e.source === srcNode.id && nodes.find(n => n.id === e.target)?.type === 'bot'
+      );
+      if (existingBotEdge && existingBotEdge.target !== tgtNode.id) {
+        showToast('error', 'This model can be connected to only one bot. Remove the existing bot connection before selecting another.');
+        setConnectingSourceNodeId(null);
+        return;
+      }
+    }
+
+    // System prompt singleton connection check
     if (srcNode.type === 'system_prompt') {
       const existingPromptEdge = edges.find(
         e => e.target === tgtNode.id && nodes.find(n => n.id === e.source)?.type === 'system_prompt'
@@ -467,7 +610,7 @@ export default function ProjectEditorPage() {
     const newEdges = edges.filter(e => {
       if (srcNode.type === 'web_input' && e.source === srcNode.id) return false;
       if (srcNode.type === 'system_prompt' && e.source === srcNode.id) return false;
-      if (srcNode.type === 'model' && e.source === srcNode.id) return false;
+      if (srcNode.type === 'model' && tgtNode.type === 'output' && e.source === srcNode.id && nodes.find(n => n.id === e.target)?.type === 'output') return false;
       if (tgtNode.type === 'model') {
         if (srcNode.type === 'web_input' && nodes.find(n => n.id === e.source)?.type === 'web_input') return false;
         if (srcNode.type === 'system_prompt' && nodes.find(n => n.id === e.source)?.type === 'system_prompt') return false;
@@ -488,7 +631,7 @@ export default function ProjectEditorPage() {
     setEdges([...newEdges, newEdge]);
     setConnectingSourceNodeId(null);
     setHasUnsavedChanges(true);
-    showToast('success', `Connected: ${srcNode.data.label} -> ${tgtNode.data.label} (${edgeType})`);
+    showToast('success', `Connected: ${srcNode.data.label} -> ${tgtNode.data.label}`);
   };
 
   const selectedNode = nodes.find(n => n.id === selectedNodeId);
@@ -524,6 +667,25 @@ export default function ProjectEditorPage() {
       (p.description && p.description.toLowerCase().includes(q))
     );
   }, [availablePrompts, searchQuery]);
+
+  const filteredBots = useMemo(() => {
+    if (!searchQuery.trim()) return availableBots;
+    const q = searchQuery.toLowerCase().trim();
+    return availableBots.filter(b =>
+      b.name.toLowerCase().includes(q) ||
+      b.platform.toLowerCase().includes(q) ||
+      (b.guild_name && b.guild_name.toLowerCase().includes(q))
+    );
+  }, [availableBots, searchQuery]);
+
+  const filteredSkills = useMemo(() => {
+    if (!searchQuery.trim()) return availableSkills;
+    const q = searchQuery.toLowerCase().trim();
+    return availableSkills.filter(s =>
+      s.name.toLowerCase().includes(q) ||
+      (s.description && s.description.toLowerCase().includes(q))
+    );
+  }, [availableSkills, searchQuery]);
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg-base)', color: 'var(--text-primary)', overflow: 'hidden' }}>
@@ -661,7 +823,7 @@ export default function ProjectEditorPage() {
           <div style={{ position: 'relative' }}>
             <input
               type="text"
-              placeholder="Search nodes or prompts..."
+              placeholder="Search nodes, bots, skills..."
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
               className="input"
@@ -694,7 +856,9 @@ export default function ProjectEditorPage() {
               { id: 'input', label: 'Input' },
               { id: 'system_prompt', label: 'Prompt' },
               { id: 'model', label: 'Model' },
-              { id: 'output', label: 'Output' }
+              { id: 'output', label: 'Output' },
+              { id: 'bot', label: 'Bots' },
+              { id: 'skill', label: 'Skills' }
             ].map(f => (
               <button
                 key={f.id}
@@ -962,13 +1126,187 @@ export default function ProjectEditorPage() {
                 )}
               </div>
             )}
+
+            {/* 5. Bots Group */}
+            {(filterCategory === 'all' || filterCategory === 'bot') && (
+              <div style={{ border: '1px solid var(--border-subtle)', borderRadius: '6px', overflow: 'hidden' }}>
+                <button
+                  onClick={() => toggleGroup('bot')}
+                  style={{
+                    width: '100%',
+                    padding: '6px 8px',
+                    background: 'var(--bg-subtle)',
+                    border: 'none',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    cursor: 'pointer',
+                    color: 'var(--text-secondary)',
+                    fontSize: '0.75rem',
+                    fontWeight: 600
+                  }}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Icon name="bot" size={13} style={{ color: '#6366f1' }} />
+                    Bots ({filteredBots.length})
+                  </span>
+                  <span>{collapsedGroups.bot ? '+' : '−'}</span>
+                </button>
+                {!collapsedGroups.bot && (
+                  <div style={{ padding: '6px', display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '180px', overflowY: 'auto' }}>
+                    {loadingBots ? (
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', padding: '6px' }}>Loading eligible bots...</div>
+                    ) : discordLinked === false ? (
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', padding: '6px' }}>
+                        <div>Discord connection required to use Bots.</div>
+                        <div style={{ marginTop: '4px' }}>
+                          <Link href="/settings?tab=connections" style={{ color: '#818cf8', textDecoration: 'none', fontWeight: 600 }}>
+                            Link Discord in Settings →
+                          </Link>
+                        </div>
+                      </div>
+                    ) : filteredBots.length === 0 ? (
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', padding: '6px' }}>
+                        {searchQuery ? 'No matching bots found' : 'No eligible bots configured'}
+                        <div style={{ marginTop: '4px' }}>
+                          <Link href="/bot/discord" style={{ color: '#818cf8', textDecoration: 'none', fontWeight: 600 }}>
+                            Configure Bot →
+                          </Link>
+                        </div>
+                      </div>
+                    ) : (
+                      filteredBots.map(bot => {
+                        const isUsedInCanvas = nodes.some(n => n.type === 'bot' && n.data.config?.bot_id === bot.id);
+                        return (
+                          <div
+                            key={bot.id}
+                            onClick={() => handleAddBotNode(bot)}
+                            style={{
+                              background: 'var(--bg-surface)',
+                              border: '1px solid var(--border-subtle)',
+                              borderRadius: '4px',
+                              padding: '6px 8px',
+                              cursor: isUsedInCanvas ? 'not-allowed' : 'pointer',
+                              opacity: isUsedInCanvas ? 0.5 : 1
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <span style={{ fontWeight: 600, fontSize: '0.75rem', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {bot.name}
+                              </span>
+                              {isUsedInCanvas ? (
+                                <span className="badge badge-neutral" style={{ fontSize: '0.65rem' }}>In Use</span>
+                              ) : (
+                                <span style={{ fontSize: '0.65rem', color: '#818cf8' }}>+ Add</span>
+                              )}
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                              <span>Discord</span>
+                              {bot.status && (
+                                <span style={{
+                                  color: bot.status === 'ACTIVE' ? 'var(--accent)' : 'var(--text-muted)',
+                                  fontSize: '0.62rem',
+                                  fontWeight: 600
+                                }}>
+                                  • {bot.status}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 6. Skills Group */}
+            {(filterCategory === 'all' || filterCategory === 'skill') && (
+              <div style={{ border: '1px solid var(--border-subtle)', borderRadius: '6px', overflow: 'hidden' }}>
+                <button
+                  onClick={() => toggleGroup('skill')}
+                  style={{
+                    width: '100%',
+                    padding: '6px 8px',
+                    background: 'var(--bg-subtle)',
+                    border: 'none',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    cursor: 'pointer',
+                    color: 'var(--text-secondary)',
+                    fontSize: '0.75rem',
+                    fontWeight: 600
+                  }}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Icon name="skills" size={13} style={{ color: '#f43f5e' }} />
+                    Skills ({filteredSkills.length})
+                  </span>
+                  <span>{collapsedGroups.skill ? '+' : '−'}</span>
+                </button>
+                {!collapsedGroups.skill && (
+                  <div style={{ padding: '6px', display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '180px', overflowY: 'auto' }}>
+                    {loadingSkills ? (
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', padding: '6px' }}>Loading available skills...</div>
+                    ) : filteredSkills.length === 0 ? (
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', padding: '6px' }}>
+                        {searchQuery ? 'No matching skills found' : 'No valid skills in library'}
+                        <div style={{ marginTop: '4px' }}>
+                          <Link href="/skills" style={{ color: '#f43f5e', textDecoration: 'none', fontWeight: 600 }}>
+                            + Manage Skills
+                          </Link>
+                        </div>
+                      </div>
+                    ) : (
+                      filteredSkills.map(skill => {
+                        const isUsedInCanvas = nodes.some(n => n.type === 'skill' && n.data.config?.skill_id === skill.id);
+                        return (
+                          <div
+                            key={skill.id}
+                            onClick={() => handleAddSkillNode(skill)}
+                            style={{
+                              background: 'var(--bg-surface)',
+                              border: '1px solid var(--border-subtle)',
+                              borderRadius: '4px',
+                              padding: '6px 8px',
+                              cursor: isUsedInCanvas ? 'not-allowed' : 'pointer',
+                              opacity: isUsedInCanvas ? 0.5 : 1
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <span style={{ fontWeight: 600, fontSize: '0.75rem', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {skill.name}
+                              </span>
+                              {isUsedInCanvas ? (
+                                <span className="badge badge-neutral" style={{ fontSize: '0.65rem' }}>Added</span>
+                              ) : (
+                                <span style={{ fontSize: '0.65rem', color: '#f43f5e' }}>+ Add</span>
+                              )}
+                            </div>
+                            {skill.description && (
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {skill.description}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div style={{ marginTop: 'auto', padding: '6px 8px', background: 'var(--bg-subtle)', borderRadius: '4px', fontSize: '0.68rem', color: 'var(--text-muted)', lineHeight: '1.4' }}>
             <strong>Wiring Instructions:</strong><br />
             • Blue port (Input) → Top port of Model (User Message)<br />
             • Orange port (Prompt) → Bottom port of Model (Instruction)<br />
-            • Right port of Model → Output port
+            • Right port of Model → Output port (SSE Stream)<br />
+            • Right port of Model → Bot (max 1 Bot connection)<br />
+            • Right port of Model → Skills (multiple allowed)
           </div>
         </aside>
 
@@ -1036,6 +1374,8 @@ export default function ProjectEditorPage() {
                 if (!srcNode || !tgtNode) return null;
 
                 const isPromptEdge = srcNode.type === 'system_prompt';
+                const isBotEdge = tgtNode.type === 'bot';
+                const isSkillEdge = tgtNode.type === 'skill';
                 const isSelected = selectedEdgeId === edge.id;
 
                 const srcPos = (srcNode.position && typeof srcNode.position.x === 'number' && typeof srcNode.position.y === 'number')
@@ -1057,7 +1397,15 @@ export default function ProjectEditorPage() {
                 const dx = Math.max(60, Math.abs(endX - startX) * 0.5);
                 const pathData = `M ${startX} ${startY} C ${startX + dx} ${startY}, ${endX - dx} ${endY}, ${endX} ${endY}`;
 
-                const edgeStroke = isSelected ? 'var(--danger)' : (isPromptEdge ? '#f59e0b' : '#38bdf8');
+                const edgeStroke = isSelected
+                  ? 'var(--danger)'
+                  : isPromptEdge
+                  ? '#f59e0b'
+                  : isBotEdge
+                  ? '#6366f1'
+                  : isSkillEdge
+                  ? '#f43f5e'
+                  : '#38bdf8';
 
                 return (
                   <g key={edge.id} style={{ pointerEvents: 'auto' }}>
@@ -1074,7 +1422,7 @@ export default function ProjectEditorPage() {
                       fill="none"
                       stroke={edgeStroke}
                       strokeWidth={isSelected ? 3 : 2}
-                      strokeDasharray={isPromptEdge ? '4 3' : '6 4'}
+                      strokeDasharray={isPromptEdge ? '4 3' : (isBotEdge || isSkillEdge) ? '3 3' : '6 4'}
                       onClick={() => setSelectedEdgeId(edge.id)}
                       style={{ cursor: 'pointer' }}
                     />
@@ -1099,7 +1447,11 @@ export default function ProjectEditorPage() {
                 const dx = Math.abs(mousePos.x - startX) * 0.5;
                 const pathData = `M ${startX} ${startY} C ${startX + dx} ${startY}, ${mousePos.x - dx} ${mousePos.y}, ${mousePos.x} ${mousePos.y}`;
 
-                const dragColor = srcNode.type === 'system_prompt' ? '#f59e0b' : '#38bdf8';
+                const dragColor = srcNode.type === 'system_prompt'
+                  ? '#f59e0b'
+                  : srcNode.type === 'model'
+                  ? '#a855f7'
+                  : '#38bdf8';
 
                 return (
                   <path
@@ -1128,11 +1480,26 @@ export default function ProjectEditorPage() {
               const isPrompt = node.type === 'system_prompt';
               const isModel = node.type === 'model';
               const isOutput = node.type === 'output';
+              const isBot = node.type === 'bot';
+              const isSkill = node.type === 'skill';
 
-              const accentColor = isInput ? '#06b6d4' : isPrompt ? '#f59e0b' : isModel ? '#a855f7' : 'var(--accent)';
+              const accentColor = isInput
+                ? '#06b6d4'
+                : isPrompt
+                ? '#f59e0b'
+                : isModel
+                ? '#a855f7'
+                : isBot
+                ? '#6366f1'
+                : isSkill
+                ? '#f43f5e'
+                : 'var(--accent)';
+
               const nodePos = (node.position && typeof node.position.x === 'number' && typeof node.position.y === 'number')
                 ? node.position
                 : { x: 80, y: 180 };
+
+              const hasSourceHandle = isInput || isPrompt || isModel;
 
               return (
                 <div
@@ -1178,6 +1545,48 @@ export default function ProjectEditorPage() {
                     />
                   )}
 
+                  {isBot && (
+                    <div
+                      className="handle-circle"
+                      onMouseUp={e => handleTargetHandleMouseUp(e, node.id, 'bot_in')}
+                      style={{
+                        position: 'absolute',
+                        left: '-7px',
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        width: '14px',
+                        height: '14px',
+                        borderRadius: '50%',
+                        background: '#6366f1',
+                        border: '2px solid var(--bg-surface)',
+                        cursor: 'crosshair',
+                        zIndex: 20
+                      }}
+                      title="Bot Binding Port (In: Connect from Model)"
+                    />
+                  )}
+
+                  {isSkill && (
+                    <div
+                      className="handle-circle"
+                      onMouseUp={e => handleTargetHandleMouseUp(e, node.id, 'skill_in')}
+                      style={{
+                        position: 'absolute',
+                        left: '-7px',
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        width: '14px',
+                        height: '14px',
+                        borderRadius: '50%',
+                        background: '#f43f5e',
+                        border: '2px solid var(--bg-surface)',
+                        cursor: 'crosshair',
+                        zIndex: 20
+                      }}
+                      title="Skill Binding Port (In: Connect from Model)"
+                    />
+                  )}
+
                   {isModel && (
                     <>
                       <div
@@ -1219,7 +1628,7 @@ export default function ProjectEditorPage() {
                     </>
                   )}
 
-                  {!isOutput && (
+                  {hasSourceHandle && (
                     <div
                       className="handle-circle"
                       onMouseDown={e => handleSourceHandleMouseDown(e, node.id)}
@@ -1236,7 +1645,7 @@ export default function ProjectEditorPage() {
                         cursor: 'crosshair',
                         zIndex: 20
                       }}
-                      title="Output Port: Drag to connect"
+                      title={isModel ? "Output Port (Connect to Output, Bot, or Skills)" : "Output Port: Drag to connect"}
                     />
                   )}
 
@@ -1244,7 +1653,7 @@ export default function ProjectEditorPage() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                       <Icon
-                        name={isInput ? 'chat' : isPrompt ? 'prompts' : isModel ? 'settings' : 'check'}
+                        name={isInput ? 'chat' : isPrompt ? 'prompts' : isModel ? 'settings' : isBot ? 'bot' : isSkill ? 'skills' : 'check'}
                         size={14}
                         style={{ color: accentColor }}
                       />
@@ -1279,7 +1688,50 @@ export default function ProjectEditorPage() {
                     )}
                     {isModel && (
                       <div>
-                        Model: <strong style={{ color: 'var(--text-primary)' }}>{node.data.config?.model_id || 'Not selected'}</strong>
+                        <div>Model: <strong style={{ color: 'var(--text-primary)' }}>{node.data.config?.model_id || 'Not selected'}</strong></div>
+                        {(() => {
+                          const connectedBotEdge = edges.find(e => e.source === node.id && nodes.find(n => n.id === e.target)?.type === 'bot');
+                          const connectedBotNode = connectedBotEdge ? nodes.find(n => n.id === connectedBotEdge.target) : null;
+                          const connectedSkillEdges = edges.filter(e => e.source === node.id && nodes.find(n => n.id === e.target)?.type === 'skill');
+
+                          return (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px' }}>
+                              <span style={{
+                                fontSize: '0.62rem',
+                                padding: '1px 5px',
+                                borderRadius: '3px',
+                                background: connectedBotNode ? 'rgba(99, 102, 241, 0.15)' : 'var(--bg-base)',
+                                border: `1px solid ${connectedBotNode ? '#6366f1' : 'var(--border-subtle)'}`,
+                                color: connectedBotNode ? '#818cf8' : 'var(--text-muted)'
+                              }}>
+                                {connectedBotNode ? `Bot: ${connectedBotNode.data.label}` : 'No Bot'}
+                              </span>
+                              <span style={{
+                                fontSize: '0.62rem',
+                                padding: '1px 5px',
+                                borderRadius: '3px',
+                                background: connectedSkillEdges.length > 0 ? 'rgba(244, 63, 94, 0.15)' : 'var(--bg-base)',
+                                border: `1px solid ${connectedSkillEdges.length > 0 ? '#f43f5e' : 'var(--border-subtle)'}`,
+                                color: connectedSkillEdges.length > 0 ? '#fb7185' : 'var(--text-muted)'
+                              }}>
+                                Skills: {connectedSkillEdges.length}
+                              </span>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    )}
+                    {isBot && (
+                      <div>
+                        Platform: <strong style={{ color: '#818cf8' }}>Discord</strong>
+                        {node.data.config?.guild_name && (
+                          <div style={{ color: 'var(--text-muted)', fontSize: '0.65rem' }}>{node.data.config.guild_name}</div>
+                        )}
+                      </div>
+                    )}
+                    {isSkill && (
+                      <div>
+                        Skill: <strong style={{ color: '#fb7185' }}>{node.data.config?.skill_name || node.data.label}</strong>
                       </div>
                     )}
                     {isOutput && (
@@ -1329,7 +1781,7 @@ export default function ProjectEditorPage() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '0.5rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <Icon
-                  name={selectedNode.type === 'web_input' ? 'chat' : selectedNode.type === 'system_prompt' ? 'prompts' : selectedNode.type === 'model' ? 'settings' : 'check'}
+                  name={selectedNode.type === 'web_input' ? 'chat' : selectedNode.type === 'system_prompt' ? 'prompts' : selectedNode.type === 'model' ? 'settings' : selectedNode.type === 'bot' ? 'bot' : selectedNode.type === 'skill' ? 'skills' : 'check'}
                   size={15}
                   style={{ color: 'var(--accent)' }}
                 />
@@ -1493,7 +1945,6 @@ export default function ProjectEditorPage() {
                 </div>
               </div>
             )}
-
             {selectedNode.type === 'output' && (
               <div>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.85rem', color: 'var(--text-primary)' }}>
@@ -1508,6 +1959,101 @@ export default function ProjectEditorPage() {
                 <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '6px' }}>
                   Streams words incrementally to the chat UI in real time.
                 </p>
+              </div>
+            )}
+
+            {selectedNode.type === 'bot' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <div style={{ background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.25)', padding: '10px', borderRadius: '6px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#818cf8' }}>
+                      {selectedNode.data.config?.platform?.toUpperCase() || 'DISCORD'} BOT
+                    </span>
+                    <span style={{ fontSize: '0.65rem', background: 'rgba(16, 185, 129, 0.15)', color: '#10b981', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                      ACTIVE
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '2px' }}>
+                    {selectedNode.data.config?.name || selectedNode.data.label}
+                  </div>
+                  {selectedNode.data.config?.guild_name && (
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                      Server: {selectedNode.data.config.guild_name}
+                    </div>
+                  )}
+                  {selectedNode.data.config?.trigger_mode && (
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                      Trigger: {selectedNode.data.config.trigger_mode}
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', background: 'var(--bg-card)', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-subtle)' }}>
+                  <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '4px' }}>
+                    AUTHORITATIVE RESOURCE ID
+                  </div>
+                  <code style={{ fontSize: '0.75rem', color: '#a5b4fc', wordBreak: 'break-all' }}>
+                    {selectedNode.data.config?.bot_id}
+                  </code>
+                </div>
+
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+                  <strong>Constraint:</strong> A Model node can connect to at most one Bot. Backend graph execution will invoke this bot instance for project events.
+                </div>
+
+                <Link
+                  href="/bot/discord"
+                  target="_blank"
+                  className="btn btn-secondary"
+                  style={{ textAlign: 'center', fontSize: '0.75rem', padding: '6px' }}
+                >
+                  Open Bot Management
+                </Link>
+              </div>
+            )}
+
+            {selectedNode.type === 'skill' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <div style={{ background: 'rgba(244, 63, 94, 0.08)', border: '1px solid rgba(244, 63, 94, 0.25)', padding: '10px', borderRadius: '6px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#fb7185' }}>
+                      SKILL MODULE
+                    </span>
+                    <span style={{ fontSize: '0.65rem', background: 'rgba(244, 63, 94, 0.15)', color: '#fb7185', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                      v{selectedNode.data.config?.version || '1.0.0'}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '2px' }}>
+                    {selectedNode.data.config?.name || selectedNode.data.label}
+                  </div>
+                  {selectedNode.data.config?.description && (
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px', lineHeight: '1.4' }}>
+                      {selectedNode.data.config.description}
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', background: 'var(--bg-card)', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-subtle)' }}>
+                  <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '4px' }}>
+                    SKILL RESOURCE ID
+                  </div>
+                  <code style={{ fontSize: '0.75rem', color: '#fda4af', wordBreak: 'break-all' }}>
+                    {selectedNode.data.config?.skill_id}
+                  </code>
+                </div>
+
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+                  <strong>Runtime Behavior:</strong> The executor loads this skill's prompt guidelines and markdown rules to augment model context. Multiple distinct skills can connect to one Model node.
+                </div>
+
+                <Link
+                  href="/skills"
+                  target="_blank"
+                  className="btn btn-secondary"
+                  style={{ textAlign: 'center', fontSize: '0.75rem', padding: '6px' }}
+                >
+                  Open Skill Management
+                </Link>
               </div>
             )}
           </aside>

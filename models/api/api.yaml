@@ -242,6 +242,14 @@ apis:
         use_case: "UC-033"
         source_refs: ["FR-045", "FR-046", "BR-032", "BR-033"]
 
+      - id: "OP-035"
+        method: "GET"
+        path: "/bot/discord/available"
+        summary: "Retrieve authorized Discord bot instances available to authenticated user for project graph canvas integration"
+        use_case: "UC-034"
+        source_refs: ["FR-052", "BR-036", "SEC-013"]
+
+
 
 
 
