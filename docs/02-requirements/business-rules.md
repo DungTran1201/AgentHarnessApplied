@@ -530,6 +530,55 @@
 - **Độ Ưu Tiên**: `MUST`.
 - **Trạng Thái**: `BASELINED`.
 
+---
+
+### BR-036: Ràng Buộc Bản Số Giữa Mô Hình Và Bot (Model to Bot Cardinality Constraint - 0..1 Bot)
+- **Mã Quy Tắc**: `BR-036`
+- **Tên Quy Tắc**: Ràng Buộc Bản Số Giữa Mô Hình Và Bot (Model to Bot Cardinality Constraint - 0..1 Bot).
+- **Phát Biểu Quy Tắc**: Trong Đồ thị Dự án (Project Graph Canvas), một node Mô hình (Model) chỉ được phép kết nối tối đa với 0 hoặc 1 node Bot Discord. Một node Bot không được phép gán vào nhiều Model trong cùng một luồng thực thi.
+- **Cơ Chế Thực Thi Kỹ Thuật (Enforcement Mechanism)**:
+  - Trên Canvas Editor: Chặn kéo thả kết nối thứ hai từ/đến node Bot vào Model đã có liên kết.
+  - Tại Backend: Trích xuất snapshot đồ thị `canvas_data`, duyệt cạnh kiểm tra số lượng Bot kết nối với Model. Nếu phát hiện $>1$ kết nối Bot, từ chối thực thi với `HTTP 400 Bad Request`.
+- **Yêu Cầu Liên Quan**: `FR-057`, `ADR-014`.
+- **Độ Ưu Tiên**: `MUST`.
+- **Trạng Thái**: `IMPLEMENTED`.
+
+---
+
+### BR-037: Ràng Buộc Bản Số Giữa Mô Hình Và Kỹ Năng (Model to Skill Cardinality & Duplicate Rejection Invariant)
+- **Mã Quy Tắc**: `BR-037`
+- **Tên Quy Tắc**: Ràng Buộc Bản Số Giữa Mô Hình Và Kỹ Năng (Model to Skill Cardinality & Duplicate Rejection Invariant).
+- **Phát Biểu Quy Tắc**: Một node Model có thể kết nối với $0..N$ node Kỹ năng (Skills) khác nhau. Hệ thống tự động loại bỏ các liên kết trùng lặp tới cùng một Kỹ năng và bảo toàn thứ tự định nghĩa.
+- **Cơ Chế Thực Thi Kỹ Thuật (Enforcement Mechanism)**:
+  - Backend duyệt các cạnh kết nối từ Model tới Skill, thu thập danh sách `skill_ids` theo tập hợp duy nhất (`set`).
+- **Yêu Cầu Liên Quan**: `FR-057`, `ADR-014`.
+- **Độ Ưu Tiên**: `MUST`.
+- **Trạng Thái**: `IMPLEMENTED`.
+
+---
+
+### BR-038: Định Tuyến Xác Định Từ Discord Đến Dự Án (Deterministic Discord-to-Project Routing Invariant)
+- **Mã Quy Tắc**: `BR-038`
+- **Tên Quy Tắc**: Định Tuyến Xác Định Từ Discord Đến Dự Án (Deterministic Discord-to-Project Routing Invariant).
+- **Phát Biểu Quy Tắc**: Tương tác từ Discord Bot phải được ánh xạ tất định đến duy nhất một Project đang hoạt động thông qua `explicit_project_id` hoặc tra cứu `(guild_id, bot_id)` qua `discord_bot_configs`. Tuyệt đối không suy đoán theo tên hiển thị hay thời gian cập nhật. Nếu có nhiều hơn 1 Project active cho cùng Bot, từ chối với lỗi rõ ràng.
+- **Cơ Chế Thực Thi Kỹ Thuật (Enforcement Mechanism)**:
+  - Backend đối chiếu `guild_id`/`bot_id` với cấu hình Bot, kiểm tra số lượng dự án `status != 'STOP'`. Nếu phát hiện mơ hồ ($>1$), trả về `HTTP 400 Bad Request`.
+- **Yêu Cầu Liên Quan**: `FR-057`, `SEC-014`, `ADR-014`.
+- **Độ Ưu Tiên**: `MUST`.
+- **Trạng Thái**: `IMPLEMENTED`.
+
+---
+
+### BR-039: Bất Biến Trạng Thái Kích Hoạt Dự Án (Project Active Invariant for Discord Execution)
+- **Mã Quy Tắc**: `BR-039`
+- **Tên Quy Tắc**: Bất Biến Trạng Thái Kích Hoạt Dự Án (Project Active Invariant for Discord Execution).
+- **Phát Biểu Quy Tắc**: Dự án chỉ được phép tiếp nhận và thực thi tin nhắn từ Discord Bot khi đang ở trạng thái kích hoạt (`status != 'STOP'`). Dự án ở trạng thái `STOP` bị từ chối ngay lập tức mà không kích hoạt gọi LLM.
+- **Cơ Chế Thực Thi Kỹ Thuật (Enforcement Mechanism)**:
+  - Backend kiểm tra `project.status == 'STOP'` tại điểm tiếp nhận `execute_antigravity_prompt`, trả về `HTTP 400 Bad Request`: *"The assigned project is currently inactive (STOP). Please activate the project in AI-Chan before executing bot workflows."*
+- **Yêu Cầu Liên Quan**: `FR-057`, `SEC-014`, `ADR-014`.
+- **Độ Ưu Tiên**: `MUST`.
+- **Trạng Thái**: `IMPLEMENTED`.
+
 
 
 

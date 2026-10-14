@@ -152,6 +152,8 @@ END;
 INSERT OR IGNORE INTO models (id, name, provider, status, is_default, context_window, max_tokens, supports_streaming)
 VALUES
     ('gemini-3.8-flash', 'Google Gemini 3.8 Flash', 'google', 'ACTIVE', 1, 1000000, 8192, 1),
+    ('gemini-3.5-flash-lite', 'Google Gemini 3.5 Flash Lite', 'google', 'ACTIVE', 0, 1000000, 8192, 1),
+    ('gemini-flash-lite-latest', 'Google Gemini Flash Lite Latest', 'google', 'ACTIVE', 0, 1000000, 8192, 1),
     ('gemini-3.5-flash', 'Google Gemini 3.5 Flash', 'google', 'ACTIVE', 0, 1000000, 8192, 1),
     ('gpt-4o-mini', 'OpenAI GPT-4o Mini', 'openai', 'INACTIVE', 0, 128000, 4096, 1),
     ('claude-3-7-sonnet', 'Anthropic Claude 3.7 Sonnet', 'anthropic', 'INACTIVE', 0, 200000, 8192, 1),

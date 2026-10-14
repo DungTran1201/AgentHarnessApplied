@@ -1192,3 +1192,14 @@
 - **Độ Ưu Tiên**: `MUST`.
 - **Trạng Thái**: `IMPLEMENTED`.
 - **Phụ Thuộc (Dependencies)**: `FR-054`, `FR-055`, `ADR-013`.
+
+---
+
+### FR-057: Xử Lý Thông Điệp Discord Đầu-Cuối Qua Đồ Thị Dự Án & Điều Phối Mô Hình/Kỹ Năng (End-to-End Discord Message Processing Through Project Graph)
+- **Mã Yêu Cầu**: `FR-057`
+- **Tên Yêu Cầu**: Xử Lý Thông Điệp Discord Đầu-Cuối Qua Đồ Thị Dự Án & Điều Phối Mô Hình/Kỹ Năng (End-to-End Discord Message Processing Through Project Graph).
+- **Mô Tả**: Tiếp nhận lệnh tương tác `/ask` từ Discord Bot, nhận diện Bot và định tuyến xác định đến Dự án hoạt động (Active), trích xuất node Model và các node Skill kết nối trên Canvas đồ thị, kiểm tra ràng buộc 0..1 Bot và nạp danh sách Kỹ năng hợp lệ, tải ngữ cảnh lịch sử đa lượt gần nhất, điều phối suy luận qua LLM và phân mảnh câu trả lời an toàn cho Markdown code blocks về Discord embed.
+- **Tác Nhân (Actor)**: `ACT-02` (Registered User).
+- **Độ Ưu Tiên**: `MUST`.
+- **Trạng Thái**: `IMPLEMENTED`.
+- **Phụ Thuộc (Dependencies)**: `FR-044`, `FR-045`, `BR-036`, `BR-037`, `BR-038`, `BR-039`, `SEC-013`, `SEC-014`, `ADR-014`.

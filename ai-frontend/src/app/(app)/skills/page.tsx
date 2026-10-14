@@ -8,6 +8,7 @@ import PageHeader from '@/components/ui/PageHeader';
 import Icon from '@/components/ui/Icon';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import Toast, { ToastMessage } from '@/components/ui/Toast';
+import Pagination from '@/components/ui/Pagination';
 import { formatErrorMessage } from '@/lib/errors';
 
 export default function SkillsListPage() {
@@ -21,6 +22,12 @@ export default function SkillsListPage() {
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [sourceFilter] = useState('ALL');
   const [sortOption, setSortOption] = useState('updated_desc');
+  const [page, setPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(6);
+
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedQuery, statusFilter, sourceFilter, sortOption]);
 
   // Modals & Feedback
   const [skillToDelete, setSkillToDelete] = useState<SkillSummary | null>(null);
@@ -125,9 +132,10 @@ export default function SkillsListPage() {
 
   const validCount = skills.filter(s => s.status === 'VALID').length;
   const draftCount = skills.filter(s => s.status === 'DRAFT').length;
+  const paginatedSkills = skills.slice((page - 1) * pageSize, page * pageSize);
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto' }}>
+    <div className="custom-scrollbar" style={{ flex: 1, overflowY: 'auto' }}>
       <Toast toast={toast} onClose={() => setToast(null)} />
 
       <div className="page-container">
@@ -365,7 +373,7 @@ export default function SkillsListPage() {
               gap: '1rem',
             }}
           >
-            {skills.map(skill => {
+            {paginatedSkills.map(skill => {
               const isValid = skill.status === 'VALID';
               const isDraft = skill.status === 'DRAFT';
 
@@ -504,6 +512,22 @@ export default function SkillsListPage() {
               );
             })}
           </div>
+        )}
+
+        {/* Pagination Bar */}
+        {!loading && skills.length > pageSize && (
+          <Pagination
+            currentPage={page}
+            totalItems={skills.length}
+            pageSize={pageSize}
+            onPageChange={setPage}
+            pageSizeOptions={[6, 12, 24]}
+            onPageSizeChange={size => {
+              setPageSize(size);
+              setPage(1);
+            }}
+            itemLabel="skills"
+          />
         )}
       </div>
 

@@ -228,12 +228,75 @@ export interface SkillNodeConfig {
 export interface AvailableBotItem {
   id: string;
   name: string;
+  bot_username?: string;
+  bot_id?: string;
   platform: string;
   is_enabled: boolean;
   guild_id: string;
   guild_name?: string;
   trigger_mode?: string;
   status?: string;
+  description?: string;
+}
+
+export interface ManagedBotItem {
+  id: string;
+  name: string;
+  bot_username: string;
+  bot_id: string;
+  platform: string;
+  status: string;
+  is_enabled: boolean;
+  guild_id?: string;
+  guild_name?: string;
+  connected_guilds: string[];
+  active_model_id?: string;
+  bound_project_id?: string | null;
+  bound_project_name?: string | null;
+  trigger_mode: string;
+  avatar?: string;
+}
+
+export interface BotProjectBinding {
+  is_bound: boolean;
+  is_active: boolean;
+  bot?: {
+    node_id: string;
+    bot_id: string;
+    name: string;
+    server?: string;
+  } | null;
+  project: {
+    id: string;
+    name: string;
+    description?: string | null;
+    status: ProjectStatus;
+    is_valid: boolean;
+    updated_at?: string;
+  } | null;
+  model: {
+    id: string;
+    name: string;
+    provider: string;
+    status: string;
+    temperature?: number;
+    max_tokens?: number;
+  } | null;
+  system_prompt: {
+    id: string;
+    name: string;
+  } | null;
+  skills: Array<{
+    id: string;
+    name: string;
+  }>;
+  all_candidates?: Array<{
+    id: string;
+    name: string;
+    status: ProjectStatus;
+  }>;
+  candidate_count?: number;
+  message?: string;
 }
 
 export interface GraphNode {

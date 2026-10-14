@@ -8,6 +8,7 @@ import PageHeader from '@/components/ui/PageHeader';
 import Icon from '@/components/ui/Icon';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import Toast, { ToastMessage } from '@/components/ui/Toast';
+import Pagination from '@/components/ui/Pagination';
 import { formatErrorMessage } from '@/lib/errors';
 
 export default function SystemPromptsListPage() {
@@ -19,6 +20,8 @@ export default function SystemPromptsListPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [sortOption, setSortOption] = useState('updated_desc');
+  const [page, setPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(6);
 
   // Modals & Feedback
   const [promptToDelete, setPromptToDelete] = useState<SystemPromptSummary | null>(null);
@@ -112,8 +115,14 @@ export default function SystemPromptsListPage() {
     }
   };
 
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedQuery, sortOption]);
+
+  const paginatedPrompts = prompts.slice((page - 1) * pageSize, page * pageSize);
+
   return (
-    <div style={{ flex: 1, overflowY: 'auto' }}>
+    <div className="custom-scrollbar" style={{ flex: 1, overflowY: 'auto' }}>
       <Toast toast={toast} onClose={() => setToast(null)} />
 
       <div className="page-container">
@@ -305,7 +314,7 @@ export default function SystemPromptsListPage() {
               gap: '1rem',
             }}
           >
-            {prompts.map(prompt => (
+            {paginatedPrompts.map(prompt => (
               <div
                 key={prompt.id}
                 className="card"
@@ -436,6 +445,22 @@ export default function SystemPromptsListPage() {
               </div>
             ))}
           </div>
+        )}
+
+        {/* Pagination Bar */}
+        {!loading && prompts.length > pageSize && (
+          <Pagination
+            currentPage={page}
+            totalItems={prompts.length}
+            pageSize={pageSize}
+            onPageChange={setPage}
+            pageSizeOptions={[6, 12, 24]}
+            onPageSizeChange={size => {
+              setPageSize(size);
+              setPage(1);
+            }}
+            itemLabel="prompts"
+          />
         )}
       </div>
 

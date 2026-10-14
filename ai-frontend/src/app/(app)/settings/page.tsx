@@ -824,13 +824,18 @@ export default function SettingsPage() {
   const pwdStrength = getPasswordStrength(newPassword);
 
   return (
-    <div style={{
-      padding: '1.5rem',
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      width: '100%'
-    }}>
+    <div
+      className="custom-scrollbar"
+      style={{
+        padding: '1.5rem',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        width: '100%',
+        flex: 1,
+        overflowY: 'auto',
+      }}
+    >
       {/* Toast Notification */}
       {toast && (
         <div style={{

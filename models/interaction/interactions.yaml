@@ -57,5 +57,10 @@ interactions:
     participants: ["ACT-02: Registered User", "Discord Member", "Next.js Settings Bot View", "FastAPI Bot Controller", "Discord API v10 Gateway", "LLM Orchestrator", "SQLite Database"]
     source_refs: ["FR-044", "FR-045", "FR-046", "FR-047", "BR-031", "BR-032", "BR-033", "BR-034", "SEC-013", "CTRL-012", "ADR-012", "UC-032", "UC-033", "UC-034"]
 
+  - id: "SEQ-012"
+    scenario: "End-to-End Discord Message Processing Through AI-Chan Project Graphs and Connected LLM Models"
+    participants: ["Discord User", "Discord Gateway", "AI-Chan Discord Bot", "FastAPI Backend", "Project Graph Engine", "LLM Orchestrator", "SQLite Database"]
+    source_refs: ["FR-044", "FR-045", "FR-046", "FR-047", "BR-001", "BR-002", "BR-031", "BR-032", "BR-033", "SEC-013", "ADR-012"]
+
 
 

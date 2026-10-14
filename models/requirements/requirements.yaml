@@ -385,7 +385,7 @@ requirements:
     priority: "MUST"
     status: "IMPLEMENTED"
     actors: ["Registered User", "Guest"]
-  - id: "FR-053"
+  - id: "FR-057"
     name: "Model-Bot-Skill Graph Connections, Validation, and Discord Execution"
     type: "functional"
     capability: "CAP-AGENT-MGMT"
@@ -499,6 +499,9 @@ business_rules:
   - id: "BR-038"
     name: "Deterministic Discord-to-Project Routing & Ambiguous Route Rejection"
     status: "IMPLEMENTED"
+  - id: "BR-039"
+    name: "Project Active Invariant for Discord Execution (Reject STOP State)"
+    status: "IMPLEMENTED"
 
 security_requirements:
   - id: "SEC-001"
@@ -537,6 +540,9 @@ security_requirements:
   - id: "SEC-013"
     name: "Discord Bot Interaction Authentication & Signature Validation"
     status: "BASELINED"
+  - id: "SEC-014"
+    name: "Multi-Project & Conversational Memory Isolation for External Bot Executions"
+    status: "IMPLEMENTED"
 
 
 

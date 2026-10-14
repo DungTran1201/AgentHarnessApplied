@@ -23,6 +23,7 @@ export class ProjectService {
     const res = await fetch(`${BASE_URL}/projects?${params.toString()}`, {
       method: 'GET',
       headers: getAuthHeaders(),
+      credentials: 'include',
     });
 
     if (!res.ok) {
@@ -37,6 +38,7 @@ export class ProjectService {
     const res = await fetch(`${BASE_URL}/projects/${id}`, {
       method: 'GET',
       headers: getAuthHeaders(),
+      credentials: 'include',
     });
 
     if (!res.ok) {
@@ -51,6 +53,7 @@ export class ProjectService {
     const res = await fetch(`${BASE_URL}/projects`, {
       method: 'POST',
       headers: getAuthHeaders(),
+      credentials: 'include',
       body: JSON.stringify(data),
     });
 
@@ -66,6 +69,7 @@ export class ProjectService {
     const res = await fetch(`${BASE_URL}/projects/${id}`, {
       method: 'PATCH',
       headers: getAuthHeaders(),
+      credentials: 'include',
       body: JSON.stringify(data),
     });
 
@@ -81,6 +85,7 @@ export class ProjectService {
     const res = await fetch(`${BASE_URL}/projects/${id}/graph`, {
       method: 'PUT',
       headers: getAuthHeaders(),
+      credentials: 'include',
       body: JSON.stringify(graphData),
     });
 
@@ -99,6 +104,7 @@ export class ProjectService {
     const res = await fetch(`${BASE_URL}/projects/${id}/activate`, {
       method: 'POST',
       headers: getAuthHeaders(),
+      credentials: 'include',
     });
 
     const data = await res.json().catch(() => ({ detail: res.statusText }));
@@ -116,6 +122,7 @@ export class ProjectService {
     const res = await fetch(`${BASE_URL}/projects/${id}/stop`, {
       method: 'POST',
       headers: getAuthHeaders(),
+      credentials: 'include',
     });
 
     if (!res.ok) {
@@ -130,6 +137,7 @@ export class ProjectService {
     const res = await fetch(`${BASE_URL}/projects/${id}/deactivate`, {
       method: 'POST',
       headers: getAuthHeaders(),
+      credentials: 'include',
     });
 
     if (!res.ok) {
@@ -144,6 +152,7 @@ export class ProjectService {
     const res = await fetch(`${BASE_URL}/projects/${id}`, {
       method: 'DELETE',
       headers: getAuthHeaders(),
+      credentials: 'include',
     });
 
     if (!res.ok) {
@@ -158,6 +167,7 @@ export class ProjectService {
     const res = await fetch(`${BASE_URL}/projects/active`, {
       method: 'GET',
       headers: getAuthHeaders(),
+      credentials: 'include',
     });
 
     if (!res.ok) {
@@ -171,6 +181,7 @@ export class ProjectService {
     const res = await fetch(`${BASE_URL}/projects/quota`, {
       method: 'GET',
       headers: getAuthHeaders(),
+      credentials: 'include',
     });
 
     if (!res.ok) {
@@ -196,6 +207,7 @@ export class ProjectService {
           ...getAuthHeaders(),
           Accept: 'text/event-stream',
         },
+        credentials: 'include',
         body: JSON.stringify({ message, conversation_id: conversationId }),
         signal,
       });

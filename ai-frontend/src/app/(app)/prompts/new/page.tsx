@@ -71,7 +71,7 @@ export default function CreateSystemPromptPage() {
   };
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto' }}>
+    <div className="custom-scrollbar" style={{ flex: 1, overflowY: 'auto' }}>
       <div className="page-container" style={{ maxWidth: '840px' }}>
         {/* Page Header */}
         <PageHeader

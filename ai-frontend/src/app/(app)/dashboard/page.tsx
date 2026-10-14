@@ -109,7 +109,7 @@ export default function ResourceDashboardPage() {
   const gaugeColor = isExhausted ? 'var(--danger)' : isWarning80 ? 'var(--warning)' : 'var(--accent)';
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto' }}>
+    <div className="custom-scrollbar" style={{ flex: 1, overflowY: 'auto' }}>
       <div className="page-container">
         {/* Page Header */}
         <PageHeader

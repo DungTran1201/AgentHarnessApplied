@@ -100,5 +100,11 @@ architecture:
     - id: ADR-012
       title: "Discord Bot Multi-Scope Management, Active Model Routing & Unified Quota Sharing Architecture"
       status: "approved"
+    - id: ADR-013
+      title: "Intelligent VRM Behavioral Animation, Idle Engine & Variation Selection Architecture"
+      status: "approved"
+    - id: ADR-014
+      title: "End-to-End Discord Message Processing Through AI-Chan Project Graphs & Connected Models"
+      status: "approved"
 
 

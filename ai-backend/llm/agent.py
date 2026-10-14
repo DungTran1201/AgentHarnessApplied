@@ -93,20 +93,47 @@ class LangChainModelFactory:
     """Factory creating LangChain Chat Model instances based on .env configuration."""
     
     @staticmethod
+    def get_candidate_models(provider: str, target_model: Optional[str] = None) -> List[str]:
+        provider = provider.lower().strip()
+        if provider == "gemini":
+            pool = [
+                target_model,
+                "gemini-3.5-flash-lite",
+                "gemini-flash-lite-latest",
+                "gemini-3-flash-preview",
+                "gemini-3.5-flash",
+                "gemini-3.8-flash"
+            ]
+            candidates = []
+            for m in pool:
+                if m and m not in candidates:
+                    candidates.append(m)
+            return candidates
+        elif provider == "openai":
+            pool = [target_model, "gpt-4o-mini", "gpt-4o"]
+            candidates = []
+            for m in pool:
+                if m and m not in candidates:
+                    candidates.append(m)
+            return candidates
+        return [target_model] if target_model else []
+
+    @staticmethod
     def create_model(provider: str, model_name: Optional[str] = None):
         cfg = EnvKeyLoader.get_config()
         provider = provider.lower()
         
         if provider == "gemini" and cfg["gemini_api_key"]:
             from langchain_google_genai import ChatGoogleGenerativeAI
-            target = model_name or cfg["default_model"] or "gemini-3.8-flash"
+            target = model_name or cfg["default_model"] or "gemini-3.5-flash-lite"
             if target in ["gemini-1.5-flash", "gemini-2.5-flash"]:
-                target = "gemini-3.8-flash"
+                target = "gemini-3.5-flash-lite"
             return ChatGoogleGenerativeAI(
                 model=target,
                 google_api_key=cfg["gemini_api_key"],
                 temperature=0.7,
-                timeout=30.0
+                timeout=12.0,
+                max_retries=1
             )
         elif provider == "openai" and cfg["openai_api_key"]:
             from langchain_openai import ChatOpenAI
@@ -162,50 +189,51 @@ class ChatAgentOrchestrator:
         def primary_node(state: AgentChatState) -> Dict[str, Any]:
             cfg = EnvKeyLoader.get_config()
             primary_prov = cfg["default_provider"] if cfg["default_provider"] in ["gemini", "openai"] else "gemini"
-            model = LangChainModelFactory.create_model(primary_prov, state.get("target_model"))
-            if not model:
-                return {
-                    "error": f"Primary provider {primary_prov} is not configured with an API key in .env",
-                    "failover_triggered": True
-                }
-            try:
-                resp = model.invoke(state["messages"])
-                clean_text = extract_text_content(resp.content)
-                return {
-                    "response_text": clean_text,
-                    "final_model": getattr(model, "model_name", state.get("target_model", "primary")),
-                    "active_provider": primary_prov,
-                    "error": None
-                }
-            except Exception as exc:
-                logger.warning(f"Primary provider {primary_prov} failed: {exc}. Triggering failover edge.")
-                return {
-                    "error": str(exc),
-                    "failover_triggered": True
-                }
+            target_model = state.get("target_model")
+            candidates = LangChainModelFactory.get_candidate_models(primary_prov, target_model)
+            for cand_model in candidates:
+                model = LangChainModelFactory.create_model(primary_prov, cand_model)
+                if not model:
+                    continue
+                try:
+                    resp = model.invoke(state["messages"])
+                    clean_text = extract_text_content(resp.content)
+                    return {
+                        "response_text": clean_text,
+                        "final_model": getattr(model, "model_name", cand_model),
+                        "active_provider": primary_prov,
+                        "error": None
+                    }
+                except Exception as exc:
+                    logger.warning(f"Primary model {cand_model} failed in primary_node: {exc}. Trying next candidate...")
+                    continue
+            return {
+                "error": f"All models for provider {primary_prov} failed.",
+                "failover_triggered": True
+            }
 
         def fallback_node(state: AgentChatState) -> Dict[str, Any]:
             # Failover logic: if gemini failed, try openai, or vice-versa (BR-005)
             fallback_prov = "openai" if state.get("active_provider") == "gemini" else "gemini"
-            model = LangChainModelFactory.create_model(fallback_prov)
-            if not model:
-                logger.error(f"Fallback provider {fallback_prov} has no valid key configured in .env.")
-                return {
-                    "error": f"Cả hai nhà cung cấp đều không khả dụng. Lỗi ban đầu: {state.get('error')}",
-                    "active_provider": "none"
-                }
-            try:
-                resp = model.invoke(state["messages"])
-                clean_text = extract_text_content(resp.content)
-                return {
-                    "response_text": clean_text,
-                    "final_model": getattr(model, "model_name", "fallback-model"),
-                    "active_provider": fallback_prov,
-                    "error": None
-                }
-            except Exception as exc:
-                logger.error(f"Fallback provider {fallback_prov} also failed: {exc}")
-                return {"error": str(exc), "active_provider": "failed"}
+            fallback_candidates = LangChainModelFactory.get_candidate_models(fallback_prov)
+            for fb_cand in fallback_candidates:
+                model = LangChainModelFactory.create_model(fallback_prov, fb_cand)
+                if not model:
+                    continue
+                try:
+                    resp = model.invoke(state["messages"])
+                    clean_text = extract_text_content(resp.content)
+                    return {
+                        "response_text": clean_text,
+                        "final_model": getattr(model, "model_name", fb_cand),
+                        "active_provider": fallback_prov,
+                        "error": None
+                    }
+                except Exception as exc:
+                    logger.error(f"Fallback model {fb_cand} ({fallback_prov}) failed: {exc}")
+                    continue
+
+            return {"error": f"Fallback provider {fallback_prov} also failed.", "active_provider": "failed"}
 
         builder.add_node("context_prep", context_node)
         builder.add_node("primary_model", primary_node)
@@ -237,13 +265,16 @@ class ChatAgentOrchestrator:
         
         primary_prov = cfg["default_provider"] if cfg["default_provider"] in ["gemini", "openai"] else "gemini"
         target_model = model_override or cfg["default_model"]
-        primary_model = LangChainModelFactory.create_model(primary_prov, target_model)
 
-        # 1. Thử truyền luồng từ Primary Model (LangChain astream)
-        stream_started = False
-        if primary_model:
+        # 1. Thử truyền luồng từ Primary Provider với intra-provider model failover (BR-005)
+        primary_candidates = LangChainModelFactory.get_candidate_models(primary_prov, target_model)
+        for cand_model in primary_candidates:
+            primary_model = LangChainModelFactory.create_model(primary_prov, cand_model)
+            if not primary_model:
+                continue
+            stream_started = False
             try:
-                final_model_name = getattr(primary_model, "model_name", target_model)
+                final_model_name = getattr(primary_model, "model_name", cand_model)
                 async for chunk in primary_model.astream(messages):
                     raw_content = chunk.content if hasattr(chunk, "content") else str(chunk)
                     token_str = extract_text_content(raw_content)
@@ -251,92 +282,125 @@ class ChatAgentOrchestrator:
                         stream_started = True
                         yield {"token": token_str, "status": "streaming"}
                 
-                # Stream hoàn tất thành công qua Primary
-                yield {
-                    "status": "done",
-                    "model": final_model_name,
-                    "provider": primary_prov
-                }
-                return
-            except Exception as primary_exc:
-                logger.warning(f"LangChain primary stream failed ({primary_prov}): {primary_exc}")
                 if stream_started:
-                    # Nếu đã stream một nửa mới đứt kết nối -> báo lỗi
+                    # Stream hoàn tất thành công qua Primary
+                    yield {
+                        "status": "done",
+                        "model": final_model_name,
+                        "provider": primary_prov
+                    }
+                    return
+            except Exception as primary_exc:
+                logger.warning(f"LangChain primary model '{cand_model}' failed ({primary_prov}): {primary_exc}")
+                if stream_started:
                     yield {"status": "error", "message": f"Stream gián đoạn: {primary_exc}"}
                     return
-                # Nếu chưa gửi token nào -> Chuyển vùng dự phòng Fallback (BR-005, ADR-003, ADR-005)
+                # Thử model tiếp theo trong cùng provider
 
-        # 2. Kích hoạt Fallback Model nếu Primary không khả dụng hoặc lỗi trước khi stream
+        # 2. Kích hoạt Fallback Provider nếu Primary provider không khả dụng (BR-005, ADR-003, ADR-005)
         fallback_prov = "openai" if primary_prov == "gemini" else "gemini"
-        fallback_model = LangChainModelFactory.create_model(fallback_prov)
-        if fallback_model:
+        fallback_candidates = LangChainModelFactory.get_candidate_models(fallback_prov)
+        for fb_cand in fallback_candidates:
+            fallback_model = LangChainModelFactory.create_model(fallback_prov, fb_cand)
+            if not fallback_model:
+                continue
+            stream_started = False
             try:
-                fallback_model_name = getattr(fallback_model, "model_name", "gpt-4o-mini")
+                fallback_model_name = getattr(fallback_model, "model_name", fb_cand)
                 logger.info(f"Kích hoạt chuyển vùng dự phòng LangGraph sang {fallback_prov} ({fallback_model_name})")
                 async for chunk in fallback_model.astream(messages):
                     raw_content = chunk.content if hasattr(chunk, "content") else str(chunk)
                     token_str = extract_text_content(raw_content)
                     if token_str:
+                        stream_started = True
                         yield {"token": token_str, "status": "streaming"}
-                yield {
-                    "status": "done",
-                    "model": fallback_model_name,
-                    "provider": fallback_prov,
-                    "failover": True
-                }
-                return
+                if stream_started:
+                    yield {
+                        "status": "done",
+                        "model": fallback_model_name,
+                        "provider": fallback_prov,
+                        "failover": True
+                    }
+                    return
             except Exception as fb_exc:
-                logger.error(f"Fallback model ({fallback_prov}) cũng thất bại: {fb_exc}")
+                logger.error(f"Fallback model '{fb_cand}' ({fallback_prov}) thất bại: {fb_exc}")
+                if stream_started:
+                    yield {"status": "error", "message": f"Stream gián đoạn: {fb_exc}"}
+                    return
 
-        # 3. Fallback High-Quality Local/Mock Generator (khi chưa cấu hình API Key trong .env)
-        logger.info("Chưa có API Key hợp lệ trong .env -> Kích hoạt LangGraph Mock Agent Simulator.")
-        p_lower = prompt.lower()
-        if system_instruction and system_instruction.strip():
-            greeting = f"Chào bạn! Tôi đang phản hồi với chỉ dẫn hệ thống: *\"{system_instruction.strip()[:60]}...\"*\n\n"
-        else:
-            greeting = "Chào bạn! Tôi là **AI-Chan Assistant**, trợ lý ảo thông minh chạy qua kiến trúc **LangChain & LangGraph**.\n\n"
+        # 3. Fallback High-Quality Local/Mock Generator (khi chưa cấu hình API Key trong .env hoặc toàn bộ Cloud Provider bị sự cố)
+        logger.info("Toàn bộ Cloud Provider không khả dụng -> Kích hoạt Local Agent Simulator thích ứng ngữ cảnh.")
         
-        if "python" in p_lower:
+        # Phân tích System Prompt để xác định vai trò chuyên môn (Persona)
+        persona_role = "Trợ lý Trí tuệ Nhân tạo AI-Chan"
+        if system_instruction and system_instruction.strip():
+            si_clean = system_instruction.strip()
+            first_line = si_clean.split("\n")[0]
+            for prefix in ["Bạn là một", "Bạn là", "You are a", "You are"]:
+                if first_line.startswith(prefix):
+                    first_line = first_line[len(prefix):].strip()
+                    break
+            first_line = first_line.strip(".:;\"'")
+            if first_line:
+                persona_role = first_line[:80]
+
+        p_lower = prompt.lower()
+        if "giới thiệu" in p_lower or "bạn là ai" in p_lower or "who are you" in p_lower or "chào" in p_lower:
+            if "business analyst" in persona_role.lower() or "ba" in persona_role.lower() or "nghiệp vụ" in persona_role.lower():
+                body = (
+                    f"Chào bạn! Tôi là một **{persona_role}**.\n\n"
+                    f"Với vai trò chuyên viên phân tích nghiệp vụ, tôi có các nhiệm vụ trọng tâm sau:\n"
+                    f"- **Bóc tách & Khảo sát yêu cầu**: Phân tích Business Requirements, viết User Stories và tiêu chí chấp nhận (Acceptance Criteria).\n"
+                    f"- **Mô hình hóa quy trình**: Vẽ sơ đồ luồng nghiệp vụ (BPMN, Swimlane), xây dựng Use Case và đặc tả chức năng (SRS).\n"
+                    f"- **Cầu nối kỹ thuật**: Đồng hành cùng Product Owner và Tech Team để đảm bảo giải pháp đáp ứng đúng mục tiêu kinh doanh.\n\n"
+                    f"Hôm nay bạn cần tôi hỗ trợ phân tích quy trình hay lập tài liệu đặc tả cho tính năng nào?"
+                )
+            elif "python" in persona_role.lower() or "architect" in persona_role.lower() or "kỹ sư" in persona_role.lower() or "engineer" in persona_role.lower():
+                body = (
+                    f"Chào bạn! Tôi là một **{persona_role}**.\n\n"
+                    f"Tôi chuyên sâu về thiết kế kiến trúc phần mềm, xây dựng hệ sinh thái AI Agent (LangChain, LangGraph) và tối ưu hóa hệ thống phân tán:\n"
+                    f"- **Thiết kế kiến trúc**: Clean Architecture, Microservices, Event-driven và StateGraph bền bỉ.\n"
+                    f"- **Tối ưu hóa hiệu năng**: Xử lý bất đồng bộ cao (AsyncIO, SSE streaming), quản lý bộ nhớ và truy vấn CSDL.\n"
+                    f"- **Tiêu chuẩn mã nguồn**: Thiết lập CI/CD, viết Unit Test / Integration Test tự động và bảo mật API.\n\n"
+                    f"Bạn đang cần tôi tư vấn giải pháp kỹ thuật, review kiến trúc hay tối ưu đoạn code nào?"
+                )
+            else:
+                body = (
+                    f"Chào bạn! Tôi đang đảm nhiệm vai trò **{persona_role}**.\n\n"
+                    f"Theo chỉ dẫn hệ thống đã được cấu hình trong Project:\n"
+                    f"> *\"{system_instruction.strip()[:140]}...\"*\n\n"
+                    f"Tôi sẵn sàng hỗ trợ bạn giải quyết mọi câu hỏi hoặc nhiệm vụ thuộc chuyên môn này. "
+                    f"Hãy cho tôi biết yêu cầu cụ thể của bạn!"
+                )
+        elif "python" in p_lower or "code" in p_lower or "lập trình" in p_lower:
             body = (
-                f"Về câu hỏi Python: *\"{prompt}\"*:\n\n"
-                f"Dưới đây là ví dụ minh họa tối ưu qua cấu trúc LangGraph StateGraph:\n\n"
+                f"Về câu hỏi kỹ thuật (*\"{prompt}\"*):\n\n"
+                f"Dưới góc nhìn của **{persona_role}**, tôi đề xuất cấu trúc triển khai chuẩn như sau:\n\n"
                 f"```python\n"
-                f"from langgraph.graph import StateGraph, END\n"
-                f"\n"
-                f"def chat_node(state):\n"
-                f"    return {{'messages': state['messages']}}\n"
-                f"\n"
-                f"workflow = StateGraph(dict)\n"
-                f"workflow.add_node('chat', chat_node)\n"
-                f"workflow.set_entry_point('chat')\n"
-                f"workflow.add_edge('chat', END)\n"
-                f"app = workflow.compile()\n"
+                f"# Mô hình xử lý dữ liệu chuẩn hóa\n"
+                f"import asyncio\n"
+                f"from typing import Dict, Any\n\n"
+                f"async def execute_task(data: Dict[str, Any]) -> Dict[str, Any]:\n"
+                f"    # Xác thực và xử lý luồng logic\n"
+                f"    await asyncio.sleep(0.01)\n"
+                f"    return {{'status': 'success', 'data': data}}\n"
                 f"```\n\n"
-                f"Hệ thống đã điều phối yêu cầu thành công."
-            )
-        elif "chào" in p_lower or "hello" in p_lower or "hi" in p_lower:
-            body = (
-                f"Rất vui được hỗ trợ bạn! Hệ thống Agent của AI-Chan hiện được xây dựng trên **LangChain & LangGraph**.\n\n"
-                f"- **Tải động từ `.env`**: Hỗ trợ Google Gemini, OpenAI, Anthropic, Groq, Ollama.\n"
-                f"- **Cơ chế Failover**: Tự động chuyển đổi dự phòng nếu một nhà cung cấp gặp sự cố quota/timeout.\n"
-                f"- **Server-Sent Events**: Truyền dữ liệu thời gian thực mượt mà.\n\n"
-                f"Bạn có thể bổ sung `GEMINI_API_KEY` hoặc `OPENAI_API_KEY` vào `.env` bất cứ lúc nào!"
+                f"Cấu trúc này đảm bảo tính module hóa, dễ kiểm thử và có khả năng mở rộng cao."
             )
         else:
             body = (
-                f"Tôi đã tiếp nhận câu hỏi của bạn: *\"{prompt}\"*.\n\n"
-                f"Dựa trên ngữ cảnh hội thoại ({len(history)} tin nhắn trước đó), hệ thống Agent đã phân tích:\n\n"
-                f"1. **Mô hình**: Đã áp dụng kiến trúc LangGraph StateGraph có khả năng chịu lỗi cao (`ADR-005`).\n"
-                f"2. **Bảo mật**: Dữ liệu phiên được lưu trữ an toàn theo tiêu chuẩn `BR-002` (Anti-IDOR).\n"
-                f"3. **Độ trễ**: Thời gian phản hồi được tối ưu hóa qua luồng SSE streaming (`ADR-004`)."
+                f"Dưới vai trò **{persona_role}**, tôi xin phản hồi yêu cầu *\"{prompt}\"* của bạn:\n\n"
+                f"1. **Phân tích bối cảnh**: Yêu cầu đã được tiếp nhận và xử lý theo đúng chỉ dẫn chuyên môn.\n"
+                f"2. **Định hướng giải pháp**: Áp dụng các nguyên tắc thiết kế tối ưu và đảm bảo tính nhất quán.\n"
+                f"3. **Hành động tiếp theo**: Bạn có thể cung cấp thêm chi tiết để tôi đi sâu vào từng khía cạnh cụ thể."
             )
 
-        full_text = greeting + body
+        full_text = body
         words = full_text.split(" ")
         for idx, word in enumerate(words):
             chunk_word = word + (" " if idx < len(words) - 1 else "")
             yield {"token": chunk_word, "status": "streaming"}
-            await asyncio.sleep(0.035)  # 35ms per token
+            await asyncio.sleep(0.025)
 
         yield {
             "status": "done",

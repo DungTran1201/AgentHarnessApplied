@@ -72,9 +72,11 @@ class AIChanDiscordBot(commands.Bot):
                 len(synced),
                 guild.id,
             )
-        else:
-            synced = await self.tree.sync()
-            logger.info("Synchronized %d global slash command(s)", len(synced))
+        try:
+            synced_global = await self.tree.sync()
+            logger.info("Synchronized %d global slash command(s)", len(synced_global))
+        except Exception as exc:
+            logger.warning("Global slash command sync deferred/failed: %s", exc)
 
     async def on_ready(self) -> None:
         """Event listener dispatched when the bot has successfully connected to Discord Gateway."""

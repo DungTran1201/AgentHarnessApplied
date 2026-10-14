@@ -209,7 +209,8 @@ export default function CreateSkillPage() {
   };
 
   return (
-    <div className="page-container">
+    <div className="custom-scrollbar" style={{ flex: 1, overflowY: 'auto' }}>
+      <div className="page-container">
       {/* Page Header */}
       <PageHeader
         title="New Agent Skill"
@@ -746,6 +747,7 @@ export default function CreateSkillPage() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

@@ -405,6 +405,37 @@ class TestProjectBotSkillGraph(unittest.TestCase):
         finally:
             execute_commit("DELETE FROM projects WHERE id = ?", (p2_id,))
 
+    def test_bot_binding_endpoint_resolves_project_and_model(self):
+        # 1. Before saving graph with bot, binding endpoint reports not bound
+        res = self.client.get("/api/v1/bot/discord/binding", headers=self.headers)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertFalse(data["is_bound"])
+        self.assertIsNone(data["project"])
+        self.assertIsNone(data["model"])
+
+        # 2. Save graph with Model -> Bot node (using Discord client ID or bot_id)
+        bot_graph = self._build_graph(include_bot=True, bot_count=1)
+        # Verify save graph succeeds
+        save_res = self.client.put(f"/api/v1/projects/{self.project_id}/graph", json=bot_graph, headers=self.headers)
+        self.assertEqual(save_res.status_code, 200)
+
+        # Activate project
+        self.client.post(f"/api/v1/projects/{self.project_id}/activate", headers=self.headers)
+
+        # 3. Call binding endpoint again -> should resolve project and model
+        res2 = self.client.get("/api/v1/bot/discord/binding", headers=self.headers)
+        self.assertEqual(res2.status_code, 200)
+        data2 = res2.json()
+        self.assertTrue(data2["is_bound"])
+        self.assertIsNotNone(data2["project"])
+        self.assertEqual(data2["project"]["id"], self.project_id)
+        self.assertEqual(data2["project"]["status"], "ACTIVE")
+        self.assertIsNotNone(data2["model"])
+        self.assertEqual(data2["model"]["id"], "gemini-3.8-flash")
+        self.assertEqual(data2["bot"]["bot_id"], self.bot_id)
+
 if __name__ == "__main__":
     unittest.main()
+
 

@@ -351,7 +351,8 @@ export default function SkillDetailPage({ params }: { params: Promise<{ id: stri
   if (!skill) return null;
 
   return (
-    <div className="page-container">
+    <div className="custom-scrollbar" style={{ flex: 1, overflowY: 'auto' }}>
+      <div className="page-container">
       {/* Page Header */}
       <PageHeader
         title={skill.name}
@@ -1100,6 +1101,7 @@ export default function SkillDetailPage({ params }: { params: Promise<{ id: stri
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

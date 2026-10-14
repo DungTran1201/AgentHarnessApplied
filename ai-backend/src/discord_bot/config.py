@@ -95,7 +95,7 @@ class Settings(BaseSettings):
         elif not self.ANTIGRAVITY_API_URL:
             self.ANTIGRAVITY_API_URL = self.DISCORD_BOT_API_BASE_URL
 
-        if self.ANTIGRAVITY_API_KEY and self.DISCORD_BOT_API_KEY is None:
+        if self.ANTIGRAVITY_API_KEY and not self.DISCORD_BOT_API_KEY:
             self.DISCORD_BOT_API_KEY = self.ANTIGRAVITY_API_KEY
         elif self.DISCORD_BOT_API_KEY and not self.ANTIGRAVITY_API_KEY:
             self.ANTIGRAVITY_API_KEY = self.DISCORD_BOT_API_KEY

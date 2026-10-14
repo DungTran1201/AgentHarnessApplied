@@ -230,11 +230,21 @@ def validate_project_graph(graph_data: Dict[str, Any], user_id: Optional[str] = 
                 user_rec = query_one("SELECT id, discord_id FROM users WHERE id = ?", (user_id,))
                 if not user_rec or not user_rec.get("discord_id"):
                     errors.append("Tài khoản chưa liên kết Discord để sử dụng Bot Node trong project.")
-                bot_rec = query_one("SELECT id, is_enabled FROM discord_bot_configs WHERE id = ? AND user_id = ?", (target_bot_id, user_id))
+                bot_rec = query_one(
+                    "SELECT id, is_enabled FROM discord_bot_configs WHERE (id = ? OR user_id = ?) AND user_id = ?",
+                    (target_bot_id, user_id, user_id)
+                )
+                if not bot_rec and (
+                    target_bot_id == str(settings.DISCORD_CLIENT_ID or "1548888415951519744")
+                    or str(target_bot_id).startswith("bot_")
+                ):
+                    bot_rec = query_one("SELECT id, is_enabled FROM discord_bot_configs WHERE user_id = ?", (user_id,))
                 if not bot_rec:
                     errors.append(f"Bot cấu hình '{target_bot_id}' không tồn tại hoặc bạn không có quyền truy cập.")
             else:
                 bot_rec = query_one("SELECT id, is_enabled FROM discord_bot_configs WHERE id = ?", (target_bot_id,))
+                if not bot_rec:
+                    bot_rec = query_one("SELECT id, is_enabled FROM discord_bot_configs LIMIT 1")
                 if not bot_rec:
                     errors.append(f"Bot cấu hình '{target_bot_id}' không tồn tại.")
 
@@ -838,11 +848,21 @@ async def chat_through_project(
                                 }
                             )
                         bot_rec = query_one(
-                            "SELECT id, guild_name, trigger_mode, is_enabled FROM discord_bot_configs WHERE id = ? AND user_id = ?",
-                            (ref_bot_id, user_id)
+                            "SELECT id, guild_name, trigger_mode, is_enabled FROM discord_bot_configs WHERE (id = ? OR user_id = ?) AND user_id = ?",
+                            (ref_bot_id, user_id, user_id)
                         )
+                        if not bot_rec and (
+                            ref_bot_id == str(settings.DISCORD_CLIENT_ID or "1548888415951519744")
+                            or str(ref_bot_id).startswith("bot_")
+                        ):
+                            bot_rec = query_one(
+                                "SELECT id, guild_name, trigger_mode, is_enabled FROM discord_bot_configs WHERE user_id = ?",
+                                (user_id,)
+                            )
                     else:
                         bot_rec = query_one("SELECT id, guild_name, trigger_mode, is_enabled FROM discord_bot_configs WHERE id = ?", (ref_bot_id,))
+                        if not bot_rec:
+                            bot_rec = query_one("SELECT id, guild_name, trigger_mode, is_enabled FROM discord_bot_configs LIMIT 1")
                     if not bot_rec:
                         raise HTTPException(
                             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

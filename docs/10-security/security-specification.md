@@ -144,6 +144,21 @@
    - Mọi lượt đàm thoại qua Discord Bot đều chia sẻ chung hạn ngạch token `daily_token_limit` của tài khoản người dùng trên Web.
    - Nếu tài khoản đã sử dụng hết hạn ngạch trong ngày (`used_tokens >= total_limit`), hệ thống kích hoạt chốt chặn trả về mã phản hồi `HTTP 429 Too Many Requests` và từ chối gọi LLM Provider, ngăn chặn nguy cơ cạn kiệt ngân sách API thông qua spam lệnh trên Discord.
 
+---
+
+## 11. Cô Lập Đa Dự Án & Bộ Nhớ Hội Thoại Khi Thực Thi Qua Bot Đồ Thị (Multi-Project & Conversational Memory Isolation — SEC-014)
+
+1. **Cô Lập Ngữ Cảnh Tuyệt Đối Giữa Các Dự Án (`SEC-014`, `BR-038`)**:
+   - Mỗi yêu cầu thực thi từ Discord Bot chỉ được phép kích hoạt đúng một Project được liên kết xác định (`BR-038`).
+   - Tuyệt đối không cho phép Project B kế thừa hoặc truy xuất ngữ cảnh System Prompt, Graph Canvas snapshot, hay danh sách Kỹ năng (Skills) của Project A.
+   - Khi phát hiện cấu hình xung đột hoặc nhiều hơn 1 Project đang hoạt động cho cùng một Bot, Backend từ chối ngay lập tức với `HTTP 400 Bad Request` thay vì suy đoán ngẫu nhiên.
+2. **Kiểm Soát Trạng Thái Hoạt Động Của Dự Án (`BR-039`)**:
+   - Mọi thao tác thực thi bắt buộc kiểm tra cờ `project.status != 'STOP'`.
+   - Dự án ở trạng thái `STOP` bị từ chối với lỗi rõ ràng, ngăn ngừa lãng phí tài nguyên tính toán và chi phí API LLM.
+3. **Phân Tách & Bảo Vệ Lịch Sử Đàm Thoại Đa Lượt**:
+   - Bảng `messages` lưu trữ tin nhắn với các khóa ngoại tường minh (`user_id`, `project_id`, `conversation_id`).
+   - Bộ nhớ hội thoại nạp vào agent được giới hạn trong phạm vi đúng phiên của người dùng và dự án tương ứng, ngăn chặn rò rỉ dữ liệu xuyên tài khoản (Cross-Tenant Data Leakage).
+
 
 
 

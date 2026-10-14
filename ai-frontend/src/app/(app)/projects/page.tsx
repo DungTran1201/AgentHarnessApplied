@@ -9,6 +9,7 @@ import PageHeader from '@/components/ui/PageHeader';
 import Icon from '@/components/ui/Icon';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import Toast, { ToastMessage } from '@/components/ui/Toast';
+import Pagination from '@/components/ui/Pagination';
 import { formatErrorMessage } from '@/lib/errors';
 
 export default function ProjectsPage() {
@@ -18,6 +19,8 @@ export default function ProjectsPage() {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
+  const [page, setPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(6);
 
   // Create Modal
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -115,16 +118,22 @@ export default function ProjectsPage() {
     }
   };
 
+  useEffect(() => {
+    setPage(1);
+  }, [searchQuery, statusFilter]);
+
   const filteredProjects = projects.filter(p => {
     if (!searchQuery.trim()) return true;
     const q = searchQuery.toLowerCase();
     return p.name.toLowerCase().includes(q) || (p.description && p.description.toLowerCase().includes(q));
   });
 
+  const paginatedProjects = filteredProjects.slice((page - 1) * pageSize, page * pageSize);
+
   const percentUsed = Math.min(100, Math.round((quota.active_count / quota.max_limit) * 100));
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto' }}>
+    <div className="custom-scrollbar" style={{ flex: 1, overflowY: 'auto' }}>
       <Toast toast={toast} onClose={() => setToast(null)} />
 
       <div className="page-container">
@@ -305,7 +314,7 @@ export default function ProjectsPage() {
               gap: '1rem',
             }}
           >
-            {filteredProjects.map(proj => {
+            {paginatedProjects.map(proj => {
               const isActive = proj.status === 'ACTIVE';
               const isStop = proj.status === 'STOP';
 
@@ -479,6 +488,22 @@ export default function ProjectsPage() {
               );
             })}
           </div>
+        )}
+
+        {/* Pagination Bar */}
+        {!loading && filteredProjects.length > pageSize && (
+          <Pagination
+            currentPage={page}
+            totalItems={filteredProjects.length}
+            pageSize={pageSize}
+            onPageChange={setPage}
+            pageSizeOptions={[6, 12, 24]}
+            onPageSizeChange={size => {
+              setPageSize(size);
+              setPage(1);
+            }}
+            itemLabel="projects"
+          />
         )}
       </div>
 

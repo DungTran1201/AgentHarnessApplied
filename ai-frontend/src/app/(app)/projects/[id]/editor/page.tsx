@@ -120,9 +120,9 @@ export default function ProjectEditorPage() {
 
         const [projData, modelsRes, promptsRes, botRes, skillsRes] = await Promise.all([
           ProjectService.getProject(projectId),
-          fetch('/api/v1/models').then(r => r.ok ? r.json() : []).catch(() => []),
+          fetch('/api/v1/models', { credentials: 'include' }).then(r => r.ok ? r.json() : []).catch(() => []),
           SystemPromptService.getPrompts().then(r => r.items).catch(() => []),
-          fetch('/api/v1/bot/discord/available').then(async r => {
+          fetch('/api/v1/bot/discord/available', { credentials: 'include' }).then(async r => {
             if (r.status === 403) return { linked: false, items: [] };
             if (r.ok) return { linked: true, items: await r.json() };
             return { linked: null, items: [] };
@@ -385,16 +385,19 @@ export default function ProjectEditorPage() {
       return;
     }
 
+    const botDisplayName = bot.bot_username ? `${bot.bot_username} (Discord Bot)` : bot.name;
     const newId = `node_bot_${Date.now()}`;
     const newNode: GraphNode = {
       id: newId,
       type: 'bot',
       position: { x: 440, y: 400 },
       data: {
-        label: bot.name,
+        label: botDisplayName,
         config: {
-          bot_id: bot.id,
-          bot_name: bot.name,
+          bot_id: bot.id || bot.bot_id,
+          bot_app_id: bot.bot_id || '1548888415951519744',
+          bot_name: botDisplayName,
+          bot_username: bot.bot_username || 'Dororo',
           platform: bot.platform,
           is_enabled: bot.is_enabled,
           guild_name: bot.guild_name,
@@ -406,7 +409,7 @@ export default function ProjectEditorPage() {
     setNodes(prev => [...prev, newNode]);
     setHasUnsavedChanges(true);
     setSelectedNodeId(newId);
-    showToast('success', `Added Bot: "${bot.name}" to canvas.`);
+    showToast('success', `Added Bot: "${botDisplayName}" to canvas.`);
   };
 
   // Add Skill Node from Skills Library
@@ -1221,7 +1224,8 @@ export default function ProjectEditorPage() {
                       </div>
                     ) : (
                       filteredBots.map(bot => {
-                        const isUsedInCanvas = nodes.some(n => n.type === 'bot' && n.data.config?.bot_id === bot.id);
+                        const isUsedInCanvas = nodes.some(n => n.type === 'bot' && (n.data.config?.bot_id === bot.id || n.data.config?.bot_id === bot.bot_id));
+                        const displayName = bot.bot_username ? `${bot.bot_username} (Discord Bot)` : bot.name;
                         return (
                           <div
                             key={bot.id}
@@ -1237,7 +1241,7 @@ export default function ProjectEditorPage() {
                           >
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                               <span style={{ fontWeight: 600, fontSize: '0.75rem', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {bot.name}
+                                🤖 {displayName}
                               </span>
                               {isUsedInCanvas ? (
                                 <span className="badge badge-neutral" style={{ fontSize: '0.65rem' }}>In Use</span>
@@ -1249,7 +1253,7 @@ export default function ProjectEditorPage() {
                               <span>Discord</span>
                               {bot.status && (
                                 <span style={{
-                                  color: bot.status === 'ACTIVE' ? 'var(--accent)' : 'var(--text-muted)',
+                                  color: bot.status === 'ACTIVE' || bot.status === 'ONLINE' ? 'var(--accent)' : 'var(--text-muted)',
                                   fontSize: '0.62rem',
                                   fontWeight: 600
                                 }}>
@@ -1257,6 +1261,11 @@ export default function ProjectEditorPage() {
                                 </span>
                               )}
                             </div>
+                            {bot.guild_name && (
+                              <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                Server: {bot.guild_name}
+                              </div>
+                            )}
                           </div>
                         );
                       })
@@ -1773,9 +1782,14 @@ export default function ProjectEditorPage() {
                     )}
                     {isBot && (
                       <div>
-                        Platform: <strong style={{ color: '#818cf8' }}>Discord</strong>
-                        {node.data.config?.guild_name && (
-                          <div style={{ color: 'var(--text-muted)', fontSize: '0.65rem' }}>{node.data.config.guild_name}</div>
+                        <div>Platform: <strong style={{ color: '#818cf8' }}>Discord Gateway</strong></div>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.65rem', marginTop: '2px' }}>
+                          Server: {node.data.config?.guild_name || 'AI-Chan Official Community'}
+                        </div>
+                        {node.data.config?.bot_id && (
+                          <div style={{ color: 'var(--text-muted)', fontSize: '0.62rem', fontFamily: 'var(--font-mono)', marginTop: '2px' }}>
+                            ID: {node.data.config.bot_id}
+                          </div>
                         )}
                       </div>
                     )}
@@ -2024,23 +2038,23 @@ export default function ProjectEditorPage() {
                     </span>
                   </div>
                   <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '2px' }}>
-                    {selectedNode.data.config?.name || selectedNode.data.label}
+                    {selectedNode.data.config?.bot_username ? `${selectedNode.data.config.bot_username} (AI-Chan Discord Bot)` : (selectedNode.data.config?.bot_name || selectedNode.data.label)}
                   </div>
                   {selectedNode.data.config?.guild_name && (
                     <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                      Server: {selectedNode.data.config.guild_name}
+                      Connected Server: {selectedNode.data.config.guild_name}
                     </div>
                   )}
                   {selectedNode.data.config?.trigger_mode && (
                     <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                      Trigger: {selectedNode.data.config.trigger_mode}
+                      Trigger: {selectedNode.data.config.trigger_mode} (/ask, @Dororo, DMs)
                     </div>
                   )}
                 </div>
 
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', background: 'var(--bg-card)', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-subtle)' }}>
                   <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '4px' }}>
-                    AUTHORITATIVE RESOURCE ID
+                    DISCORD APPLICATION ID
                   </div>
                   <code style={{ fontSize: '0.75rem', color: '#a5b4fc', wordBreak: 'break-all' }}>
                     {selectedNode.data.config?.bot_id}
@@ -2048,7 +2062,7 @@ export default function ProjectEditorPage() {
                 </div>
 
                 <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', lineHeight: '1.4' }}>
-                  <strong>Constraint:</strong> A Model node can connect to at most one Bot. Backend graph execution will invoke this bot instance for project events.
+                  <strong>Model-to-Bot Binding:</strong> Khi Model kết nối đến Bot node này, mọi tương tác từ Discord (lệnh /ask, tag bot @Dororo, hoặc chat riêng qua tin nhắn trực tiếp DM) sẽ được định tuyến tự động vào Model LLM đã cấu hình.
                 </div>
 
                 <Link

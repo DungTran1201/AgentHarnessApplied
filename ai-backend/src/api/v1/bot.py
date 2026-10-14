@@ -59,12 +59,44 @@ class DiscordGuildItem(BaseModel):
 class AvailableBotItemResponse(BaseModel):
     id: str
     name: str
+    bot_username: Optional[str] = "Dororo"
+    bot_id: Optional[str] = None
     platform: str = "discord"
     is_enabled: bool
     guild_id: str
     guild_name: Optional[str] = None
     trigger_mode: str
     status: str
+    description: Optional[str] = None
+
+class ManagedBotItemResponse(BaseModel):
+    id: str
+    name: str
+    bot_username: str
+    bot_id: str
+    platform: str = "discord"
+    status: str = "ONLINE"
+    is_enabled: bool = True
+    guild_id: Optional[str] = None
+    guild_name: Optional[str] = None
+    connected_guilds: List[str] = []
+    active_model_id: Optional[str] = None
+    bound_project_id: Optional[str] = None
+    bound_project_name: Optional[str] = None
+    trigger_mode: str = "MENTION"
+    avatar: Optional[str] = None
+
+class BotProjectBindingResponse(BaseModel):
+    is_bound: bool
+    is_active: bool
+    bot: Optional[Dict[str, Any]] = None
+    project: Optional[Dict[str, Any]] = None
+    model: Optional[Dict[str, Any]] = None
+    system_prompt: Optional[Dict[str, Any]] = None
+    skills: List[Dict[str, Any]] = []
+    all_candidates: List[Dict[str, Any]] = []
+    candidate_count: int = 0
+    message: Optional[str] = None
 
 class TestDispatchPromptRequest(BaseModel):
     query: str = Field(min_length=1, max_length=2000, description="Câu hỏi hoặc lệnh gửi thử tới bot")
@@ -169,6 +201,164 @@ def verify_ed25519_signature(signature_hex: str, timestamp: str, body: bytes, pu
     except (InvalidSignature, ValueError, Exception):
         return False
 
+def find_bot_project_binding(user_id: str) -> Dict[str, Any]:
+    """
+    Quét các Project Graph của người dùng để xác định:
+    1. Bot đang được sử dụng trong Project nào.
+    2. Bot đang kết nối với Model LLM nào trong Project đó (cùng System Prompt & Skills).
+    Ưu tiên trả về Project đang ở trạng thái ACTIVE.
+    """
+    user_projects = query_all(
+        "SELECT id, name, description, status, target_model_id, is_valid, graph_data, updated_at "
+        "FROM projects WHERE user_id = ? AND status != 'DELETED' ORDER BY updated_at DESC",
+        (user_id,)
+    )
+    if not user_projects and user_id != "guest_user":
+        user_projects = query_all(
+            "SELECT id, name, description, status, target_model_id, is_valid, graph_data, updated_at "
+            "FROM projects WHERE user_id = 'guest_user' AND status != 'DELETED' ORDER BY updated_at DESC"
+        )
+
+    candidates = []
+    for p in user_projects:
+        g_raw = p.get("graph_data")
+        if not g_raw:
+            continue
+        try:
+            g = json.loads(g_raw)
+            nodes = g.get("nodes", [])
+            edges = g.get("edges", [])
+
+            bot_nodes = [n for n in nodes if n.get("type") == "bot"]
+            model_nodes = [n for n in nodes if n.get("type") == "model"]
+            prompt_nodes = [n for n in nodes if n.get("type") == "system_prompt"]
+            skill_nodes = [n for n in nodes if n.get("type") == "skill"]
+
+            if not bot_nodes or not model_nodes:
+                continue
+
+            m_node = model_nodes[0]
+            m_id = m_node.get("id")
+
+            # Kiểm tra xem có cạnh Model -> Bot không
+            has_bot_edge = any(
+                e.get("source") == m_id and any(b.get("id") == e.get("target") for b in bot_nodes)
+                for e in edges
+            )
+            if not has_bot_edge:
+                continue
+
+            # Model info
+            m_cfg = m_node.get("data", {}).get("config", {})
+            m_model_id = m_cfg.get("model_id") or p.get("target_model_id") or "gemini-3.8-flash"
+            model_row = query_one("SELECT id, name, provider, status FROM models WHERE id = ?", (m_model_id,))
+            if not model_row:
+                model_row = {"id": m_model_id, "name": m_model_id, "provider": "google", "status": "ACTIVE"}
+
+            # System prompt info
+            bound_prompt = None
+            for pr in prompt_nodes:
+                if any(e.get("source") == pr.get("id") and e.get("target") == m_id for e in edges):
+                    p_cfg = pr.get("data", {}).get("config", {})
+                    p_id = p_cfg.get("prompt_id")
+                    p_name = pr.get("data", {}).get("label") or "System Prompt"
+                    if p_id:
+                        p_db = query_one("SELECT id, name, content FROM system_prompts WHERE id = ?", (p_id,))
+                        if p_db:
+                            p_name = p_db["name"]
+                    bound_prompt = {"id": p_id or pr.get("id"), "name": p_name}
+                    break
+
+            # Skills info
+            bound_skills = []
+            for sk in skill_nodes:
+                if any(e.get("source") == m_id and e.get("target") == sk.get("id") for e in edges):
+                    s_cfg = sk.get("data", {}).get("config", {})
+                    s_id = s_cfg.get("skill_id") or sk.get("id")
+                    s_name = sk.get("data", {}).get("label") or "Skill"
+                    if s_id:
+                        s_db = query_one("SELECT id, name, description FROM skills WHERE id = ?", (s_id,))
+                        if s_db:
+                            s_name = s_db["name"]
+                    bound_skills.append({"id": s_id, "name": s_name})
+
+            b_node = bot_nodes[0]
+            b_cfg = b_node.get("data", {}).get("config", {})
+            b_label = b_node.get("data", {}).get("label") or "Dororo (AI-Chan Discord Bot)"
+            bot_info = {
+                "node_id": b_node.get("id"),
+                "bot_id": b_cfg.get("bot_id") or b_cfg.get("bot_app_id") or "bot_dororo",
+                "name": b_label,
+                "server": b_cfg.get("guild_name") or "Direct Message / Server"
+            }
+
+            candidates.append({
+                "bot": bot_info,
+                "project": {
+                    "id": p["id"],
+                    "name": p["name"],
+                    "description": p.get("description"),
+                    "status": p["status"],
+                    "is_valid": bool(p.get("is_valid")),
+                    "updated_at": p.get("updated_at")
+                },
+                "model": {
+                    "id": model_row["id"],
+                    "name": model_row["name"],
+                    "provider": model_row.get("provider", "google"),
+                    "status": model_row.get("status", "ACTIVE"),
+                    "temperature": m_cfg.get("temperature", 0.7),
+                    "max_tokens": m_cfg.get("max_tokens", 2048)
+                },
+                "system_prompt": bound_prompt,
+                "skills": bound_skills
+            })
+        except Exception:
+            continue
+
+    active_candidates = [c for c in candidates if c["project"]["status"] == "ACTIVE"]
+    if active_candidates:
+        selected = active_candidates[0]
+        return {
+            "is_bound": True,
+            "is_active": True,
+            "bot": selected.get("bot"),
+            "project": selected["project"],
+            "model": selected["model"],
+            "system_prompt": selected["system_prompt"],
+            "skills": selected["skills"],
+            "all_candidates": [c["project"] for c in candidates],
+            "candidate_count": len(candidates),
+            "message": f"Bot đang được kết nối với mô hình '{selected['model']['name']}' thông qua project đang hoạt động '{selected['project']['name']}'."
+        }
+    elif candidates:
+        selected = candidates[0]
+        return {
+            "is_bound": True,
+            "is_active": False,
+            "bot": selected.get("bot"),
+            "project": selected["project"],
+            "model": selected["model"],
+            "system_prompt": selected["system_prompt"],
+            "skills": selected["skills"],
+            "all_candidates": [c["project"] for c in candidates],
+            "candidate_count": len(candidates),
+            "message": f"Bot được gắn trong project '{selected['project']['name']}', nhưng project này đang ở trạng thái {selected['project']['status']} (Paused). Kích hoạt project để xử lý tin nhắn Discord."
+        }
+    else:
+        return {
+            "is_bound": False,
+            "is_active": False,
+            "bot": None,
+            "project": None,
+            "model": None,
+            "system_prompt": None,
+            "skills": [],
+            "all_candidates": [],
+            "candidate_count": 0,
+            "message": "Bot chưa được gắn vào Project Graph nào. Vui lòng mở Project Editor và nối node Model LLM với Bot node."
+        }
+
 # ==============================================================================
 # API ENDPOINTS
 # ==============================================================================
@@ -265,20 +455,80 @@ async def list_available_bots(current_user: dict = Depends(get_current_user)):
     user_id = current_user["id"]
     cfg = get_or_create_bot_config(user_id)
 
-    guild_name = cfg.get("guild_name")
-    bot_name = f"{guild_name} Bot" if guild_name else "AI-Chan Discord Bot"
+    guild_name = cfg.get("guild_name") or "AI-Chan Official Community"
+    bot_username = "Dororo"
+    bot_display_name = f"{bot_username} (Discord Bot)"
 
     bot_item = {
         "id": cfg["id"],
-        "name": bot_name,
+        "name": bot_display_name,
+        "bot_username": bot_username,
+        "bot_id": str(settings.DISCORD_CLIENT_ID or "1548888415951519744"),
         "platform": "discord",
         "is_enabled": bool(cfg.get("is_enabled", 1)),
         "guild_id": cfg.get("guild_id") or "",
         "guild_name": guild_name,
         "trigger_mode": cfg.get("trigger_mode") or "MENTION",
-        "status": "ACTIVE" if cfg.get("is_enabled", 1) else "INACTIVE"
+        "status": "ACTIVE" if cfg.get("is_enabled", 1) else "INACTIVE",
+        "description": f"Active on: {guild_name}"
     }
     return [bot_item]
+
+@bot_router.get("/binding", response_model=BotProjectBindingResponse)
+async def get_bot_project_binding(current_user: dict = Depends(get_current_user)):
+    """
+    Xác định Bot đang được sử dụng trong project nào và nối với model nào để gọi.
+    Loại bỏ cấu hình mô hình tĩnh trực tiếp trong trang quản lý bot, phản ánh pipeline graph thực tế.
+    """
+    check_discord_linked(current_user)
+    user_id = current_user["id"]
+    return find_bot_project_binding(user_id)
+
+@bot_router.get("/bots", response_model=List[ManagedBotItemResponse])
+async def list_managed_bots(current_user: dict = Depends(get_current_user)):
+    """
+    Retrieves the list of manageable Bot entities for the user (not just server guilds).
+    Dynamically reports bound project and connected model from Project Graphs.
+    """
+    check_discord_linked(current_user)
+    user_id = current_user["id"]
+    cfg = get_or_create_bot_config(user_id)
+    binding = find_bot_project_binding(user_id)
+
+    guild_name = cfg.get("guild_name") or "AI-Chan Official Community"
+    
+    active_model_display = "No model connected"
+    bound_proj_id = None
+    bound_proj_name = None
+    bot_status = "PAUSED"
+    
+    if binding.get("is_bound") and binding.get("model"):
+        active_model_display = binding["model"]["name"]
+        bound_proj_id = binding["project"]["id"]
+        bound_proj_name = binding["project"]["name"]
+        bot_status = "ONLINE" if (cfg.get("is_enabled", 1) and binding.get("is_active")) else "PAUSED"
+    elif cfg.get("is_enabled", 1):
+        bot_status = "ONLINE"
+        active_model_display = cfg.get("active_model_id") or "gemini-3.8-flash"
+
+    bot_entry = {
+        "id": cfg["id"],
+        "name": "Dororo (AI-Chan Discord Bot)",
+        "bot_username": "Dororo",
+        "bot_id": str(settings.DISCORD_CLIENT_ID or "1548888415951519744"),
+        "platform": "discord",
+        "status": bot_status,
+        "is_enabled": bool(cfg.get("is_enabled", 1)),
+        "guild_id": cfg.get("guild_id") or "",
+        "guild_name": guild_name,
+        "connected_guilds": [guild_name, "Developer Engineering Guild"],
+        "active_model_id": active_model_display,
+        "bound_project_id": bound_proj_id,
+        "bound_project_name": bound_proj_name,
+        "trigger_mode": cfg.get("trigger_mode") or "MENTION",
+        "avatar": "https://cdn.discordapp.com/embed/avatars/0.png"
+    }
+    return [bot_entry]
 
 @bot_router.get("/guilds", response_model=List[DiscordGuildItem])
 async def list_manageable_discord_guilds(current_user: dict = Depends(get_current_user)):
@@ -372,8 +622,24 @@ async def test_dispatch_discord_prompt(
             detail="Tài khoản của bạn đã sử dụng hết hạn ngạch token hằng ngày trên hệ thống AI-Chan. Vui lòng quay lại vào ngày mai (BR-032)."
         )
 
-    # 3. Định tuyến mô hình hoạt động & Cơ chế Failover tự động (BR-033, TC-042)
-    candidate_model_id = req.model_id or cfg["active_model_id"]
+    # 3. Định tuyến mô hình hoạt động: Ưu tiên lấy từ Project Graph liên kết với Bot
+    binding = find_bot_project_binding(user_id)
+    candidate_model_id = req.model_id
+    persona = cfg.get("system_prompt") or "You are AI-Chan assistant."
+    max_tokens = cfg.get("max_tokens_per_response", 1000)
+    dispatched_project_name = None
+
+    if not candidate_model_id and binding.get("is_bound") and binding.get("model"):
+        candidate_model_id = binding["model"]["id"]
+        dispatched_project_name = binding["project"]["name"]
+        if binding.get("system_prompt"):
+            persona = binding["system_prompt"].get("name") or persona
+        if binding["model"].get("max_tokens"):
+            max_tokens = binding["model"]["max_tokens"]
+
+    if not candidate_model_id:
+        candidate_model_id = cfg.get("active_model_id")
+
     model_row = None
     is_fallback = False
 
@@ -395,15 +661,13 @@ async def test_dispatch_discord_prompt(
 
     # 4. Giả lập / Thực thi suy luận LLM
     start_time = time.perf_counter()
-    persona = cfg.get("system_prompt") or "You are AI-Chan assistant."
-    max_tokens = cfg.get("max_tokens_per_response", 1000)
 
-    # Sinh nội dung phản hồi mô phỏng thông minh
+    project_info_line = f" (Định tuyến qua Project: `{dispatched_project_name}`)" if dispatched_project_name else ""
     reply_text = (
-        f"🤖 **[AI-Chan Discord Bot]** (Mô hình: `{model_row['name']}`)\n\n"
+        f"🤖 **[AI-Chan Discord Bot]** (Mô hình: `{model_row['name']}`){project_info_line}\n\n"
         f"Chào bạn! Tôi đã nhận được tin nhắn từ Discord:\n"
         f"> *\"{req.query}\"*\n\n"
-        f"Theo định hình nhân cách (*\"{persona[:60]}...\"*), tôi đã sẵn sàng hỗ trợ bạn trên máy chủ Discord! "
+        f"Theo định hình từ Project Graph (*\"{persona[:60]}...\"*), tôi đã sẵn sàng hỗ trợ bạn trên máy chủ Discord! "
         f"Câu trả lời được tối ưu trần tối đa {max_tokens} tokens."
     )
 
@@ -582,6 +846,7 @@ async def execute_antigravity_prompt(prompt_req: PromptRequest, req: Request) ->
     # 2. Resolve Project Graph & Check for Ambiguous Routes
     explicit_project_id = prompt_req.metadata.get("project_id") if prompt_req.metadata else None
     bot_id_filter = prompt_req.metadata.get("bot_id") if prompt_req.metadata else None
+    guild_id_filter = prompt_req.metadata.get("guild_id") if prompt_req.metadata else None
 
     if explicit_project_id:
         proj = query_one(
@@ -593,17 +858,27 @@ async def execute_antigravity_prompt(prompt_req: PromptRequest, req: Request) ->
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Project '{explicit_project_id}' not found or not accessible."
             )
+        if proj.get("status") != "ACTIVE":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Project '{proj['name']}' is currently inactive ({proj['status']}). Activate the project in AI-Chan before executing bot workflows."
+            )
         resolved_proj = proj
     else:
-        # Search all active projects belonging to this user
-        active_projects = query_all(
-            "SELECT * FROM projects WHERE user_id = ? AND status = 'ACTIVE'",
+        # Fetch non-deleted projects belonging to this user
+        user_projects = query_all(
+            "SELECT * FROM projects WHERE user_id = ? AND status != 'DELETED'",
             (user_id,)
         )
-        
-        # Filter candidate projects that have a Bot node bound in the graph
+        if not user_projects and user_id != "guest_user":
+            # If user has no projects yet, check for unassigned guest_user projects
+            user_projects = query_all(
+                "SELECT * FROM projects WHERE user_id = 'guest_user' AND status != 'DELETED'"
+            )
+
+        # Filter candidate projects that have a Bot node bound to Model in the graph
         candidate_projects = []
-        for p in active_projects:
+        for p in user_projects:
             g_raw = p.get("graph_data")
             if not g_raw:
                 continue
@@ -625,16 +900,39 @@ async def execute_antigravity_prompt(prompt_req: PromptRequest, req: Request) ->
                 if not has_bot_binding:
                     continue
 
+                # Match by explicit bot_id filter or guild_id if provided
                 if bot_id_filter:
-                    matched_bots = [b for b in bot_nodes if b.get("data", {}).get("config", {}).get("bot_id") == bot_id_filter]
-                    if matched_bots:
-                        candidate_projects.append(p)
-                else:
-                    candidate_projects.append(p)
+                    matched_bots = [
+                        b for b in bot_nodes
+                        if b.get("data", {}).get("config", {}).get("bot_id") in (bot_id_filter, str(bot_id_filter))
+                        or str(bot_id_filter) == str(settings.DISCORD_CLIENT_ID or "1548888415951519744")
+                        or b.get("data", {}).get("config", {}).get("platform") == "discord"
+                        or b.get("data", {}).get("platform") == "discord"
+                    ]
+                    if not matched_bots:
+                        continue
+                elif guild_id_filter:
+                    # Match bot config corresponding to guild_id
+                    bot_refs = [
+                        b.get("data", {}).get("config", {}).get("bot_id")
+                        for b in bot_nodes
+                        if b.get("data", {}).get("config", {}).get("bot_id")
+                    ]
+                    guild_match = False
+                    for b_ref in bot_refs:
+                        b_cfg = query_one("SELECT id, guild_id FROM discord_bot_configs WHERE id = ?", (b_ref,))
+                        if b_cfg and str(b_cfg.get("guild_id")) == str(guild_id_filter):
+                            guild_match = True
+                            break
+                    if not guild_match:
+                        continue
+
+                candidate_projects.append(p)
             except Exception:
                 continue
 
         if len(candidate_projects) == 0:
+            active_projects = [p for p in user_projects if p.get("status") == "ACTIVE"]
             if len(active_projects) == 1:
                 resolved_proj = active_projects[0]
             else:
@@ -642,14 +940,29 @@ async def execute_antigravity_prompt(prompt_req: PromptRequest, req: Request) ->
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="No active project with a bound Discord Bot was found for this user."
                 )
-        elif len(candidate_projects) > 1:
-            # Ambiguous Bot execution target rule (Section 4.2 & Section 8)
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="The Discord bot cannot determine which model to execute. Configure an explicit route before running this workflow."
-            )
         else:
-            resolved_proj = candidate_projects[0]
+            # Check if matching candidate projects are inactive
+            active_candidates = [p for p in candidate_projects if p.get("status") == "ACTIVE"]
+            if len(active_candidates) == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="The assigned project is currently inactive (STOP). Please activate the project in AI-Chan before executing bot workflows."
+                )
+            elif len(active_candidates) > 1:
+                # Ambiguous Bot execution target rule
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="The Discord bot cannot determine which model to execute. Configure an explicit route before running this workflow."
+                )
+            else:
+                resolved_proj = active_candidates[0]
+
+        # Reassign guest project to authenticated user if resolved
+        if resolved_proj.get("user_id") == "guest_user" and user_id != "guest_user":
+            execute_commit(
+                "UPDATE projects SET user_id = ? WHERE id = ? AND user_id = 'guest_user'",
+                (user_id, resolved_proj["id"])
+            )
 
     # 3. Parse Graph and Model Node Configuration
     g_data = {}
@@ -764,7 +1077,44 @@ async def execute_antigravity_prompt(prompt_req: PromptRequest, req: Request) ->
             detail="Combined prompt and skill context exceeds maximum context limit."
         )
 
-    # 7. Execute AI Orchestration
+    # 7. Resolve Conversation Context & Multi-turn History (BR-005, UC-BOT-003)
+    bot_nodes = [n for n in nodes if n.get("type") == "bot"]
+    sync_to_web = True
+    bot_name = "Discord Bot"
+    if bot_nodes:
+        b_cfg = bot_nodes[0].get("data", {}).get("config", {})
+        ref_bot_id = b_cfg.get("bot_id")
+        if ref_bot_id:
+            b_row = query_one("SELECT * FROM discord_bot_configs WHERE id = ?", (ref_bot_id,))
+            if not b_row:
+                b_row = query_one("SELECT * FROM discord_bot_configs WHERE user_id = ?", (user_id,))
+            if b_row:
+                sync_to_web = bool(b_row.get("sync_to_web", 1))
+                bot_name = b_row.get("guild_name") or b_row.get("id") or "Discord Bot"
+
+    conv_title = f"Discord Bot: {bot_name}"
+    existing_conv = query_one(
+        "SELECT id FROM conversations WHERE user_id = ? AND project_id = ? AND title = ?",
+        (user_id, resolved_proj["id"], conv_title)
+    )
+    conv_id = None
+    history = []
+    if existing_conv:
+        conv_id = existing_conv["id"]
+        # Fetch last 10 messages for conversational context
+        past_msgs = query_all(
+            "SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY created_at ASC LIMIT 10",
+            (conv_id,)
+        )
+        history = [{"role": m["role"], "content": m["content"]} for m in past_msgs]
+    elif sync_to_web:
+        conv_id = f"conv_{uuid.uuid4().hex}"
+        execute_commit(
+            "INSERT INTO conversations (id, user_id, project_id, title) VALUES (?, ?, ?, ?)",
+            (conv_id, user_id, resolved_proj["id"], conv_title)
+        )
+
+    # 8. Execute AI Orchestration
     from llm.agent import chat_agent
     accumulated_tokens = []
     final_model_used = effective_model
@@ -773,7 +1123,7 @@ async def execute_antigravity_prompt(prompt_req: PromptRequest, req: Request) ->
     try:
         async for event in chat_agent.astream_agent(
             prompt=prompt_req.prompt,
-            history=[],
+            history=history,
             model_override=effective_model,
             system_instruction=combined_instruction if combined_instruction else None
         ):
@@ -802,7 +1152,7 @@ async def execute_antigravity_prompt(prompt_req: PromptRequest, req: Request) ->
     if not reply_text:
         reply_text = "I received your prompt, but no response was generated."
 
-    # 8. Token Accounting, Quota Consumption & Metric Logging
+    # 9. Token Accounting, Quota Consumption & Metric Logging
     prompt_tokens = max(10, len(prompt_req.prompt) // 4 + len(combined_instruction) // 4)
     completion_tokens = max(10, len(reply_text) // 4)
     total_tokens = prompt_tokens + completion_tokens
@@ -821,34 +1171,8 @@ async def execute_antigravity_prompt(prompt_req: PromptRequest, req: Request) ->
         total_tokens=total_tokens
     )
 
-    # 9. Sync to Web Conversation if enabled
-    bot_nodes = [n for n in nodes if n.get("type") == "bot"]
-    sync_to_web = True
-    bot_name = "Discord Bot"
-    if bot_nodes:
-        b_cfg = bot_nodes[0].get("data", {}).get("config", {})
-        ref_bot_id = b_cfg.get("bot_id")
-        if ref_bot_id:
-            b_row = query_one("SELECT * FROM discord_bot_configs WHERE id = ?", (ref_bot_id,))
-            if b_row:
-                sync_to_web = bool(b_row.get("sync_to_web", 1))
-                bot_name = b_row.get("guild_name") or b_row.get("id") or "Discord Bot"
-
-    if sync_to_web:
-        conv_title = f"Discord Bot: {bot_name}"
-        existing_conv = query_one(
-            "SELECT id FROM conversations WHERE user_id = ? AND title = ?",
-            (user_id, conv_title)
-        )
-        if existing_conv:
-            conv_id = existing_conv["id"]
-        else:
-            conv_id = f"conv_{uuid.uuid4().hex}"
-            execute_commit(
-                "INSERT INTO conversations (id, user_id, project_id, title) VALUES (?, ?, ?, ?)",
-                (conv_id, user_id, resolved_proj["id"], conv_title)
-            )
-
+    # 10. Persist Conversation Messages
+    if sync_to_web and conv_id:
         execute_commit(
             "INSERT INTO messages (id, conversation_id, role, content, source) VALUES (?, ?, 'user', ?, 'DISCORD')",
             (f"msg_{uuid.uuid4().hex}", conv_id, prompt_req.prompt)
