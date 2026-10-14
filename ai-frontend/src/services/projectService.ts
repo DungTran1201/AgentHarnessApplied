@@ -27,7 +27,7 @@ export class ProjectService {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(err.detail || err.message || 'Không thể tải danh sách project');
+      throw new Error(err.detail || err.message || 'Failed to fetch projects.');
     }
 
     return res.json();
@@ -41,7 +41,7 @@ export class ProjectService {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(err.detail || err.message || 'Không tìm thấy project');
+      throw new Error(err.detail || err.message || 'Project not found.');
     }
 
     return res.json();
@@ -56,7 +56,7 @@ export class ProjectService {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(err.detail || err.message || 'Không thể tạo project');
+      throw new Error(err.detail || err.message || 'Failed to create project.');
     }
 
     return res.json();
@@ -71,7 +71,7 @@ export class ProjectService {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(err.detail || err.message || 'Không thể cập nhật project');
+      throw new Error(err.detail || err.message || 'Failed to update project.');
     }
 
     return res.json();
@@ -88,7 +88,7 @@ export class ProjectService {
     if (!res.ok) {
       const msg = typeof data.detail === 'object' && data.detail.errors
         ? data.detail.errors.join('\n')
-        : (data.detail || data.message || 'Lưu graph thất bại');
+        : (data.detail || data.message || 'Failed to save graph.');
       throw new Error(msg);
     }
 
@@ -105,7 +105,7 @@ export class ProjectService {
     if (!res.ok) {
       const msg = typeof data.detail === 'object' && data.detail.message
         ? data.detail.message
-        : (data.detail || data.message || 'Không thể kích hoạt project');
+        : (data.detail || data.message || 'Failed to activate project.');
       throw new Error(msg);
     }
 
@@ -120,7 +120,7 @@ export class ProjectService {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(err.detail || err.message || 'Không thể tạm dừng project');
+      throw new Error(err.detail || err.message || 'Failed to stop project.');
     }
 
     return res.json();
@@ -134,7 +134,7 @@ export class ProjectService {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(err.detail || err.message || 'Không thể vô hiệu hóa project');
+      throw new Error(err.detail || err.message || 'Failed to deactivate project.');
     }
 
     return res.json();
@@ -148,7 +148,7 @@ export class ProjectService {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(err.detail || err.message || 'Không thể xóa project');
+      throw new Error(err.detail || err.message || 'Failed to delete project.');
     }
 
     return res.json();
@@ -204,12 +204,12 @@ export class ProjectService {
         const errJson = await res.json().catch(() => ({ detail: res.statusText }));
         const msg = typeof errJson.detail === 'object' && errJson.detail.message
           ? errJson.detail.message
-          : (errJson.detail || errJson.message || 'Lỗi khi gửi tin nhắn');
+          : (errJson.detail || errJson.message || 'Failed to send message.');
         throw new Error(msg);
       }
 
       if (!res.body) {
-        throw new Error('ReadableStream không được hỗ trợ');
+        throw new Error('ReadableStream is not supported.');
       }
 
       const reader = res.body.getReader();
@@ -243,14 +243,14 @@ export class ProjectService {
           try {
             const data = JSON.parse(dataStr);
             if (eventType === 'error' || data.status === 'error') {
-              onError(new Error(data.message || 'Lỗi xử lý luồng AI'));
+              onError(new Error(data.message || 'AI streaming error occurred.'));
               return;
             }
 
             const rawToken = data.token ?? data.content;
             if (rawToken) {
               let cleanToken = rawToken;
-              // Phòng vệ nếu chuỗi chứa tiền tố SSE
+              // Guard against SSE prefix in token stream
               if (typeof cleanToken === 'string' && (cleanToken.startsWith('event:') || cleanToken.startsWith('data:'))) {
                 const subMatch = cleanToken.match(/data:\s*({.*})/);
                 if (subMatch) {
@@ -269,7 +269,7 @@ export class ProjectService {
               onDone(data);
             }
           } catch {
-            // Bỏ qua lỗi parse JSON cho các dòng không phải payload
+            // Ignore JSON parse errors for non-payload lines
           }
         }
       }

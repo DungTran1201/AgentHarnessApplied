@@ -23,8 +23,8 @@ function getAuthHeaders(): HeadersInit {
 
 export class SystemPromptService {
   /**
-   * Lấy danh sách System Prompt của người dùng hiện tại (hoặc guest_user).
-   * Chỉ trả về metadata và content_length.
+   * Fetch system prompts for the current user (or guest_user).
+   * Returns metadata and content_length.
    */
   static async getPrompts(query?: string, sort: string = 'updated_desc'): Promise<SystemPromptListResponse> {
     const params = new URLSearchParams({ sort });
@@ -40,14 +40,14 @@ export class SystemPromptService {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
       const msg = typeof err.detail === 'object' ? err.detail.message : (err.detail || err.message);
-      throw new Error(msg || 'Không thể tải danh sách System Prompt');
+      throw new Error(msg || 'Failed to fetch system prompts.');
     }
 
     return res.json();
   }
 
   /**
-   * Lấy thông tin chi tiết một System Prompt (bao gồm full content).
+   * Fetch detailed system prompt information (including full content).
    */
   static async getPrompt(id: string): Promise<SystemPromptDetail> {
     const res = await fetch(`${BASE_URL}/system-prompts/${encodeURIComponent(id)}`, {
@@ -58,14 +58,14 @@ export class SystemPromptService {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
       const msg = typeof err.detail === 'object' ? err.detail.message : (err.detail || err.message);
-      throw new Error(msg || 'Không tìm thấy System Prompt hoặc không có quyền truy cập');
+      throw new Error(msg || 'System prompt not found or access denied.');
     }
 
     return res.json();
   }
 
   /**
-   * Tạo mới một System Prompt.
+   * Create a new system prompt.
    */
   static async createPrompt(data: SystemPromptCreateRequest): Promise<SystemPromptDetail> {
     const res = await fetch(`${BASE_URL}/system-prompts`, {
@@ -77,14 +77,14 @@ export class SystemPromptService {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
       const msg = typeof err.detail === 'object' ? err.detail.message : (err.detail || err.message);
-      throw new Error(msg || 'Không thể tạo System Prompt');
+      throw new Error(msg || 'Failed to create system prompt.');
     }
 
     return res.json();
   }
 
   /**
-   * Cập nhật thông tin một System Prompt.
+   * Update an existing system prompt.
    */
   static async updatePrompt(id: string, data: SystemPromptUpdateRequest): Promise<SystemPromptDetail> {
     const res = await fetch(`${BASE_URL}/system-prompts/${encodeURIComponent(id)}`, {
@@ -96,14 +96,14 @@ export class SystemPromptService {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
       const msg = typeof err.detail === 'object' ? err.detail.message : (err.detail || err.message);
-      throw new Error(msg || 'Không thể cập nhật System Prompt');
+      throw new Error(msg || 'Failed to update system prompt.');
     }
 
     return res.json();
   }
 
   /**
-   * Xóa một System Prompt khỏi cơ sở dữ liệu.
+   * Delete a system prompt from the database.
    */
   static async deletePrompt(id: string): Promise<{ success: boolean; message: string; deleted_id: string }> {
     const res = await fetch(`${BASE_URL}/system-prompts/${encodeURIComponent(id)}`, {
@@ -114,14 +114,14 @@ export class SystemPromptService {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
       const msg = typeof err.detail === 'object' ? err.detail.message : (err.detail || err.message);
-      throw new Error(msg || 'Không thể xóa System Prompt');
+      throw new Error(msg || 'Failed to delete system prompt.');
     }
 
     return res.json();
   }
 
   /**
-   * Nhân bản một System Prompt có sẵn.
+   * Duplicate/clone an existing system prompt.
    */
   static async clonePrompt(id: string): Promise<SystemPromptDetail> {
     const res = await fetch(`${BASE_URL}/system-prompts/${encodeURIComponent(id)}/clone`, {
@@ -132,7 +132,7 @@ export class SystemPromptService {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
       const msg = typeof err.detail === 'object' ? err.detail.message : (err.detail || err.message);
-      throw new Error(msg || 'Không thể nhân bản System Prompt');
+      throw new Error(msg || 'Failed to duplicate system prompt.');
     }
 
     return res.json();

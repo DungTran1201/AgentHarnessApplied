@@ -5,18 +5,18 @@ import { useEffect } from 'react';
 /**
  * HydrationGuard Component
  *
- * Nhiệm vụ:
- * 1. Làm sạch các thuộc tính do Browser Extension (Bitdefender TrafficLight, Urban VPN, v.v.)
- *    tự động chèn vào DOM (bis_skin_checked, bis_register, cz-shortcut-listen).
- * 2. Giám sát liên tục qua MutationObserver trong suốt vòng đời SPA để loại bỏ ngay lập tức.
- * 3. Chặn các log cảnh báo hydration mismatch do extension gây ra tại console.error,
- *    ngăn chặn Next.js Dev Overlay che màn hình làm việc của lập trình viên.
+ * Purpose:
+ * 1. Clean attributes injected by browser extensions (Bitdefender TrafficLight, Urban VPN, etc.)
+ *    into the DOM (bis_skin_checked, bis_register, cz-shortcut-listen).
+ * 2. Continuously monitor via MutationObserver during the SPA lifecycle to remove them immediately.
+ * 3. Intercept console.error to filter extension-caused hydration mismatch warnings,
+ *    preventing the Next.js dev overlay from obstructing developer view.
  */
 export default function HydrationGuard() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    // 1. Dọn dẹp thuộc tính extension hiện có trong DOM
+    // 1. Clean existing extension attributes in DOM
     const cleanAttributes = () => {
       try {
         const elements = document.querySelectorAll('[bis_skin_checked], [bis_register]');
@@ -29,7 +29,7 @@ export default function HydrationGuard() {
 
     cleanAttributes();
 
-    // 2. Thiết lập MutationObserver để tự động xóa thuộc tính khi extension cố tình inject vào
+    // 2. Set up MutationObserver to automatically strip injected extension attributes
     let observer: MutationObserver | null = null;
     try {
       observer = new MutationObserver((mutations) => {
@@ -64,7 +64,7 @@ export default function HydrationGuard() {
       }
     } catch {}
 
-    // 3. Intercept console.error để lọc các cảnh báo hydration mismatch từ extension
+    // 3. Intercept console.error to filter extension hydration mismatch warnings
     const originalConsoleError = console.error;
     console.error = (...args: any[]) => {
       const errorString = args
@@ -76,7 +76,7 @@ export default function HydrationGuard() {
         errorString.includes('bis_register') ||
         errorString.includes('cz-shortcut-listen')
       ) {
-        return; // Bỏ qua thông báo lỗi gây ra bởi extension
+        return; // Ignore hydration mismatch noise injected by browser extensions
       }
 
       originalConsoleError.apply(console, args);

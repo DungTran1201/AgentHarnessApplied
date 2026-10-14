@@ -5,7 +5,7 @@ import HydrationGuard from '@/components/HydrationGuard';
 
 export const metadata: Metadata = {
   title: 'AI-Chan — Virtual Assistant Platform',
-  description: 'Trợ lý ảo AI-Chan thông minh, giao tiếp thời gian thực với phản hồi dòng chảy SSE, hỗ trợ lập trình, tư vấn và phân tích đa lĩnh vực.',
+  description: 'Intelligent AI assistant platform with real-time SSE streaming, workflow projects, and extensible prompt engineering tools.',
 };
 
 export const viewport: Viewport = {
@@ -14,13 +14,13 @@ export const viewport: Viewport = {
   maximumScale: 1,
 };
 
-// Inline script để triệt tiêu các thuộc tính do Browser Extension (Bitdefender, Urban VPN, v.v.) tự động chèn vào DOM (bis_skin_checked, bis_register, ...)
-// trước khi React thực hiện Hydration, đồng thời lọc cảnh báo hydration mismatch từ extension trong console.
+// Inline script to remove attributes injected by browser extensions (Bitdefender, Urban VPN, etc.)
+// before React hydration, and filter extension hydration mismatch warnings in the console.
 const extensionHydrationFixScript = `
 (function() {
   if (typeof window === 'undefined') return;
 
-  // 1. Lọc bỏ thông báo lỗi hydration mismatch của console.error nếu bắt nguồn từ extension attributes
+  // 1. Filter out console.error hydration mismatch warnings originating from extension attributes
   var origError = console.error;
   console.error = function() {
     var args = Array.prototype.slice.call(arguments);
@@ -33,7 +33,7 @@ const extensionHydrationFixScript = `
     return origError.apply(console, arguments);
   };
 
-  // 2. Dọn sạch thuộc tính extension trên các node DOM
+  // 2. Clean extension attributes on DOM nodes
   function cleanAttr(node) {
     if (node && node.nodeType === 1) {
       if (node.hasAttribute('bis_skin_checked')) node.removeAttribute('bis_skin_checked');
@@ -41,7 +41,7 @@ const extensionHydrationFixScript = `
     }
   }
 
-  // 3. Sử dụng MutationObserver để tự động gỡ bỏ thuộc tính ngay khi extension vừa inject vào DOM
+  // 3. Use MutationObserver to remove extension attributes as soon as injected
   try {
     var observer = new MutationObserver(function(mutations) {
       for (var i = 0; i < mutations.length; i++) {
@@ -83,7 +83,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="vi" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <head>
         <script
           dangerouslySetInnerHTML={{

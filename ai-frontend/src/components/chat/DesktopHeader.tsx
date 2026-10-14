@@ -82,7 +82,7 @@ export default function DesktopHeader({ currentUser, onLogout }: DesktopHeaderPr
               }}
               onMouseEnter={e => {
                 e.currentTarget.style.borderColor = 'var(--border-strong)';
-                e.currentTarget.style.boxShadow = '0 0 0 2px rgba(124,133,243,0.2)';
+                e.currentTarget.style.boxShadow = '0 0 0 2px var(--accent-subtle)';
               }}
               onMouseLeave={e => {
                 e.currentTarget.style.borderColor = 'var(--border-default)';

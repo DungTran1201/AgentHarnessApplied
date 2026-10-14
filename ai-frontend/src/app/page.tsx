@@ -2,10 +2,11 @@
 
 import React from 'react';
 import Link from 'next/link';
+import Icon from '@/components/ui/Icon';
 
 export default function HomePage() {
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#0E0F1B', color: 'var(--text-primary)' }}>
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--bg-base)', color: 'var(--text-primary)' }}>
       {/* Navigation Header */}
       <header
         style={{
@@ -14,7 +15,7 @@ export default function HomePage() {
           alignItems: 'center',
           padding: '1rem 2rem',
           borderBottom: '1px solid var(--border-subtle)',
-          background: 'rgba(14, 15, 27, 0.85)',
+          background: 'var(--bg-surface)',
           backdropFilter: 'blur(16px)',
           position: 'sticky',
           top: 0,
@@ -24,130 +25,78 @@ export default function HomePage() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           <div
             style={{
-              width: '36px',
-              height: '36px',
-              borderRadius: '10px',
-              background: 'var(--accent-gradient)',
+              width: '32px',
+              height: '32px',
+              borderRadius: '8px',
+              background: 'var(--accent)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontSize: '1.2rem',
-              boxShadow: 'var(--accent-glow)',
+              color: '#000',
+              fontWeight: 700,
+              fontSize: '1rem',
             }}
           >
-            ✨
+            AI
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
-            <span
-              style={{
-                fontSize: '1.25rem',
-                fontWeight: 700,
-                letterSpacing: '-0.02em',
-                background: 'linear-gradient(135deg, #FFFFFF 0%, #C4B5FD 100%)',
-                WebkitBackgroundClip: 'text',
-                WebkitTextFillColor: 'transparent',
-              }}
-            >
-              AI-Chan
-            </span>
-          </div>
+          <span
+            style={{
+              fontSize: '1.15rem',
+              fontWeight: 700,
+              letterSpacing: '-0.02em',
+              color: 'var(--text-primary)'
+            }}
+          >
+            AI-Chan
+          </span>
         </div>
 
-        <nav style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+        <nav style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
           <Link
             href="/chat"
-            style={{
-              color: 'var(--accent)',
-              textDecoration: 'none',
-              fontSize: '0.88rem',
-              fontWeight: 600,
-              padding: '8px 16px',
-              borderRadius: 'var(--radius-sm)',
-              background: 'rgba(167, 139, 250, 0.12)',
-              border: '1px solid rgba(167, 139, 250, 0.25)',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              boxShadow: 'var(--accent-glow-sm)',
-            }}
+            className="btn btn-secondary"
+            style={{ fontSize: '0.85rem', padding: '6px 14px' }}
           >
-            <span>💬</span>
-            <span>Workspace & Companion</span>
+            <Icon name="chat" size={14} />
+            <span>Chat</span>
           </Link>
           <Link
             href="/projects"
-            style={{
-              color: 'var(--text-secondary)',
-              textDecoration: 'none',
-              fontSize: '0.88rem',
-              fontWeight: 500,
-              padding: '8px 14px',
-              borderRadius: 'var(--radius-sm)',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-            }}
+            className="btn btn-secondary"
+            style={{ fontSize: '0.85rem', padding: '6px 14px' }}
           >
-            <span>🧩</span>
+            <Icon name="projects" size={14} />
             <span>Projects</span>
           </Link>
           <Link
             href="/prompts"
-            style={{
-              color: 'var(--text-secondary)',
-              textDecoration: 'none',
-              fontSize: '0.88rem',
-              fontWeight: 500,
-              padding: '8px 14px',
-              borderRadius: 'var(--radius-sm)',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-            }}
+            className="btn btn-secondary"
+            style={{ fontSize: '0.85rem', padding: '6px 14px' }}
           >
-            <span>📜</span>
+            <Icon name="prompts" size={14} />
             <span>Prompts</span>
           </Link>
-          <Link href="/skills" style={{
-            color: 'var(--text-secondary)',
-            textDecoration: 'none',
-            fontSize: '0.9rem',
-            fontWeight: 500,
-            padding: '8px 16px',
-            borderRadius: 'var(--radius-sm)',
-            transition: 'color 0.2s',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '6px'
-          }}>
-            <span>🧩</span>
+          <Link
+            href="/skills"
+            className="btn btn-secondary"
+            style={{ fontSize: '0.85rem', padding: '6px 14px' }}
+          >
+            <Icon name="skills" size={14} />
             <span>Skills</span>
           </Link>
-          <Link href="/login" style={{
-            color: 'var(--text-secondary)',
-            textDecoration: 'none',
-            fontSize: '0.9rem',
-            fontWeight: 500,
-            padding: '8px 16px',
-            borderRadius: 'var(--radius-sm)',
-            transition: 'color 0.2s'
-          }}>
-            Đăng nhập
+          <Link
+            href="/login"
+            className="btn btn-secondary"
+            style={{ fontSize: '0.85rem', padding: '6px 14px' }}
+          >
+            Sign In
           </Link>
           <Link
             href="/register"
-            style={{
-              background: 'var(--accent-gradient)',
-              color: '#FFFFFF',
-              textDecoration: 'none',
-              fontSize: '0.88rem',
-              fontWeight: 600,
-              padding: '8px 18px',
-              borderRadius: 'var(--radius-sm)',
-              boxShadow: 'var(--accent-glow-sm)',
-            }}
+            className="btn btn-primary"
+            style={{ fontSize: '0.85rem', padding: '6px 16px' }}
           >
-            Đăng ký miễn phí
+            Get Started Free
           </Link>
         </nav>
       </header>
@@ -165,113 +114,64 @@ export default function HomePage() {
           position: 'relative',
         }}
       >
-        {/* Glow ambient background */}
-        <div
-          style={{
-            position: 'absolute',
-            top: '20%',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            width: '600px',
-            height: '400px',
-            background: 'radial-gradient(circle, rgba(167, 139, 250, 0.22) 0%, rgba(139, 92, 246, 0.1) 50%, transparent 70%)',
-            filter: 'blur(70px)',
-            pointerEvents: 'none',
-            zIndex: 0,
-          }}
-        />
-
-        <div style={{ position: 'relative', zIndex: 1, maxWidth: '840px' }}>
+        <div style={{ position: 'relative', zIndex: 1, maxWidth: '800px' }}>
           <div
             style={{
               display: 'inline-flex',
               alignItems: 'center',
-              gap: '8px',
-              padding: '6px 16px',
+              gap: '6px',
+              padding: '4px 14px',
               borderRadius: 'var(--radius-full)',
-              background: 'rgba(167, 139, 250, 0.15)',
-              border: '1px solid rgba(167, 139, 250, 0.35)',
+              background: 'rgba(62, 207, 142, 0.1)',
+              border: '1px solid rgba(62, 207, 142, 0.3)',
               color: 'var(--accent)',
-              fontSize: '0.85rem',
+              fontSize: '0.8rem',
               fontWeight: 600,
-              marginBottom: '1.75rem',
+              marginBottom: '1.5rem',
             }}
           >
-            <span>✦ AI-Chan — Professional AI Workspace</span>
+            <span>Professional AI Engineering Workspace</span>
           </div>
 
           <h1
             style={{
-              fontSize: 'clamp(2.5rem, 5.5vw, 4rem)',
+              fontSize: 'clamp(2.2rem, 5vw, 3.5rem)',
               fontWeight: 800,
               lineHeight: 1.15,
               letterSpacing: '-0.03em',
-              marginBottom: '1.25rem',
-              color: '#FFFFFF',
+              marginBottom: '1rem',
+              color: 'var(--text-primary)',
             }}
           >
-            AI-Chan
-            <span
-              style={{
-                background: 'var(--accent-gradient)',
-                WebkitBackgroundClip: 'text',
-                WebkitTextFillColor: 'transparent',
-              }}
-            >
-              {' '}AI Workspace
-            </span>
+            AI-Chan Platform
           </h1>
 
           <p
             style={{
-              fontSize: '1.15rem',
-              lineHeight: 1.65,
+              fontSize: '1.1rem',
+              lineHeight: 1.6,
               color: 'var(--text-secondary)',
-              marginBottom: '2.5rem',
-              maxWidth: '680px',
-              margin: '0 auto 2.5rem',
+              marginBottom: '2rem',
+              maxWidth: '640px',
+              margin: '0 auto 2rem',
             }}
           >
-            A professional AI assistant with real-time streaming, multi-provider failover, project workflows, and a clean workspace designed for productivity.
+            A high-performance AI workspace with real-time SSE streaming, visual project pipelines, system prompt libraries, and modular agent skills.
           </p>
 
-          <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
             <Link
               href="/chat"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '8px',
-                background: 'var(--accent-gradient)',
-                color: '#ffffff',
-                padding: '14px 32px',
-                borderRadius: 'var(--radius-md)',
-                fontSize: '1.05rem',
-                fontWeight: 600,
-                textDecoration: 'none',
-                boxShadow: 'var(--accent-glow)',
-                transition: 'transform 0.2s ease',
-              }}
+              className="btn btn-primary"
+              style={{ padding: '10px 24px', fontSize: '0.95rem' }}
             >
               <span>Open Workspace</span>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
             </Link>
 
             <Link
               href="/login"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '8px',
-                background: 'rgba(31, 27, 43, 0.8)',
-                border: '1px solid var(--border-default)',
-                color: 'var(--text-primary)',
-                padding: '14px 26px',
-                borderRadius: 'var(--radius-md)',
-                fontSize: '1.05rem',
-                fontWeight: 500,
-                textDecoration: 'none',
-              }}
+              className="btn btn-secondary"
+              style={{ padding: '10px 20px', fontSize: '0.95rem' }}
             >
               Sign In
             </Link>
@@ -281,11 +181,11 @@ export default function HomePage() {
         {/* Feature Cards Grid */}
         <section
           style={{
-            marginTop: '5rem',
+            marginTop: '4rem',
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-            gap: '1.5rem',
-            maxWidth: '1080px',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+            gap: '1.25rem',
+            maxWidth: '1020px',
             width: '100%',
             position: 'relative',
             zIndex: 1,
@@ -293,51 +193,49 @@ export default function HomePage() {
         >
           {[
             {
-              icon: '⚡',
+              icon: 'chat' as const,
               title: 'Real-time Streaming',
-              desc: 'Each token streams directly to your browser via SSE with sub-2s latency and instant stop support.',
+              desc: 'Sub-second SSE token generation with instant client-side cancellation and error recovery.',
             },
             {
-              icon: '🛡️',
+              icon: 'settings' as const,
               title: 'Multi-Provider Failover',
-              desc: 'Automatic failover between Gemini and OpenAI — seamless and transparent to the user.',
+              desc: 'Automatic routing and failover across Gemini, OpenAI, and custom AI provider models.',
             },
             {
-              icon: '🧩',
+              icon: 'projects' as const,
               title: 'Project Workflows',
-              desc: 'Build visual agent pipelines: web input, model nodes, system prompts and outputs with DAG validation.',
+              desc: 'Visual node pipelines linking user inputs, LLM models, system prompts, and streaming outputs.',
             },
             {
-              icon: '📋',
+              icon: 'prompts' as const,
               title: 'Prompt Library',
-              desc: 'Organize, search, and reuse system prompts across projects and conversations.',
+              desc: 'Versioned system prompt repositories with dynamic reference binding across workflows.',
             },
             {
-              icon: '💬',
-              title: 'Conversation Management',
-              desc: 'Pin, search, rename and manage unlimited conversation threads from a single sidebar.',
+              icon: 'skills' as const,
+              title: 'Modular Agent Skills',
+              desc: 'Standardized SKILL.md packages with frontmatter validation, asset uploads, and ZIP import/export.',
             },
             {
-              icon: '✦',
-              title: 'Rich Markdown Output',
-              desc: 'Tables, code blocks with copy, inline formatting and structured responses out of the box.',
+              icon: 'dashboard' as const,
+              title: 'Telemetry & Quota',
+              desc: 'Real-time telemetry, model latency monitoring, and daily shared token quota tracking.',
             },
           ].map((item, idx) => (
             <div
               key={idx}
+              className="card"
               style={{
-                background: 'rgba(23, 24, 33, 0.85)',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: 'var(--radius-lg)',
-                padding: '1.5rem',
+                padding: '1.25rem',
                 textAlign: 'left',
-                backdropFilter: 'blur(10px)',
-                boxShadow: '0 8px 24px rgba(0, 0, 0, 0.35)',
               }}
             >
-              <div style={{ fontSize: '1.8rem', marginBottom: '0.75rem' }}>{item.icon}</div>
-              <h3 style={{ fontSize: '1.05rem', fontWeight: 600, marginBottom: '0.5rem', color: '#FFFFFF' }}>{item.title}</h3>
-              <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', lineHeight: 1.55 }}>{item.desc}</p>
+              <div style={{ color: 'var(--accent)', marginBottom: '0.75rem' }}>
+                <Icon name={item.icon} size={20} />
+              </div>
+              <h3 style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: '0.35rem', color: 'var(--text-primary)' }}>{item.title}</h3>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>{item.desc}</p>
             </div>
           ))}
         </section>
@@ -347,9 +245,9 @@ export default function HomePage() {
       <footer
         style={{
           borderTop: '1px solid var(--border-subtle)',
-          padding: '1.5rem',
+          padding: '1.25rem',
           textAlign: 'center',
-          fontSize: '0.85rem',
+          fontSize: '0.8rem',
           color: 'var(--text-muted)',
         }}
       >

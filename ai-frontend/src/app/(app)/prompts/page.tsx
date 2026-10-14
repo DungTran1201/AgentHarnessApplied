@@ -4,6 +4,11 @@ import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { SystemPromptSummary } from '@/types';
 import { SystemPromptService } from '@/services/systemPromptService';
+import PageHeader from '@/components/ui/PageHeader';
+import Icon from '@/components/ui/Icon';
+import ConfirmDialog from '@/components/ui/ConfirmDialog';
+import Toast, { ToastMessage } from '@/components/ui/Toast';
+import { formatErrorMessage } from '@/lib/errors';
 
 export default function SystemPromptsListPage() {
   const [prompts, setPrompts] = useState<SystemPromptSummary[]>([]);
@@ -15,10 +20,10 @@ export default function SystemPromptsListPage() {
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [sortOption, setSortOption] = useState('updated_desc');
 
-  // Modal & Toast States
+  // Modals & Feedback
   const [promptToDelete, setPromptToDelete] = useState<SystemPromptSummary | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [toast, setToast] = useState<ToastMessage | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [cloningId, setCloningId] = useState<string | null>(null);
 
@@ -30,9 +35,9 @@ export default function SystemPromptsListPage() {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  const showToast = (text: string, type: 'success' | 'error' = 'success') => {
-    setToastMessage({ text, type });
-    setTimeout(() => setToastMessage(null), 3000);
+  const showToast = (type: 'success' | 'error' | 'info', message: string) => {
+    setToast({ type, message });
+    setTimeout(() => setToast(null), 3000);
   };
 
   const loadPrompts = useCallback(async () => {
@@ -42,7 +47,7 @@ export default function SystemPromptsListPage() {
       const res = await SystemPromptService.getPrompts(debouncedQuery, sortOption);
       setPrompts(res.items || []);
     } catch (err: any) {
-      setError(err.message || 'Không thể tải danh sách System Prompt');
+      setError(formatErrorMessage(err, 'Failed to load system prompts'));
     } finally {
       setLoading(false);
     }
@@ -57,10 +62,10 @@ export default function SystemPromptsListPage() {
       const detail = await SystemPromptService.getPrompt(prompt.id);
       await navigator.clipboard.writeText(detail.content);
       setCopiedId(prompt.id);
-      showToast(`Đã sao chép nội dung '${prompt.name}' vào clipboard!`);
+      showToast('success', `Copied content of "${prompt.name}" to clipboard`);
       setTimeout(() => setCopiedId(null), 2000);
     } catch (err: any) {
-      showToast(err.message || 'Không thể sao chép nội dung', 'error');
+      showToast('error', formatErrorMessage(err, 'Failed to copy prompt content'));
     }
   };
 
@@ -68,10 +73,10 @@ export default function SystemPromptsListPage() {
     try {
       setCloningId(prompt.id);
       const cloned = await SystemPromptService.clonePrompt(prompt.id);
-      showToast(`Đã nhân bản thành công: '${cloned.name}'`);
+      showToast('success', `Cloned prompt: "${cloned.name}"`);
       loadPrompts();
     } catch (err: any) {
-      showToast(err.message || 'Không thể nhân bản System Prompt', 'error');
+      showToast('error', formatErrorMessage(err, 'Failed to clone system prompt'));
     } finally {
       setCloningId(null);
     }
@@ -82,11 +87,11 @@ export default function SystemPromptsListPage() {
     try {
       setIsDeleting(true);
       await SystemPromptService.deletePrompt(promptToDelete.id);
-      showToast(`Đã xóa vĩnh viễn '${promptToDelete.name}'`);
+      showToast('success', `Deleted "${promptToDelete.name}" permanently`);
       setPromptToDelete(null);
       loadPrompts();
     } catch (err: any) {
-      showToast(err.message || 'Không thể xóa System Prompt', 'error');
+      showToast('error', formatErrorMessage(err, 'Failed to delete system prompt'));
     } finally {
       setIsDeleting(false);
     }
@@ -95,9 +100,9 @@ export default function SystemPromptsListPage() {
   const formatDate = (dateStr: string) => {
     try {
       const d = new Date(dateStr);
-      return d.toLocaleDateString('vi-VN', {
-        day: '2-digit',
-        month: '2-digit',
+      return d.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
         year: 'numeric',
         hour: '2-digit',
         minute: '2-digit',
@@ -108,535 +113,323 @@ export default function SystemPromptsListPage() {
   };
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-primary)' }}>
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div style={{
-          position: 'fixed',
-          top: '20px',
-          right: '20px',
-          zIndex: 1000,
-          background: toastMessage.type === 'success' ? 'rgba(16, 185, 129, 0.95)' : 'rgba(239, 68, 68, 0.95)',
-          color: '#fff',
-          padding: '12px 20px',
-          borderRadius: 'var(--radius-md)',
-          boxShadow: '0 8px 30px rgba(0, 0, 0, 0.5)',
-          backdropFilter: 'blur(8px)',
-          fontWeight: 600,
-          fontSize: '0.9rem',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          animation: 'fadeIn 0.2s ease-out'
-        }}>
-          <span>{toastMessage.type === 'success' ? '✓' : '⚠️'}</span>
-          <span>{toastMessage.text}</span>
-        </div>
-      )}
+    <div style={{ flex: 1, overflowY: 'auto' }}>
+      <Toast toast={toast} onClose={() => setToast(null)} />
 
-      {/* Navigation Header */}
-      <header style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        padding: '1.25rem 2rem',
-        borderBottom: '1px solid var(--border-subtle)',
-        background: 'rgba(10, 15, 29, 0.85)',
-        backdropFilter: 'blur(12px)',
-        position: 'sticky',
-        top: 0,
-        zIndex: 50
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <Link href="/" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <div style={{
-              width: '36px',
-              height: '36px',
-              borderRadius: '10px',
-              background: 'var(--accent-gradient)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '1.2rem',
-              boxShadow: 'var(--accent-glow)'
-            }}>
-              ✨
-            </div>
-            <span style={{ fontSize: '1.25rem', fontWeight: 700, letterSpacing: '-0.02em', background: 'var(--accent-gradient)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-              AI-Chan
-            </span>
+      <div className="page-container">
+        {/* Page Header */}
+        <PageHeader
+          title="System Prompts"
+          description="Create, manage, and reuse system instructions across AI models and project workflows."
+        >
+          <Link href="/prompts/new" className="btn btn-primary" style={{ textDecoration: 'none' }}>
+            <Icon name="plus" size={14} />
+            <span>New System Prompt</span>
           </Link>
-        </div>
+        </PageHeader>
 
-        <nav style={{ display: 'flex', gap: '1.25rem', alignItems: 'center' }}>
-          <Link href="/" style={{ color: 'var(--text-secondary)', textDecoration: 'none', fontSize: '0.9rem', fontWeight: 500 }}>
-            Trang chủ
-          </Link>
-          <Link href="/chat" style={{ color: 'var(--text-secondary)', textDecoration: 'none', fontSize: '0.9rem', fontWeight: 500 }}>
-            Chat
-          </Link>
-          <Link href="/projects" style={{ color: 'var(--text-secondary)', textDecoration: 'none', fontSize: '0.9rem', fontWeight: 500 }}>
-            Projects
-          </Link>
-          <Link href="/prompts" style={{ color: '#fff', textDecoration: 'none', fontSize: '0.9rem', fontWeight: 600, borderBottom: '2px solid #a855f7', paddingBottom: '4px' }}>
-            System Prompts
-          </Link>
-          <Link href="/settings" style={{ color: 'var(--text-secondary)', textDecoration: 'none', fontSize: '0.9rem', fontWeight: 500 }}>
-            Cài đặt
-          </Link>
-        </nav>
-
-        <div>
-          <Link href="/prompts/new" style={{
-            background: 'var(--accent-gradient)',
-            color: '#fff',
-            textDecoration: 'none',
-            fontSize: '0.9rem',
-            fontWeight: 600,
-            padding: '8px 18px',
-            borderRadius: 'var(--radius-sm)',
-            boxShadow: 'var(--accent-glow)',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '6px'
-          }}>
-            <span>➕</span>
-            <span>Tạo Prompt Mới</span>
-          </Link>
-        </div>
-      </header>
-
-      {/* Main Content */}
-      <main style={{ flex: 1, padding: '2.5rem 2rem', maxWidth: '1280px', margin: '0 auto', width: '100%' }}>
-        {/* Title & Stats */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '2rem', flexWrap: 'wrap', gap: '1rem' }}>
-          <div>
-            <h1 style={{ fontSize: '1.85rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <span>📜</span>
-              <span>Thư Viện System Prompt</span>
-            </h1>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem' }}>
-              Quản lý các mẫu chỉ dẫn hệ thống cá nhân hóa độc lập, sẵn sàng tái sử dụng.
-            </p>
-          </div>
-
-          <div style={{
-            background: 'var(--bg-secondary)',
-            border: '1px solid var(--border-subtle)',
-            padding: '8px 16px',
-            borderRadius: 'var(--radius-md)',
+        {/* Toolbar: Search, Sort, Stats */}
+        <div
+          className="card"
+          style={{
+            marginBottom: '1.5rem',
+            padding: '0.875rem 1.25rem',
             display: 'flex',
             alignItems: 'center',
-            gap: '12px'
-          }}>
-            <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Tổng số prompt:</span>
-            <span style={{ color: 'var(--accent-primary)', fontWeight: 700, fontSize: '1.1rem' }}>{prompts.length}</span>
-          </div>
-        </div>
-
-        {/* Toolbar: Search & Sort */}
-        <div style={{
-          display: 'flex',
-          gap: '1rem',
-          marginBottom: '2rem',
-          flexWrap: 'wrap',
-          alignItems: 'center',
-          background: 'var(--bg-secondary)',
-          padding: '1rem 1.25rem',
-          borderRadius: 'var(--radius-md)',
-          border: '1px solid var(--border-subtle)'
-        }}>
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '0.875rem',
+          }}
+        >
           {/* Search Box */}
-          <div style={{ flex: 1, minWidth: '280px', position: 'relative' }}>
-            <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }}>
-              🔍
+          <div style={{ position: 'relative', flex: 1, minWidth: '240px', maxWidth: '420px' }}>
+            <span
+              style={{
+                position: 'absolute',
+                left: '10px',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                color: 'var(--text-muted)',
+                display: 'flex',
+              }}
+            >
+              <Icon name="search" size={14} />
             </span>
             <input
-              type="text"
-              placeholder="Tìm kiếm theo tên hoặc mô tả prompt..."
+              type="search"
+              className="input"
+              style={{ paddingLeft: '32px', height: '34px', fontSize: '0.8125rem' }}
+              placeholder="Search by name or description..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '10px 38px 10px 38px',
-                background: 'var(--bg-tertiary)',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: 'var(--radius-sm)',
-                color: 'var(--text-primary)',
-                fontSize: '0.9rem',
-                outline: 'none'
-              }}
+              onChange={e => setSearchQuery(e.target.value)}
             />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery('')}
-                style={{
-                  position: 'absolute',
-                  right: '12px',
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  background: 'none',
-                  border: 'none',
-                  color: 'var(--text-muted)',
-                  cursor: 'pointer',
-                  fontSize: '0.9rem'
-                }}
-              >
-                ✕
-              </button>
-            )}
           </div>
 
-          {/* Sort Selector */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Sắp xếp:</span>
-            <select
-              value={sortOption}
-              onChange={(e) => setSortOption(e.target.value)}
+          {/* Right controls: Sort, Refresh, Count */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <label htmlFor="sortSelect" style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+                Sort:
+              </label>
+              <select
+                id="sortSelect"
+                className="select"
+                value={sortOption}
+                onChange={e => setSortOption(e.target.value)}
+                style={{ height: '34px', padding: '0 0.5rem', fontSize: '0.8125rem', width: 'auto' }}
+              >
+                <option value="updated_desc">Recently Updated</option>
+                <option value="name_asc">Name (A → Z)</option>
+                <option value="length_desc">Longest Content</option>
+              </select>
+            </div>
+
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={loadPrompts}
+              title="Refresh prompt list"
+              aria-label="Refresh prompt list"
+            >
+              <Icon name="refresh" size={13} />
+              <span>Refresh</span>
+            </button>
+
+            <span
               style={{
-                padding: '9px 14px',
-                background: 'var(--bg-tertiary)',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: 'var(--radius-sm)',
-                color: 'var(--text-primary)',
-                fontSize: '0.85rem',
-                cursor: 'pointer',
-                outline: 'none'
+                fontSize: '0.75rem',
+                color: 'var(--text-muted)',
+                paddingLeft: '6px',
+                borderLeft: '1px solid var(--border-subtle)',
               }}
             >
-              <option value="updated_desc">Mới cập nhật nhất</option>
-              <option value="name_asc">Tên (A → Z)</option>
-              <option value="length_desc">Nội dung dài nhất</option>
-            </select>
+              {prompts.length} {prompts.length === 1 ? 'prompt' : 'prompts'}
+            </span>
           </div>
-
-          <button
-            type="button"
-            onClick={loadPrompts}
-            style={{
-              padding: '9px 14px',
-              background: 'var(--bg-tertiary)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 'var(--radius-sm)',
-              color: 'var(--text-secondary)',
-              cursor: 'pointer',
-              fontSize: '0.85rem',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px'
-            }}
-          >
-            <span>🔄</span>
-            <span>Làm mới</span>
-          </button>
         </div>
 
-        {/* Error State */}
+        {/* Error Alert */}
         {error && (
-          <div style={{
-            padding: '1.25rem',
-            background: 'var(--danger-bg)',
-            border: '1px solid var(--danger)',
-            borderRadius: 'var(--radius-md)',
-            color: '#fca5a5',
-            marginBottom: '2rem',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center'
-          }}>
-            <div>
-              <strong>Lỗi tải dữ liệu:</strong> {error}
-            </div>
+          <div
+            style={{
+              padding: '0.875rem 1rem',
+              background: 'var(--danger-bg)',
+              border: '1px solid rgba(240, 113, 120, 0.4)',
+              borderRadius: 'var(--radius-sm)',
+              color: 'var(--danger)',
+              marginBottom: '1.5rem',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              fontSize: '0.875rem',
+            }}
+          >
+            <div>{error}</div>
             <button
+              type="button"
+              className="btn btn-danger btn-sm"
               onClick={loadPrompts}
-              style={{
-                background: 'var(--danger)',
-                color: '#fff',
-                border: 'none',
-                padding: '6px 14px',
-                borderRadius: 'var(--radius-sm)',
-                cursor: 'pointer',
-                fontWeight: 600
-              }}
             >
-              Thử lại
+              Retry
             </button>
           </div>
         )}
 
-        {/* Loading Skeletons */}
+        {/* Loading State */}
         {loading && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: '1.5rem' }}>
-            {[1, 2, 3, 4].map((i) => (
-              <div key={i} style={{
-                background: 'var(--bg-card)',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: 'var(--radius-md)',
-                padding: '1.5rem',
-                minHeight: '200px',
-                display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'space-between',
-                opacity: 0.6
-              }}>
-                <div>
-                  <div style={{ width: '60%', height: '22px', background: 'var(--bg-tertiary)', borderRadius: '4px', marginBottom: '12px' }} />
-                  <div style={{ width: '90%', height: '14px', background: 'var(--bg-tertiary)', borderRadius: '4px', marginBottom: '8px' }} />
-                  <div style={{ width: '40%', height: '14px', background: 'var(--bg-tertiary)', borderRadius: '4px' }} />
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '20px' }}>
-                  <div style={{ width: '30%', height: '16px', background: 'var(--bg-tertiary)', borderRadius: '4px' }} />
-                  <div style={{ width: '30%', height: '28px', background: 'var(--bg-tertiary)', borderRadius: '4px' }} />
-                </div>
-              </div>
-            ))}
+          <div style={{ padding: '4rem 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.875rem' }}>
+            Loading system prompts...
           </div>
         )}
 
-        {/* Empty State (When no prompts created yet) */}
+        {/* Empty State */}
         {!loading && prompts.length === 0 && !debouncedQuery && (
-          <div style={{
-            background: 'var(--bg-card)',
-            border: '1px dashed var(--border-subtle)',
-            borderRadius: 'var(--radius-lg)',
-            padding: '4rem 2rem',
-            textAlign: 'center',
-            maxWidth: '600px',
-            margin: '2rem auto'
-          }}>
-            <div style={{ fontSize: '3.5rem', marginBottom: '1rem' }}>📜</div>
-            <h3 style={{ fontSize: '1.35rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '0.5rem' }}>
-              Chưa có System Prompt nào
+          <div
+            className="card"
+            style={{
+              padding: '3.5rem 2rem',
+              textAlign: 'center',
+              borderStyle: 'dashed',
+            }}
+          >
+            <div style={{ color: 'var(--text-muted)', marginBottom: '0.75rem', display: 'flex', justifyContent: 'center' }}>
+              <Icon name="prompts" size={32} />
+            </div>
+            <h3 style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.35rem' }}>
+              No system prompts yet
             </h3>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', marginBottom: '1.75rem', lineHeight: '1.6' }}>
-              Hãy tạo prompt đầu tiên để cá nhân hóa chỉ dẫn hoạt động của các mô hình AI. Bạn có thể sao chép, chỉnh sửa hoặc nhân bản bất cứ lúc nào.
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', maxWidth: '440px', margin: '0 auto 1.5rem auto' }}>
+              Create your first system prompt to customize AI personality and instructions. You can copy, reuse, or attach prompts to workflow projects.
             </p>
-            <Link href="/prompts/new" style={{
-              background: 'var(--accent-gradient)',
-              color: '#fff',
-              textDecoration: 'none',
-              fontSize: '0.95rem',
-              fontWeight: 600,
-              padding: '10px 24px',
-              borderRadius: 'var(--radius-sm)',
-              boxShadow: 'var(--accent-glow)',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '8px'
-            }}>
-              <span>➕</span>
-              <span>Tạo System Prompt Đầu Tiên</span>
+            <Link href="/prompts/new" className="btn btn-primary" style={{ textDecoration: 'none' }}>
+              <Icon name="plus" size={14} />
+              <span>Create First Prompt</span>
             </Link>
           </div>
         )}
 
-        {/* No Search Results State */}
+        {/* No Search Results */}
         {!loading && prompts.length === 0 && debouncedQuery && (
-          <div style={{
-            background: 'var(--bg-card)',
-            border: '1px solid var(--border-subtle)',
-            borderRadius: 'var(--radius-md)',
-            padding: '3rem 2rem',
-            textAlign: 'center',
-            maxWidth: '500px',
-            margin: '2rem auto'
-          }}>
-            <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }}>🔍</div>
-            <h3 style={{ fontSize: '1.15rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.5rem' }}>
-              Không tìm thấy kết quả phù hợp
+          <div
+            className="card"
+            style={{
+              padding: '3rem 2rem',
+              textAlign: 'center',
+            }}
+          >
+            <div style={{ color: 'var(--text-muted)', marginBottom: '0.75rem', display: 'flex', justifyContent: 'center' }}>
+              <Icon name="search" size={28} />
+            </div>
+            <h3 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.35rem' }}>
+              No matching system prompts
             </h3>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1.25rem' }}>
-              Không có System Prompt nào khớp với từ khóa &ldquo;{debouncedQuery}&rdquo;.
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.8125rem', marginBottom: '1.25rem' }}>
+              No prompts match &ldquo;{debouncedQuery}&rdquo;. Try another keyword.
             </p>
             <button
+              type="button"
+              className="btn btn-secondary btn-sm"
               onClick={() => setSearchQuery('')}
-              style={{
-                background: 'var(--bg-tertiary)',
-                color: 'var(--text-primary)',
-                border: '1px solid var(--border-subtle)',
-                padding: '8px 18px',
-                borderRadius: 'var(--radius-sm)',
-                cursor: 'pointer',
-                fontWeight: 500,
-                fontSize: '0.85rem'
-              }}
             >
-              Xóa bộ lọc tìm kiếm
+              Clear Search
             </button>
           </div>
         )}
 
         {/* Prompts Cards Grid */}
         {!loading && prompts.length > 0 && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: '1.5rem' }}>
-            {prompts.map((prompt) => (
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+              gap: '1rem',
+            }}
+          >
+            {prompts.map(prompt => (
               <div
                 key={prompt.id}
+                className="card"
                 style={{
-                  background: 'var(--bg-card)',
-                  border: '1px solid var(--border-subtle)',
-                  borderRadius: 'var(--radius-md)',
-                  padding: '1.5rem',
                   display: 'flex',
                   flexDirection: 'column',
                   justifyContent: 'space-between',
-                  transition: 'all 0.2s ease',
-                  boxShadow: '0 4px 20px rgba(0, 0, 0, 0.25)',
-                  position: 'relative'
+                  padding: '1.25rem',
                 }}
               >
                 <div>
-                  {/* Card Header: Title & Character Badge */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', marginBottom: '0.75rem' }}>
-                    <h3 style={{
-                      fontSize: '1.15rem',
-                      fontWeight: 700,
-                      color: 'var(--text-primary)',
-                      lineHeight: '1.4',
-                      wordBreak: 'break-word'
-                    }}>
+                  {/* Top row: Name & Length badge */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.75rem', marginBottom: '0.5rem' }}>
+                    <h3
+                      style={{
+                        fontSize: '0.95rem',
+                        fontWeight: 600,
+                        color: 'var(--text-primary)',
+                        margin: 0,
+                        lineHeight: 1.4,
+                        wordBreak: 'break-word',
+                      }}
+                    >
                       {prompt.name}
                     </h3>
-                    <span style={{
-                      background: 'rgba(99, 102, 241, 0.15)',
-                      color: 'var(--accent-primary)',
-                      fontSize: '0.75rem',
-                      fontWeight: 600,
-                      padding: '4px 8px',
-                      borderRadius: 'var(--radius-full)',
-                      whiteSpace: 'nowrap'
-                    }}>
-                      {prompt.content_length.toLocaleString('vi-VN')} ký tự
+                    <span
+                      style={{
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: '0.6875rem',
+                        fontWeight: 500,
+                        padding: '2px 6px',
+                        borderRadius: 'var(--radius-xs)',
+                        background: 'var(--bg-elevated)',
+                        color: 'var(--text-muted)',
+                        border: '1px solid var(--border-subtle)',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {prompt.content_length.toLocaleString()} chars
                     </span>
                   </div>
 
                   {/* Description */}
-                  <p style={{
-                    color: prompt.description ? 'var(--text-secondary)' : 'var(--text-muted)',
-                    fontSize: '0.875rem',
-                    lineHeight: '1.5',
-                    marginBottom: '1.25rem',
-                    fontStyle: prompt.description ? 'normal' : 'italic',
-                    display: '-webkit-box',
-                    WebkitLineClamp: 3,
-                    WebkitBoxOrient: 'vertical',
-                    overflow: 'hidden'
-                  }}>
-                    {prompt.description || 'Chưa có mô tả'}
+                  <p
+                    style={{
+                      color: prompt.description ? 'var(--text-secondary)' : 'var(--text-muted)',
+                      fontSize: '0.8125rem',
+                      lineHeight: 1.5,
+                      marginBottom: '1rem',
+                      fontStyle: prompt.description ? 'normal' : 'italic',
+                      display: '-webkit-box',
+                      WebkitLineClamp: 3,
+                      WebkitBoxOrient: 'vertical',
+                      overflow: 'hidden',
+                      minHeight: '2.4rem',
+                    }}
+                  >
+                    {prompt.description || 'No description provided.'}
                   </p>
                 </div>
 
-                {/* Card Footer: Metadata & Actions */}
+                {/* Footer: timestamp + actions */}
                 <div>
-                  <div style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    borderTop: '1px solid var(--border-subtle)',
-                    paddingTop: '0.875rem',
-                    marginTop: '0.5rem',
-                    fontSize: '0.78rem',
-                    color: 'var(--text-muted)'
-                  }}>
-                    <span>Cập nhật: {formatDate(prompt.updated_at)}</span>
+                  <div
+                    style={{
+                      borderTop: '1px solid var(--border-subtle)',
+                      paddingTop: '0.625rem',
+                      fontSize: '0.75rem',
+                      color: 'var(--text-muted)',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                    }}
+                  >
+                    <span>Updated {formatDate(prompt.updated_at)}</span>
                   </div>
 
-                  {/* Action Buttons Row */}
-                  <div style={{ display: 'flex', gap: '8px', marginTop: '1rem', flexWrap: 'wrap' }}>
-                    {/* Copy Button */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.75rem' }}>
+                    {/* Copy Content */}
                     <button
                       type="button"
                       onClick={() => handleCopyContent(prompt)}
-                      style={{
-                        flex: 1,
-                        padding: '7px 10px',
-                        background: copiedId === prompt.id ? 'rgba(16, 185, 129, 0.2)' : 'var(--bg-tertiary)',
-                        border: '1px solid',
-                        borderColor: copiedId === prompt.id ? 'var(--success)' : 'var(--border-subtle)',
-                        borderRadius: 'var(--radius-sm)',
-                        color: copiedId === prompt.id ? 'var(--success)' : 'var(--text-primary)',
-                        fontSize: '0.82rem',
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '4px',
-                        transition: 'all 0.15s ease'
-                      }}
-                      title="Sao chép toàn bộ nội dung prompt vào clipboard"
+                      className={`btn btn-sm ${copiedId === prompt.id ? 'btn-primary' : 'btn-secondary'}`}
+                      style={{ flex: 1 }}
+                      title="Copy full prompt instructions to clipboard"
                     >
-                      <span>{copiedId === prompt.id ? '✓' : '📋'}</span>
-                      <span>{copiedId === prompt.id ? 'Đã chép' : 'Sao chép'}</span>
+                      <Icon name={copiedId === prompt.id ? 'check' : 'copy'} size={13} />
+                      <span>{copiedId === prompt.id ? 'Copied' : 'Copy'}</span>
                     </button>
 
-                    {/* Clone Button */}
+                    {/* Clone */}
                     <button
                       type="button"
                       onClick={() => handleClone(prompt)}
                       disabled={cloningId === prompt.id}
-                      style={{
-                        padding: '7px 12px',
-                        background: 'var(--bg-tertiary)',
-                        border: '1px solid var(--border-subtle)',
-                        borderRadius: 'var(--radius-sm)',
-                        color: 'var(--text-secondary)',
-                        fontSize: '0.82rem',
-                        fontWeight: 500,
-                        cursor: cloningId === prompt.id ? 'not-allowed' : 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '4px'
-                      }}
-                      title="Tạo bản sao mới từ prompt này"
+                      className="btn btn-secondary btn-sm"
+                      title="Duplicate this prompt"
                     >
-                      <span>{cloningId === prompt.id ? '⏳' : '📑'}</span>
-                      <span>Nhân bản</span>
+                      <Icon name="doc" size={13} />
+                      <span>Clone</span>
                     </button>
 
-                    {/* Edit Button */}
+                    {/* Edit */}
                     <Link
                       href={`/prompts/${prompt.id}/edit`}
-                      style={{
-                        padding: '7px 12px',
-                        background: 'var(--bg-tertiary)',
-                        border: '1px solid var(--border-subtle)',
-                        borderRadius: 'var(--radius-sm)',
-                        color: 'var(--accent-primary)',
-                        textDecoration: 'none',
-                        fontSize: '0.82rem',
-                        fontWeight: 600,
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '4px'
-                      }}
-                      title="Chỉnh sửa tên, mô tả hoặc nội dung prompt"
+                      className="btn btn-secondary btn-sm"
+                      style={{ textDecoration: 'none' }}
+                      title="Edit prompt instructions"
                     >
-                      <span>✏️</span>
-                      <span>Sửa</span>
+                      <Icon name="edit" size={13} />
+                      <span>Edit</span>
                     </Link>
 
-                    {/* Delete Button */}
+                    {/* Delete */}
                     <button
                       type="button"
                       onClick={() => setPromptToDelete(prompt)}
-                      style={{
-                        padding: '7px 10px',
-                        background: 'rgba(239, 68, 68, 0.1)',
-                        border: '1px solid rgba(239, 68, 68, 0.3)',
-                        borderRadius: 'var(--radius-sm)',
-                        color: 'var(--danger)',
-                        fontSize: '0.82rem',
-                        fontWeight: 500,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '4px'
-                      }}
-                      title="Xóa vĩnh viễn prompt này"
+                      className="btn-icon"
+                      title="Delete prompt"
+                      aria-label="Delete prompt"
+                      style={{ color: 'var(--text-muted)' }}
+                      onMouseEnter={e => { e.currentTarget.style.color = 'var(--danger)'; }}
+                      onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)'; }}
                     >
-                      <span>🗑️</span>
+                      <Icon name="trash" size={14} />
                     </button>
                   </div>
                 </div>
@@ -644,105 +437,26 @@ export default function SystemPromptsListPage() {
             ))}
           </div>
         )}
-      </main>
+      </div>
 
       {/* Delete Confirmation Modal */}
-      {promptToDelete && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'rgba(0, 0, 0, 0.7)',
-          backdropFilter: 'blur(6px)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 1000,
-          padding: '1rem'
-        }}>
-          <div style={{
-            background: 'var(--bg-secondary)',
-            border: '1px solid var(--border-subtle)',
-            borderRadius: 'var(--radius-md)',
-            padding: '2rem',
-            maxWidth: '480px',
-            width: '100%',
-            boxShadow: '0 20px 40px rgba(0, 0, 0, 0.6)'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '1rem' }}>
-              <span style={{ fontSize: '1.8rem', color: 'var(--danger)' }}>⚠️</span>
-              <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-                Xác nhận xóa System Prompt
-              </h3>
-            </div>
-
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1.25rem', lineHeight: '1.5' }}>
-              Bạn có chắc chắn muốn xóa vĩnh viễn System Prompt sau không?
-            </p>
-
-            <div style={{
-              background: 'var(--bg-tertiary)',
-              padding: '10px 14px',
-              borderRadius: 'var(--radius-sm)',
-              marginBottom: '1.25rem',
-              borderLeft: '3px solid var(--danger)'
-            }}>
-              <strong style={{ color: 'var(--text-primary)', display: 'block', marginBottom: '4px' }}>
-                {promptToDelete.name}
-              </strong>
-              <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                {promptToDelete.content_length.toLocaleString('vi-VN')} ký tự
-              </span>
-            </div>
-
-            <p style={{ color: 'var(--danger)', fontSize: '0.82rem', marginBottom: '1.75rem', fontWeight: 500 }}>
-              Hành động này là vĩnh viễn và không thể hoàn tác.
-            </p>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-              <button
-                type="button"
-                onClick={() => setPromptToDelete(null)}
-                disabled={isDeleting}
-                style={{
-                  padding: '9px 18px',
-                  background: 'var(--bg-tertiary)',
-                  border: '1px solid var(--border-subtle)',
-                  borderRadius: 'var(--radius-sm)',
-                  color: 'var(--text-secondary)',
-                  cursor: 'pointer',
-                  fontWeight: 500,
-                  fontSize: '0.9rem'
-                }}
-              >
-                Hủy
-              </button>
-              <button
-                type="button"
-                onClick={handleDeleteConfirm}
-                disabled={isDeleting}
-                style={{
-                  padding: '9px 20px',
-                  background: 'var(--danger)',
-                  border: 'none',
-                  borderRadius: 'var(--radius-sm)',
-                  color: '#fff',
-                  cursor: isDeleting ? 'not-allowed' : 'pointer',
-                  fontWeight: 600,
-                  fontSize: '0.9rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px'
-                }}
-              >
-                {isDeleting ? 'Đang xóa...' : 'Xóa vĩnh viễn'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        isOpen={Boolean(promptToDelete)}
+        title="Delete System Prompt"
+        message={
+          promptToDelete ? (
+            <>
+              Are you sure you want to permanently delete <strong>&ldquo;{promptToDelete.name}&rdquo;</strong>? This action cannot be undone.
+            </>
+          ) : ''
+        }
+        confirmLabel="Delete Prompt"
+        cancelLabel="Cancel"
+        isDestructive={true}
+        isLoading={isDeleting}
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setPromptToDelete(null)}
+      />
     </div>
   );
 }

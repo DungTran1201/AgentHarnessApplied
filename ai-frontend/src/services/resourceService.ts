@@ -4,7 +4,7 @@ const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/
 
 export class ResourceService {
   /**
-   * Lấy dữ liệu KPI tổng hợp hiệu năng và hạn ngạch (OP-018)
+   * Fetch aggregated KPI metrics for performance and token quota (OP-018)
    */
   static async getSummary(range: '1h' | '24h' | '7d' | '30d' = '24h'): Promise<ResourceSummary> {
     const res = await fetch(`${BASE_URL}/resources/summary?range=${range}`, {
@@ -15,7 +15,7 @@ export class ResourceService {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(err.detail || 'Không thể lấy dữ liệu thống kê tài nguyên');
+      throw new Error(err.detail || 'Failed to fetch resource summary statistics.');
     }
 
     const json = await res.json();
@@ -23,7 +23,7 @@ export class ResourceService {
   }
 
   /**
-   * Lấy thông tin chi tiết Quota token người dùng (OP-020)
+   * Fetch detailed token quota status for current user (OP-020)
    */
   static async getQuota(): Promise<UserQuotaStatus> {
     const res = await fetch(`${BASE_URL}/resources/quota`, {
@@ -34,7 +34,7 @@ export class ResourceService {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(err.detail || 'Không thể lấy thông tin hạn ngạch');
+      throw new Error(err.detail || 'Failed to fetch token quota information.');
     }
 
     const json = await res.json();
@@ -42,7 +42,7 @@ export class ResourceService {
   }
 
   /**
-   * Lấy lịch sử các bản ghi telemetry gần nhất (OP-021)
+   * Fetch recent telemetry log history (OP-021)
    */
   static async getHistory(limit: number = 50, offset: number = 0): Promise<ApiMetricLogItem[]> {
     const res = await fetch(`${BASE_URL}/resources/history?limit=${limit}&offset=${offset}`, {
@@ -53,7 +53,7 @@ export class ResourceService {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(err.detail || 'Không thể lấy lịch sử API');
+      throw new Error(err.detail || 'Failed to fetch API telemetry history.');
     }
 
     const json = await res.json();
@@ -61,7 +61,7 @@ export class ResourceService {
   }
 
   /**
-   * Khởi tạo kết nối SSE EventSource phát luồng telemetry thời gian thực (OP-019)
+   * Initialize SSE EventSource stream for real-time telemetry (OP-019)
    */
   static subscribeStream(
     callbacks: {
@@ -84,7 +84,7 @@ export class ResourceService {
         const data = JSON.parse(e.data);
         if (callbacks.onInitialState) callbacks.onInitialState(data);
       } catch (err) {
-        console.error('Lỗi phân tích initial_state SSE:', err);
+        console.error('Error parsing SSE initial_state:', err);
       }
     });
 
@@ -93,7 +93,7 @@ export class ResourceService {
         const data = JSON.parse(e.data);
         if (callbacks.onMetricUpdate) callbacks.onMetricUpdate(data);
       } catch (err) {
-        console.error('Lỗi phân tích metric_update SSE:', err);
+        console.error('Error parsing SSE metric_update:', err);
       }
     });
 
@@ -102,7 +102,7 @@ export class ResourceService {
         const data = JSON.parse(e.data);
         if (callbacks.onQuotaAlert) callbacks.onQuotaAlert(data);
       } catch (err) {
-        console.error('Lỗi phân tích quota_alert SSE:', err);
+        console.error('Error parsing SSE quota_alert:', err);
       }
     });
 
@@ -110,7 +110,7 @@ export class ResourceService {
       if (callbacks.onError) callbacks.onError(err);
     };
 
-    // Hàm dọn dẹp đóng kết nối
+    // Cleanup function to close SSE connection
     return () => {
       eventSource.close();
     };

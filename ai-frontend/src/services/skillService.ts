@@ -26,7 +26,7 @@ function getAuthHeaders(includeContentType = true): HeadersInit {
 
 export class SkillService {
   /**
-   * Lấy danh sách kỹ năng thuộc quyền sở hữu của người dùng.
+   * Fetch list of skills owned by the current user.
    */
   static async getSkills(
     query?: string,
@@ -47,14 +47,14 @@ export class SkillService {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
       const msg = typeof err.detail === 'object' ? err.detail.message : (err.detail || err.message);
-      throw new Error(msg || 'Không thể tải danh sách kỹ năng');
+      throw new Error(msg || 'Failed to fetch skills.');
     }
 
     return res.json();
   }
 
   /**
-   * Lấy chi tiết một kỹ năng (metadata, raw SKILL.md, cây tệp, validation report).
+   * Fetch details for a specific skill (metadata, raw SKILL.md, file tree, validation report).
    */
   static async getSkill(id: string): Promise<SkillDetail> {
     const res = await fetch(`${BASE_URL}/skills/${encodeURIComponent(id)}`, {
@@ -65,14 +65,14 @@ export class SkillService {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
       const msg = typeof err.detail === 'object' ? err.detail.message : (err.detail || err.message);
-      throw new Error(msg || 'Không tìm thấy kỹ năng hoặc bạn không có quyền truy cập');
+      throw new Error(msg || 'Skill not found or access denied.');
     }
 
     return res.json();
   }
 
   /**
-   * Tạo mới kỹ năng từ template.
+   * Create a new skill from template.
    */
   static async createSkill(data: SkillCreateRequest): Promise<SkillDetail> {
     const res = await fetch(`${BASE_URL}/skills`, {
@@ -84,14 +84,14 @@ export class SkillService {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
       const msg = typeof err.detail === 'object' ? err.detail.message : (err.detail || err.message);
-      throw new Error(msg || 'Không thể tạo kỹ năng');
+      throw new Error(msg || 'Failed to create skill.');
     }
 
     return res.json();
   }
 
   /**
-   * Cập nhật kỹ năng (hỗ trợ Lưu nháp hoặc Lưu & Kích hoạt).
+   * Update skill (supports draft or save & activate).
    */
   static async updateSkill(id: string, data: SkillUpdateRequest): Promise<SkillDetail> {
     const res = await fetch(`${BASE_URL}/skills/${encodeURIComponent(id)}`, {
@@ -103,14 +103,14 @@ export class SkillService {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
       const msg = typeof err.detail === 'object' ? err.detail.message : (err.detail || err.message);
-      throw new Error(msg || 'Không thể cập nhật kỹ năng');
+      throw new Error(msg || 'Failed to update skill.');
     }
 
     return res.json();
   }
 
   /**
-   * Xóa một kỹ năng.
+   * Delete a skill.
    */
   static async deleteSkill(id: string): Promise<{ success: boolean; message: string; deleted_id: string }> {
     const res = await fetch(`${BASE_URL}/skills/${encodeURIComponent(id)}`, {
@@ -121,14 +121,14 @@ export class SkillService {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
       const msg = typeof err.detail === 'object' ? err.detail.message : (err.detail || err.message);
-      throw new Error(msg || 'Không thể xóa kỹ năng');
+      throw new Error(msg || 'Failed to delete skill.');
     }
 
     return res.json();
   }
 
   /**
-   * Nhân bản kỹ năng.
+   * Duplicate/clone a skill.
    */
   static async cloneSkill(id: string): Promise<SkillDetail> {
     const res = await fetch(`${BASE_URL}/skills/${encodeURIComponent(id)}/clone`, {
@@ -139,14 +139,14 @@ export class SkillService {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
       const msg = typeof err.detail === 'object' ? err.detail.message : (err.detail || err.message);
-      throw new Error(msg || 'Không thể nhân bản kỹ năng');
+      throw new Error(msg || 'Failed to duplicate skill.');
     }
 
     return res.json();
   }
 
   /**
-   * Kiểm tra định dạng không trạng thái (Validate stateless).
+   * Statelessly validate skill format.
    */
   static async validateSkill(rawSkillMd: string, parentFolderName?: string): Promise<SkillValidationReport> {
     const res = await fetch(`${BASE_URL}/skills/validate`, {
@@ -161,14 +161,14 @@ export class SkillService {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
       const msg = typeof err.detail === 'object' ? err.detail.message : (err.detail || err.message);
-      throw new Error(msg || 'Lỗi kiểm tra định dạng kỹ năng');
+      throw new Error(msg || 'Skill format validation failed.');
     }
 
     return res.json();
   }
 
   /**
-   * Nhập gói kỹ năng từ tệp .zip.
+   * Import a skill package from a .zip file.
    */
   static async importSkill(file: File): Promise<SkillDetail> {
     const formData = new FormData();
@@ -176,28 +176,28 @@ export class SkillService {
 
     const res = await fetch(`${BASE_URL}/skills/import`, {
       method: 'POST',
-      headers: getAuthHeaders(false), // để trình duyệt tự set multipart boundary
+      headers: getAuthHeaders(false), // let browser set multipart boundary
       body: formData,
     });
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
       const msg = typeof err.detail === 'object' ? err.detail.message : (err.detail || err.message);
-      throw new Error(msg || 'Không thể nhập gói kỹ năng');
+      throw new Error(msg || 'Failed to import skill package.');
     }
 
     return res.json();
   }
 
   /**
-   * Đường dẫn tải xuống tệp .zip của một kỹ năng.
+   * Get download URL for a skill .zip archive.
    */
   static getExportUrl(id: string): string {
     return `${BASE_URL}/skills/${encodeURIComponent(id)}/export`;
   }
 
   /**
-   * Tải xuống trực tiếp tệp zip của kỹ năng.
+   * Directly download the skill .zip archive.
    */
   static async exportSkillZip(id: string, name: string): Promise<void> {
     const url = this.getExportUrl(id);
@@ -206,7 +206,7 @@ export class SkillService {
       headers: getAuthHeaders(false),
     });
     if (!res.ok) {
-      throw new Error('Không thể tải xuống gói ZIP kỹ năng');
+      throw new Error('Failed to download skill ZIP package.');
     }
     const blob = await res.blob();
     const downloadUrl = window.URL.createObjectURL(blob);
@@ -220,7 +220,7 @@ export class SkillService {
   }
 
   /**
-   * Tải lên tệp tài nguyên bổ trợ.
+   * Upload an auxiliary resource file.
    */
   static async addResource(id: string, file: File, folder: 'references' | 'assets'): Promise<{ success: boolean; file_tree: FileTreeItem[] }> {
     const formData = new FormData();
@@ -235,14 +235,14 @@ export class SkillService {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
       const msg = typeof err.detail === 'object' ? err.detail.message : (err.detail || err.message);
-      throw new Error(msg || 'Không thể thêm tệp tài nguyên');
+      throw new Error(msg || 'Failed to add resource file.');
     }
 
     return res.json();
   }
 
   /**
-   * Xóa tệp tài nguyên bổ trợ.
+   * Delete an auxiliary resource file.
    */
   static async deleteResource(id: string, relativePath: string): Promise<{ success: boolean; file_tree: FileTreeItem[] }> {
     const res = await fetch(`${BASE_URL}/skills/${encodeURIComponent(id)}/resources?relative_path=${encodeURIComponent(relativePath)}`, {
@@ -253,7 +253,7 @@ export class SkillService {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
       const msg = typeof err.detail === 'object' ? err.detail.message : (err.detail || err.message);
-      throw new Error(msg || 'Không thể xóa tệp tài nguyên');
+      throw new Error(msg || 'Failed to delete resource file.');
     }
 
     return res.json();

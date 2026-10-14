@@ -14,6 +14,8 @@ import {
 } from '@/types';
 import { ProjectService } from '@/services/projectService';
 import { SystemPromptService } from '@/services/systemPromptService';
+import Icon from '@/components/ui/Icon';
+import { getErrorMessage } from '@/lib/errors';
 
 export default function ProjectEditorPage() {
   const router = useRouter();
@@ -96,7 +98,6 @@ export default function ProjectEditorPage() {
         setAvailablePrompts(promptsRes || []);
 
         if (projData.graph_data && projData.graph_data.nodes && projData.graph_data.nodes.length > 0) {
-          // Normalize nodes: ensure each node has valid coordinate positions (x, y)
           const defaultPositionsByType: Record<string, { x: number; y: number }> = {
             web_input: { x: 80, y: 180 },
             system_prompt: { x: 80, y: 360 },
@@ -119,7 +120,7 @@ export default function ProjectEditorPage() {
             setViewport(projData.graph_data.viewport);
           }
         } else {
-          // Khởi tạo 3 node mặc định cho trải nghiệm mượt mà
+          // Initialize 3 default nodes
           const initialNodes: GraphNode[] = [
             {
               id: 'node_input_1',
@@ -158,7 +159,7 @@ export default function ProjectEditorPage() {
           setHasUnsavedChanges(true);
         }
       } catch (err: any) {
-        showToast('error', err.message || 'Lỗi khi tải project');
+        showToast('error', getErrorMessage(err, 'Failed to load project details.'));
       } finally {
         setLoading(false);
         setLoadingPrompts(false);
@@ -168,7 +169,7 @@ export default function ProjectEditorPage() {
     fetchData();
   }, [projectId]);
 
-  // Real-time graph validation (BR-SPN-001..005)
+  // Real-time graph validation
   const checkGraphValidity = () => {
     const inputNode = nodes.find(n => n.type === 'web_input');
     const modelNode = nodes.find(n => n.type === 'model');
@@ -207,14 +208,13 @@ export default function ProjectEditorPage() {
         edges
       };
       const res = await ProjectService.saveGraph(projectId, graphData);
-      showToast('success', res.message || 'Đã lưu cấu trúc graph thành công!');
+      showToast('success', res.message || 'Graph pipeline saved successfully.');
       setHasUnsavedChanges(false);
       
-      // Cập nhật lại project
       const updatedProj = await ProjectService.getProject(projectId);
       setProject(updatedProj);
     } catch (err: any) {
-      showToast('error', err.message || 'Lỗi khi lưu graph');
+      showToast('error', getErrorMessage(err, 'Failed to save graph.'));
     } finally {
       setSaving(false);
     }
@@ -225,29 +225,29 @@ export default function ProjectEditorPage() {
     try {
       if (targetStatus === 'ACTIVE') {
         if (!isGraphValid) {
-          showToast('error', 'Graph chưa hợp lệ! Vui lòng nối Input → Model → Output và System Prompt (nếu có).');
+          showToast('error', 'Invalid graph! Please connect Input -> Model -> Output, and System Prompt if added.');
           return;
         }
         await ProjectService.activateProject(projectId);
-        showToast('success', 'Đã kích hoạt project! Có thể chọn chat từ Trang Chủ.');
+        showToast('success', 'Project activated! Available in Chat.');
       } else if (targetStatus === 'STOP') {
         await ProjectService.stopProject(projectId);
-        showToast('success', 'Đã tạm dừng project.');
+        showToast('success', 'Project paused.');
       } else {
         await ProjectService.deactivateProject(projectId);
-        showToast('success', 'Đã vô hiệu hóa project.');
+        showToast('success', 'Project disabled.');
       }
       const updatedProj = await ProjectService.getProject(projectId);
       setProject(updatedProj);
     } catch (err: any) {
-      showToast('error', err.message || 'Thao tác trạng thái thất bại');
+      showToast('error', getErrorMessage(err, 'Failed to update project status.'));
     }
   };
 
   // Add standard node (Input, Model, Output)
   const handleAddStandardNode = (type: NodeType) => {
     if (nodes.some(n => n.type === type)) {
-      showToast('error', `Mỗi project chỉ được chứa tối đa 1 ${type === 'web_input' ? 'Web Input' : type === 'model' ? 'Model' : 'Output'} Node.`);
+      showToast('error', `Each project can contain at most one ${type === 'web_input' ? 'Web Input' : type === 'model' ? 'Model' : 'Output'} node.`);
       return;
     }
 
@@ -284,10 +284,10 @@ export default function ProjectEditorPage() {
     setSelectedNodeId(newId);
   };
 
-  // Add System Prompt Node from Prompt Library (MVP - DEC-SPN-01, DEC-SPN-02)
+  // Add System Prompt Node from Prompt Library
   const handleAddPromptNode = (prompt: SystemPromptSummary) => {
     if (nodes.some(n => n.type === 'system_prompt')) {
-      showToast('error', 'Mỗi project chỉ được chứa tối đa 1 System Prompt Node trong MVP. Bạn có thể xóa node cũ hoặc chọn prompt khác trong bảng cấu hình.');
+      showToast('error', 'Only one System Prompt node is allowed per pipeline. You can update or replace the existing prompt.');
       return;
     }
 
@@ -309,7 +309,7 @@ export default function ProjectEditorPage() {
     setNodes(prev => [...prev, newNode]);
     setHasUnsavedChanges(true);
     setSelectedNodeId(newId);
-    showToast('success', `Đã thêm System Prompt: "${prompt.name}" vào Canvas!`);
+    showToast('success', `Added System Prompt: "${prompt.name}" to canvas.`);
   };
 
   // Delete node
@@ -327,7 +327,7 @@ export default function ProjectEditorPage() {
     setHasUnsavedChanges(true);
   };
 
-  // Canvas Mouse Down: Detect node drag or canvas pan
+  // Canvas Mouse Down
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
     if (
       (e.target as HTMLElement).closest('.node-card') ||
@@ -337,11 +337,9 @@ export default function ProjectEditorPage() {
       return;
     }
 
-    // Click on canvas background: deselect
     setSelectedNodeId(null);
     setSelectedEdgeId(null);
 
-    // Pan canvas
     setIsPanning(true);
     setPanStart({ x: e.clientX - viewport.x, y: e.clientY - viewport.y });
   };
@@ -349,9 +347,9 @@ export default function ProjectEditorPage() {
   const handleCanvasMouseMove = (e: React.MouseEvent) => {
     if (!canvasRef.current) return;
     const rect = canvasRef.current.getBoundingClientRect();
-    const currentMouseX = (e.clientX - rect.left - viewport.x) / viewport.zoom;
-    const currentMouseY = (e.clientY - rect.top - viewport.y) / viewport.zoom;
-    setMousePos({ x: currentMouseX, y: currentMouseY });
+    const curX = (e.clientX - rect.left - viewport.x) / viewport.zoom;
+    const curY = (e.clientY - rect.top - viewport.y) / viewport.zoom;
+    setMousePos({ x: curX, y: curY });
 
     if (isPanning) {
       setViewport(prev => ({
@@ -359,17 +357,14 @@ export default function ProjectEditorPage() {
         x: e.clientX - panStart.x,
         y: e.clientY - panStart.y
       }));
-      return;
-    }
-
-    if (draggingNodeId) {
+    } else if (draggingNodeId) {
       setNodes(prev => prev.map(n => {
         if (n.id === draggingNodeId) {
           return {
             ...n,
             position: {
-              x: Math.round(currentMouseX - dragOffset.x),
-              y: Math.round(currentMouseY - dragOffset.y)
+              x: Math.round(curX - dragOffset.x),
+              y: Math.round(curY - dragOffset.y)
             }
           };
         }
@@ -385,34 +380,33 @@ export default function ProjectEditorPage() {
     setConnectingSourceNodeId(null);
   };
 
-  // Start dragging a node
   const handleNodeMouseDown = (e: React.MouseEvent, node: GraphNode) => {
     e.stopPropagation();
     setSelectedNodeId(node.id);
     setSelectedEdgeId(null);
-    setDraggingNodeId(node.id);
 
-    if (canvasRef.current) {
-      const rect = canvasRef.current.getBoundingClientRect();
-      const clickX = (e.clientX - rect.left - viewport.x) / viewport.zoom;
-      const clickY = (e.clientY - rect.top - viewport.y) / viewport.zoom;
-      const nodeX = (node.position && typeof node.position.x === 'number') ? node.position.x : 80;
-      const nodeY = (node.position && typeof node.position.y === 'number') ? node.position.y : 180;
-      setDragOffset({
-        x: clickX - nodeX,
-        y: clickY - nodeY
-      });
-    }
+    if (!canvasRef.current) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const curX = (e.clientX - rect.left - viewport.x) / viewport.zoom;
+    const curY = (e.clientY - rect.top - viewport.y) / viewport.zoom;
+
+    const nodePos = (node.position && typeof node.position.x === 'number' && typeof node.position.y === 'number')
+      ? node.position
+      : { x: 80, y: 180 };
+
+    setDraggingNodeId(node.id);
+    setDragOffset({
+      x: curX - nodePos.x,
+      y: curY - nodePos.y
+    });
   };
 
-  // Start creating a connection from a source handle
   const handleSourceHandleMouseDown = (e: React.MouseEvent, nodeId: string) => {
     e.stopPropagation();
     setConnectingSourceNodeId(nodeId);
   };
 
-  // Finish connection on a target handle (with Typed Connection rules)
-  const handleTargetHandleMouseUp = (e: React.MouseEvent, targetNodeId: string, targetHandle: 'in' | 'system_instruction') => {
+  const handleTargetHandleMouseUp = (e: React.MouseEvent, targetNodeId: string, targetHandle: string) => {
     e.stopPropagation();
     if (!connectingSourceNodeId || connectingSourceNodeId === targetNodeId) {
       setConnectingSourceNodeId(null);
@@ -427,52 +421,48 @@ export default function ProjectEditorPage() {
       return;
     }
 
-    // Quy tắc kết nối typed ports (BR-SPN-001..003)
-    let isValidPair = false;
+    let isValid = false;
     let edgeType = 'data_flow';
 
     if (srcNode.type === 'web_input' && tgtNode.type === 'model' && targetHandle === 'in') {
-      isValidPair = true;
+      isValid = true;
       edgeType = 'data_flow';
     } else if (srcNode.type === 'system_prompt' && tgtNode.type === 'model' && targetHandle === 'system_instruction') {
-      isValidPair = true;
+      isValid = true;
       edgeType = 'system_instruction';
     } else if (srcNode.type === 'model' && tgtNode.type === 'output' && targetHandle === 'in') {
-      isValidPair = true;
+      isValid = true;
       edgeType = 'data_flow';
     }
 
-    if (!isValidPair) {
-      if (srcNode.type === 'system_prompt' && targetHandle === 'in') {
-        showToast('error', 'System Prompt Node phải nối vào cổng "Cổng Chỉ Dẫn Hệ Thống" (màu cam) của Model Node.');
-      } else if (srcNode.type === 'web_input' && targetHandle === 'system_instruction') {
-        showToast('error', 'Web Input Node phải nối vào cổng "Cổng Nhận Dữ Liệu" (màu xanh) của Model Node.');
+    if (!isValid) {
+      if (srcNode.type === 'system_prompt' && targetHandle !== 'system_instruction') {
+        showToast('error', 'System Prompt node must connect to the Instruction input (orange port) of the Model node.');
+      } else if (srcNode.type === 'web_input' && targetHandle !== 'in') {
+        showToast('error', 'Web Input node must connect to the Data input (blue port) of the Model node.');
       } else {
-        showToast('error', `Không thể kết nối ${srcNode.type} sang ${tgtNode.type}. Kết nối hợp lệ: Web Input → Model, System Prompt → Model, Model → Output.`);
+        showToast('error', `Cannot connect ${srcNode.type} to ${tgtNode.type}. Valid edges: Web Input -> Model, System Prompt -> Model, Model -> Output.`);
       }
       setConnectingSourceNodeId(null);
       return;
     }
 
-    // Kiểm tra trùng lặp
     if (edges.some(e => e.source === srcNode.id && e.target === tgtNode.id)) {
       setConnectingSourceNodeId(null);
       return;
     }
 
-    // Kiểm tra giới hạn: Model chỉ nhận tối đa 1 System Prompt Node (DEC-SPN-02)
     if (srcNode.type === 'system_prompt') {
       const existingPromptEdge = edges.find(
         e => e.target === tgtNode.id && nodes.find(n => n.id === e.source)?.type === 'system_prompt'
       );
       if (existingPromptEdge && existingPromptEdge.source !== srcNode.id) {
-        showToast('error', 'Model Node đã có 1 System Prompt kết nối (giới hạn tối đa 0..1 trong MVP).');
+        showToast('error', 'Model node already has a connected System Prompt.');
         setConnectingSourceNodeId(null);
         return;
       }
     }
 
-    // Gỡ kết nối cũ cho cùng loại handle để thay thế liền mạch
     const newEdges = edges.filter(e => {
       if (srcNode.type === 'web_input' && e.source === srcNode.id) return false;
       if (srcNode.type === 'system_prompt' && e.source === srcNode.id) return false;
@@ -497,13 +487,11 @@ export default function ProjectEditorPage() {
     setEdges([...newEdges, newEdge]);
     setConnectingSourceNodeId(null);
     setHasUnsavedChanges(true);
-    showToast('success', `Đã kết nối: ${srcNode.data.label} → ${tgtNode.data.label} (${edgeType})`);
+    showToast('success', `Connected: ${srcNode.data.label} -> ${tgtNode.data.label} (${edgeType})`);
   };
 
-  // Selected node config object
   const selectedNode = nodes.find(n => n.id === selectedNodeId);
 
-  // Update selected node config
   const updateNodeConfig = (key: string, value: any) => {
     if (!selectedNodeId) return;
     setNodes(prev => prev.map(n => {
@@ -524,11 +512,9 @@ export default function ProjectEditorPage() {
     setHasUnsavedChanges(true);
   };
 
-  // Node dimensions for Bézier curves calculation
   const NODE_WIDTH = 220;
   const NODE_HEIGHT = 100;
 
-  // Filtered System Prompts based on search query
   const filteredPrompts = useMemo(() => {
     if (!searchQuery.trim()) return availablePrompts;
     const q = searchQuery.toLowerCase().trim();
@@ -539,7 +525,7 @@ export default function ProjectEditorPage() {
   }, [availablePrompts, searchQuery]);
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#0a0f1d', color: '#fff', overflow: 'hidden' }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg-base)', color: 'var(--text-primary)', overflow: 'hidden' }}>
       {/* Toast */}
       {toast && (
         <div style={{
@@ -547,104 +533,89 @@ export default function ProjectEditorPage() {
           top: '20px',
           right: '20px',
           zIndex: 9999,
-          padding: '12px 20px',
-          borderRadius: '8px',
-          background: toast.type === 'success' ? 'rgba(16, 185, 129, 0.95)' : 'rgba(239, 68, 68, 0.95)',
-          color: '#fff',
-          fontWeight: 600,
+          padding: '10px 18px',
+          borderRadius: 'var(--radius-md)',
+          background: toast.type === 'success' ? '#064e3b' : 'var(--danger-bg)',
+          color: toast.type === 'success' ? 'var(--accent)' : 'var(--danger)',
+          border: `1px solid ${toast.type === 'success' ? '#10b981' : 'var(--danger-border)'}`,
+          fontWeight: 500,
+          fontSize: '0.85rem',
           boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
-          backdropFilter: 'blur(8px)'
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px'
         }}>
-          {toast.message}
+          <Icon name={toast.type === 'success' ? 'check' : 'alert'} size={14} />
+          <span>{toast.message}</span>
         </div>
       )}
 
-      {/* Top Header Bar */}
+      {/* Editor Contextual Toolbar */}
       <header style={{
-        height: '60px',
-        borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-        background: 'rgba(15, 23, 42, 0.9)',
-        backdropFilter: 'blur(12px)',
+        height: '52px',
+        borderBottom: '1px solid var(--border-subtle)',
+        background: 'var(--bg-surface)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: '0 1.5rem',
+        padding: '0 1.25rem',
         zIndex: 40
       }}>
         {/* Left: Back & Project Title */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           <button
             onClick={() => {
               if (hasUnsavedChanges) setShowUnsavedModal(true);
               else router.push('/projects');
             }}
-            style={{
-              background: 'transparent',
-              border: '1px solid rgba(255, 255, 255, 0.15)',
-              color: 'var(--text-secondary, #94a3b8)',
-              padding: '6px 14px',
-              borderRadius: '6px',
-              fontSize: '0.85rem',
-              cursor: 'pointer'
-            }}
+            className="btn btn-secondary"
+            style={{ padding: '5px 12px', fontSize: '0.8rem' }}
           >
-            ← Danh Sách
+            <Icon name="projects" size={13} />
+            Back to Projects
           </button>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontWeight: 700, fontSize: '1.1rem', color: '#fff' }}>
-              {project?.name || 'Project Editor'}
+            <span style={{ fontWeight: 600, fontSize: '0.95rem', color: 'var(--text-primary)' }}>
+              {project?.name || 'Project Pipeline'}
             </span>
             {hasUnsavedChanges && (
-              <span style={{ color: '#f59e0b', fontSize: '0.75rem', fontWeight: 600 }}>• Chưa lưu</span>
+              <span style={{ color: '#f59e0b', fontSize: '0.75rem', fontWeight: 500 }}>• Unsaved</span>
             )}
           </div>
         </div>
 
         {/* Center: Graph Validity Badge */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '6px',
-          padding: '4px 14px',
-          borderRadius: '20px',
-          background: isGraphValid ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-          border: `1px solid ${isGraphValid ? '#22c55e' : '#ef4444'}`,
-          fontSize: '0.8rem',
-          fontWeight: 600,
-          color: isGraphValid ? '#4ade80' : '#f87171'
-        }}>
-          <span>{isGraphValid ? '✓' : '⚠'}</span>
+        <div className={`badge ${isGraphValid ? 'badge-success' : 'badge-danger'}`} style={{ fontSize: '0.75rem', padding: '4px 10px' }}>
+          <Icon name={isGraphValid ? 'check' : 'alert'} size={12} />
           <span>
             {isGraphValid
-              ? (hasSystemPromptNode ? 'Graph Hợp Lệ (+ System Prompt)' : 'Graph Hợp Lệ (3 Node Cơ Bản)')
-              : 'Thiếu Kết Nối Graph'}
+              ? (hasSystemPromptNode ? 'Valid Pipeline (+ System Prompt)' : 'Valid Pipeline (3 Basic Nodes)')
+              : 'Missing Connections'}
           </span>
         </div>
 
         {/* Right: Actions */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          {/* Status Dropdown */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           {project && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Trạng thái:</span>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Status:</span>
               <select
                 value={project.status}
                 onChange={e => handleToggleStatus(e.target.value as any)}
+                className="input"
                 style={{
-                  background: 'rgba(0, 0, 0, 0.4)',
-                  color: project.status === 'ACTIVE' ? '#4ade80' : project.status === 'STOP' ? '#fbbf24' : '#94a3b8',
-                  border: '1px solid rgba(255, 255, 255, 0.15)',
-                  padding: '6px 10px',
-                  borderRadius: '6px',
+                  padding: '4px 8px',
+                  fontSize: '0.8rem',
                   fontWeight: 600,
-                  fontSize: '0.85rem',
-                  cursor: 'pointer'
+                  width: 'auto',
+                  color: project.status === 'ACTIVE' ? 'var(--accent)' : project.status === 'STOP' ? '#fbbf24' : 'var(--text-muted)'
                 }}
               >
-                <option value="STOP">🟡 STOP (Tạm dừng)</option>
-                <option value="ACTIVE">🟢 ACTIVE (Hoạt động)</option>
-                <option value="DEACTIVE">⚪ DEACTIVE (Vô hiệu)</option>
+                <option value="STOP">STOP (Paused)</option>
+                <option value="ACTIVE">ACTIVE (Running)</option>
+                <option value="DEACTIVE">INACTIVE (Disabled)</option>
               </select>
             </div>
           )}
@@ -653,83 +624,61 @@ export default function ProjectEditorPage() {
           <button
             onClick={handleSave}
             disabled={saving}
-            style={{
-              background: 'var(--accent-gradient, linear-gradient(135deg, #a855f7, #6366f1))',
-              color: '#fff',
-              border: 'none',
-              padding: '8px 20px',
-              borderRadius: '6px',
-              fontWeight: 600,
-              fontSize: '0.9rem',
-              cursor: saving ? 'not-allowed' : 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              boxShadow: '0 4px 12px rgba(168, 85, 247, 0.3)'
-            }}
+            className="btn btn-primary"
+            style={{ padding: '6px 14px', fontSize: '0.8rem' }}
           >
-            <span>💾</span>
-            <span>{saving ? 'Đang lưu...' : 'Lưu Graph'}</span>
+            <Icon name="check" size={13} />
+            <span>{saving ? 'Saving...' : 'Save Graph'}</span>
           </button>
         </div>
       </header>
 
       {/* Editor Body */}
       <div style={{ flex: 1, display: 'flex', position: 'relative', overflow: 'hidden' }}>
-        {/* Left Toolbar: Node Catalog with 4 Categories, Search & Filter (BR-SPN-001) */}
+        {/* Left Toolbar: Node Catalog */}
         <aside style={{
-          width: '280px',
-          borderRight: '1px solid rgba(255, 255, 255, 0.08)',
-          background: 'rgba(15, 23, 42, 0.75)',
-          backdropFilter: 'blur(12px)',
-          padding: '1rem',
+          width: '260px',
+          borderRight: '1px solid var(--border-subtle)',
+          background: 'var(--bg-surface)',
+          padding: '0.85rem',
           display: 'flex',
           flexDirection: 'column',
           gap: '0.75rem',
           zIndex: 20,
           overflowY: 'auto'
         }}>
-          {/* Header Title */}
           <div>
-            <h4 style={{ margin: '0 0 0.2rem 0', fontSize: '0.85rem', textTransform: 'uppercase', color: '#94a3b8', letterSpacing: '0.05em', fontWeight: 700 }}>
+            <h4 style={{ margin: '0 0 0.15rem 0', fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.05em', fontWeight: 700 }}>
               Node Catalog
             </h4>
-            <p style={{ margin: 0, fontSize: '0.72rem', color: '#64748b' }}>
-              4 nhóm node • Kéo hoặc nhấn để thêm vào Canvas
+            <p style={{ margin: 0, fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+              Drag or click to place nodes onto canvas
             </p>
           </div>
 
-          {/* Search Bar at Top of Catalog */}
+          {/* Search Bar */}
           <div style={{ position: 'relative' }}>
             <input
               type="text"
-              placeholder="🔍 Tìm node hoặc prompt..."
+              placeholder="Search nodes or prompts..."
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '7px 28px 7px 10px',
-                borderRadius: '6px',
-                border: '1px solid rgba(255, 255, 255, 0.12)',
-                background: 'rgba(0, 0, 0, 0.35)',
-                color: '#fff',
-                fontSize: '0.8rem',
-                outline: 'none'
-              }}
+              className="input"
+              style={{ padding: '6px 24px 6px 8px', fontSize: '0.75rem' }}
             />
             {searchQuery && (
               <button
                 onClick={() => setSearchQuery('')}
                 style={{
                   position: 'absolute',
-                  right: '8px',
+                  right: '6px',
                   top: '50%',
                   transform: 'translateY(-50%)',
                   background: 'transparent',
                   border: 'none',
-                  color: '#94a3b8',
+                  color: 'var(--text-muted)',
                   cursor: 'pointer',
-                  fontSize: '0.8rem'
+                  fontSize: '0.75rem'
                 }}
               >
                 ✕
@@ -740,7 +689,7 @@ export default function ProjectEditorPage() {
           {/* Category Filter Pills */}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
             {[
-              { id: 'all', label: 'Tất cả' },
+              { id: 'all', label: 'All' },
               { id: 'input', label: 'Input' },
               { id: 'system_prompt', label: 'Prompt' },
               { id: 'model', label: 'Model' },
@@ -751,12 +700,12 @@ export default function ProjectEditorPage() {
                 onClick={() => setFilterCategory(f.id as any)}
                 style={{
                   padding: '3px 8px',
-                  borderRadius: '12px',
-                  border: filterCategory === f.id ? '1px solid #a855f7' : '1px solid rgba(255, 255, 255, 0.1)',
-                  background: filterCategory === f.id ? 'rgba(168, 85, 247, 0.25)' : 'rgba(255, 255, 255, 0.04)',
-                  color: filterCategory === f.id ? '#e9d5ff' : '#94a3b8',
+                  borderRadius: '4px',
+                  border: filterCategory === f.id ? '1px solid var(--accent)' : '1px solid var(--border-subtle)',
+                  background: filterCategory === f.id ? 'rgba(62, 207, 142, 0.1)' : 'transparent',
+                  color: filterCategory === f.id ? 'var(--accent)' : 'var(--text-secondary)',
                   fontSize: '0.7rem',
-                  fontWeight: 600,
+                  fontWeight: 500,
                   cursor: 'pointer'
                 }}
               >
@@ -765,58 +714,55 @@ export default function ProjectEditorPage() {
             ))}
           </div>
 
-          {/* 4 Collapsible Accordion Groups */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.25rem' }}>
-
-            {/* Group 1: INPUT */}
+          {/* Catalog Groups */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            {/* 1. Input Group */}
             {(filterCategory === 'all' || filterCategory === 'input') && (
-              <div style={{ border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '8px', overflow: 'hidden' }}>
-                <div
+              <div style={{ border: '1px solid var(--border-subtle)', borderRadius: '6px', overflow: 'hidden' }}>
+                <button
                   onClick={() => toggleGroup('input')}
                   style={{
-                    padding: '8px 12px',
-                    background: 'rgba(6, 182, 212, 0.1)',
+                    width: '100%',
+                    padding: '6px 8px',
+                    background: 'var(--bg-subtle)',
+                    border: 'none',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
                     cursor: 'pointer',
-                    userSelect: 'none'
+                    color: 'var(--text-secondary)',
+                    fontSize: '0.75rem',
+                    fontWeight: 600
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span>📥</span>
-                    <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#38bdf8' }}>Input (1)</span>
-                  </div>
-                  <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
-                    {collapsedGroups['input'] && !searchQuery ? '▶' : '▼'}
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Icon name="chat" size={13} style={{ color: '#06b6d4' }} />
+                    Input Nodes
                   </span>
-                </div>
-
-                {(!collapsedGroups['input'] || searchQuery) && (
-                  <div style={{ padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px', background: 'rgba(0, 0, 0, 0.2)' }}>
+                  <span>{collapsedGroups.input ? '+' : '−'}</span>
+                </button>
+                {!collapsedGroups.input && (
+                  <div style={{ padding: '6px' }}>
                     {(() => {
                       const alreadyExists = nodes.some(n => n.type === 'web_input');
-                      const matchesSearch = !searchQuery || 'web input nhận câu hỏi'.toLowerCase().includes(searchQuery.toLowerCase());
-                      if (!matchesSearch) return null;
-
                       return (
                         <div
                           onClick={() => handleAddStandardNode('web_input')}
                           style={{
-                            background: 'rgba(255, 255, 255, 0.03)',
-                            border: `1px solid ${alreadyExists ? 'rgba(255, 255, 255, 0.08)' : '#06b6d4'}`,
-                            borderRadius: '8px',
-                            padding: '8px',
+                            background: 'var(--bg-surface)',
+                            border: '1px solid var(--border-subtle)',
+                            borderRadius: '4px',
+                            padding: '6px 8px',
                             cursor: alreadyExists ? 'not-allowed' : 'pointer',
                             opacity: alreadyExists ? 0.5 : 1
                           }}
                         >
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <span style={{ fontWeight: 600, fontSize: '0.8rem', color: '#fff' }}>Web Input Node</span>
-                            {alreadyExists && <span style={{ fontSize: '0.65rem', background: '#334155', padding: '1px 4px', borderRadius: '4px' }}>Đã có</span>}
+                            <span style={{ fontWeight: 600, fontSize: '0.75rem', color: 'var(--text-primary)' }}>Web Input Node</span>
+                            {alreadyExists && <span className="badge badge-neutral" style={{ fontSize: '0.65rem' }}>Added</span>}
                           </div>
-                          <div style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: '2px' }}>
-                            Nhận câu hỏi từ Web Chat (giới hạn số từ)
+                          <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                            Captures user message from chat (word limit)
                           </div>
                         </div>
                       );
@@ -826,81 +772,72 @@ export default function ProjectEditorPage() {
               </div>
             )}
 
-            {/* Group 2: SYSTEM PROMPT (MVP) */}
+            {/* 2. System Prompt Group */}
             {(filterCategory === 'all' || filterCategory === 'system_prompt') && (
-              <div style={{ border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '8px', overflow: 'hidden' }}>
-                <div
+              <div style={{ border: '1px solid var(--border-subtle)', borderRadius: '6px', overflow: 'hidden' }}>
+                <button
                   onClick={() => toggleGroup('system_prompt')}
                   style={{
-                    padding: '8px 12px',
-                    background: 'rgba(245, 158, 11, 0.1)',
+                    width: '100%',
+                    padding: '6px 8px',
+                    background: 'var(--bg-subtle)',
+                    border: 'none',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
                     cursor: 'pointer',
-                    userSelect: 'none'
+                    color: 'var(--text-secondary)',
+                    fontSize: '0.75rem',
+                    fontWeight: 600
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span>📜</span>
-                    <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#fbbf24' }}>
-                      System Prompt ({availablePrompts.length})
-                    </span>
-                  </div>
-                  <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
-                    {collapsedGroups['system_prompt'] && !searchQuery ? '▶' : '▼'}
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Icon name="prompts" size={13} style={{ color: '#f59e0b' }} />
+                    System Prompts ({filteredPrompts.length})
                   </span>
-                </div>
-
-                {(!collapsedGroups['system_prompt'] || searchQuery) && (
-                  <div style={{ padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px', background: 'rgba(0, 0, 0, 0.2)' }}>
+                  <span>{collapsedGroups.system_prompt ? '+' : '−'}</span>
+                </button>
+                {!collapsedGroups.system_prompt && (
+                  <div style={{ padding: '6px', display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '180px', overflowY: 'auto' }}>
                     {loadingPrompts ? (
-                      <div style={{ fontSize: '0.72rem', color: '#94a3b8', textAlign: 'center', padding: '6px' }}>
-                        Đang tải danh sách prompt...
-                      </div>
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', padding: '6px' }}>Loading prompts...</div>
                     ) : filteredPrompts.length === 0 ? (
-                      <div style={{ fontSize: '0.72rem', color: '#94a3b8', textAlign: 'center', padding: '6px' }}>
-                        {searchQuery ? 'Không tìm thấy prompt phù hợp' : 'Chưa có prompt trong thư viện'}
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', padding: '6px' }}>
+                        {searchQuery ? 'No matching prompts found' : 'No prompts in library'}
                         <div style={{ marginTop: '4px' }}>
-                          <Link href="/system-prompts" target="_blank" style={{ color: '#fbbf24', textDecoration: 'underline' }}>
-                            + Quản lý Prompt
+                          <Link href="/prompts" style={{ color: 'var(--accent)', textDecoration: 'none' }}>
+                            + Manage Prompts
                           </Link>
                         </div>
                       </div>
                     ) : (
                       filteredPrompts.map(p => {
-                        const isCurrentPromptOnCanvas = nodes.some(
-                          n => n.type === 'system_prompt' && n.data.config?.prompt_id === p.id
-                        );
+                        const isUsedInCanvas = nodes.some(n => n.type === 'system_prompt' && n.data.config?.prompt_id === p.id);
                         return (
                           <div
                             key={p.id}
                             onClick={() => handleAddPromptNode(p)}
                             style={{
-                              background: 'rgba(255, 255, 255, 0.03)',
-                              border: `1px solid ${isCurrentPromptOnCanvas ? 'rgba(255, 255, 255, 0.08)' : '#f59e0b'}`,
-                              borderRadius: '8px',
-                              padding: '8px',
-                              cursor: isCurrentPromptOnCanvas ? 'not-allowed' : 'pointer',
-                              opacity: isCurrentPromptOnCanvas ? 0.5 : 1,
-                              transition: 'all 0.15s'
+                              background: 'var(--bg-surface)',
+                              border: '1px solid var(--border-subtle)',
+                              borderRadius: '4px',
+                              padding: '6px 8px',
+                              cursor: isUsedInCanvas ? 'not-allowed' : 'pointer',
+                              opacity: isUsedInCanvas ? 0.5 : 1
                             }}
-                            title={`Nhấn để thêm "${p.name}" vào Canvas`}
                           >
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                              <span style={{ fontWeight: 600, fontSize: '0.8rem', color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '170px' }}>
+                              <span style={{ fontWeight: 600, fontSize: '0.75rem', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                 {p.name}
                               </span>
-                              {isCurrentPromptOnCanvas ? (
-                                <span style={{ fontSize: '0.65rem', background: '#334155', padding: '1px 4px', borderRadius: '4px' }}>
-                                  Đang dùng
-                                </span>
+                              {isUsedInCanvas ? (
+                                <span className="badge badge-neutral" style={{ fontSize: '0.65rem' }}>In Use</span>
                               ) : (
-                                <span style={{ fontSize: '0.65rem', color: '#fbbf24' }}>+ Thêm</span>
+                                <span style={{ fontSize: '0.65rem', color: 'var(--accent)' }}>+ Add</span>
                               )}
                             </div>
                             {p.description && (
-                              <div style={{ fontSize: '0.68rem', color: '#94a3b8', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                 {p.description}
                               </div>
                             )}
@@ -913,55 +850,53 @@ export default function ProjectEditorPage() {
               </div>
             )}
 
-            {/* Group 3: MODEL */}
+            {/* 3. Model Group */}
             {(filterCategory === 'all' || filterCategory === 'model') && (
-              <div style={{ border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '8px', overflow: 'hidden' }}>
-                <div
+              <div style={{ border: '1px solid var(--border-subtle)', borderRadius: '6px', overflow: 'hidden' }}>
+                <button
                   onClick={() => toggleGroup('model')}
                   style={{
-                    padding: '8px 12px',
-                    background: 'rgba(168, 85, 247, 0.1)',
+                    width: '100%',
+                    padding: '6px 8px',
+                    background: 'var(--bg-subtle)',
+                    border: 'none',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
                     cursor: 'pointer',
-                    userSelect: 'none'
+                    color: 'var(--text-secondary)',
+                    fontSize: '0.75rem',
+                    fontWeight: 600
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span>🧠</span>
-                    <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#c084fc' }}>Model (1)</span>
-                  </div>
-                  <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
-                    {collapsedGroups['model'] && !searchQuery ? '▶' : '▼'}
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Icon name="settings" size={13} style={{ color: '#a855f7' }} />
+                    Model LLM
                   </span>
-                </div>
-
-                {(!collapsedGroups['model'] || searchQuery) && (
-                  <div style={{ padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px', background: 'rgba(0, 0, 0, 0.2)' }}>
+                  <span>{collapsedGroups.model ? '+' : '−'}</span>
+                </button>
+                {!collapsedGroups.model && (
+                  <div style={{ padding: '6px' }}>
                     {(() => {
                       const alreadyExists = nodes.some(n => n.type === 'model');
-                      const matchesSearch = !searchQuery || 'model llm suy luận ai'.toLowerCase().includes(searchQuery.toLowerCase());
-                      if (!matchesSearch) return null;
-
                       return (
                         <div
                           onClick={() => handleAddStandardNode('model')}
                           style={{
-                            background: 'rgba(255, 255, 255, 0.03)',
-                            border: `1px solid ${alreadyExists ? 'rgba(255, 255, 255, 0.08)' : '#a855f7'}`,
-                            borderRadius: '8px',
-                            padding: '8px',
+                            background: 'var(--bg-surface)',
+                            border: '1px solid var(--border-subtle)',
+                            borderRadius: '4px',
+                            padding: '6px 8px',
                             cursor: alreadyExists ? 'not-allowed' : 'pointer',
                             opacity: alreadyExists ? 0.5 : 1
                           }}
                         >
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <span style={{ fontWeight: 600, fontSize: '0.8rem', color: '#fff' }}>Model LLM Node</span>
-                            {alreadyExists && <span style={{ fontSize: '0.65rem', background: '#334155', padding: '1px 4px', borderRadius: '4px' }}>Đã có</span>}
+                            <span style={{ fontWeight: 600, fontSize: '0.75rem', color: 'var(--text-primary)' }}>Model LLM Node</span>
+                            {alreadyExists && <span className="badge badge-neutral" style={{ fontSize: '0.65rem' }}>Added</span>}
                           </div>
-                          <div style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: '2px' }}>
-                            Xử lý suy luận AI qua Provider
+                          <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                            AI inference processing via provider
                           </div>
                         </div>
                       );
@@ -971,55 +906,53 @@ export default function ProjectEditorPage() {
               </div>
             )}
 
-            {/* Group 4: OUTPUT */}
+            {/* 4. Output Group */}
             {(filterCategory === 'all' || filterCategory === 'output') && (
-              <div style={{ border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '8px', overflow: 'hidden' }}>
-                <div
+              <div style={{ border: '1px solid var(--border-subtle)', borderRadius: '6px', overflow: 'hidden' }}>
+                <button
                   onClick={() => toggleGroup('output')}
                   style={{
-                    padding: '8px 12px',
-                    background: 'rgba(16, 185, 129, 0.1)',
+                    width: '100%',
+                    padding: '6px 8px',
+                    background: 'var(--bg-subtle)',
+                    border: 'none',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
                     cursor: 'pointer',
-                    userSelect: 'none'
+                    color: 'var(--text-secondary)',
+                    fontSize: '0.75rem',
+                    fontWeight: 600
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span>💬</span>
-                    <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#34d399' }}>Output (1)</span>
-                  </div>
-                  <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
-                    {collapsedGroups['output'] && !searchQuery ? '▶' : '▼'}
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Icon name="check" size={13} style={{ color: 'var(--accent)' }} />
+                    Output Nodes
                   </span>
-                </div>
-
-                {(!collapsedGroups['output'] || searchQuery) && (
-                  <div style={{ padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px', background: 'rgba(0, 0, 0, 0.2)' }}>
+                  <span>{collapsedGroups.output ? '+' : '−'}</span>
+                </button>
+                {!collapsedGroups.output && (
+                  <div style={{ padding: '6px' }}>
                     {(() => {
                       const alreadyExists = nodes.some(n => n.type === 'output');
-                      const matchesSearch = !searchQuery || 'web output phản hồi streaming'.toLowerCase().includes(searchQuery.toLowerCase());
-                      if (!matchesSearch) return null;
-
                       return (
                         <div
                           onClick={() => handleAddStandardNode('output')}
                           style={{
-                            background: 'rgba(255, 255, 255, 0.03)',
-                            border: `1px solid ${alreadyExists ? 'rgba(255, 255, 255, 0.08)' : '#10b981'}`,
-                            borderRadius: '8px',
-                            padding: '8px',
+                            background: 'var(--bg-surface)',
+                            border: '1px solid var(--border-subtle)',
+                            borderRadius: '4px',
+                            padding: '6px 8px',
                             cursor: alreadyExists ? 'not-allowed' : 'pointer',
                             opacity: alreadyExists ? 0.5 : 1
                           }}
                         >
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <span style={{ fontWeight: 600, fontSize: '0.8rem', color: '#fff' }}>Web Output Node</span>
-                            {alreadyExists && <span style={{ fontSize: '0.65rem', background: '#334155', padding: '1px 4px', borderRadius: '4px' }}>Đã có</span>}
+                            <span style={{ fontWeight: 600, fontSize: '0.75rem', color: 'var(--text-primary)' }}>Web Output Node</span>
+                            {alreadyExists && <span className="badge badge-neutral" style={{ fontSize: '0.65rem' }}>Added</span>}
                           </div>
-                          <div style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: '2px' }}>
-                            Định dạng phản hồi streaming (SSE)
+                          <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                            Formats streaming output responses (SSE)
                           </div>
                         </div>
                       );
@@ -1028,14 +961,13 @@ export default function ProjectEditorPage() {
                 )}
               </div>
             )}
-
           </div>
 
-          <div style={{ marginTop: 'auto', padding: '8px', background: 'rgba(0, 0, 0, 0.3)', borderRadius: '6px', fontSize: '0.7rem', color: '#94a3b8', lineHeight: '1.4' }}>
-            💡 <strong>Hướng dẫn nối:</strong><br />
-            • Cổng xanh (Input) → Cổng trên Model (User Input)<br />
-            • Cổng cam (Prompt) → Cổng dưới Model (Instruction)<br />
-            • Cổng phải Model → Cổng Output
+          <div style={{ marginTop: 'auto', padding: '6px 8px', background: 'var(--bg-subtle)', borderRadius: '4px', fontSize: '0.68rem', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+            <strong>Wiring Instructions:</strong><br />
+            • Blue port (Input) → Top port of Model (User Message)<br />
+            • Orange port (Prompt) → Bottom port of Model (Instruction)<br />
+            • Right port of Model → Output port
           </div>
         </aside>
 
@@ -1050,41 +982,40 @@ export default function ProjectEditorPage() {
             position: 'relative',
             overflow: 'hidden',
             cursor: isPanning ? 'grabbing' : 'default',
-            backgroundImage: 'radial-gradient(rgba(255, 255, 255, 0.1) 1px, transparent 1px)',
+            backgroundImage: 'radial-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px)',
             backgroundSize: `${24 * viewport.zoom}px ${24 * viewport.zoom}px`,
             backgroundPosition: `${viewport.x}px ${viewport.y}px`,
-            backgroundColor: '#0a0f1d'
+            backgroundColor: 'var(--bg-base)'
           }}
         >
-          {/* Zoom & Viewport Controls (Bottom Left) */}
+          {/* Zoom & Viewport Controls */}
           <div style={{
             position: 'absolute',
-            bottom: '20px',
-            left: '20px',
-            background: 'rgba(15, 23, 42, 0.85)',
-            border: '1px solid rgba(255, 255, 255, 0.1)',
-            borderRadius: '8px',
+            bottom: '16px',
+            left: '16px',
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: '6px',
             display: 'flex',
             alignItems: 'center',
-            padding: '4px 8px',
-            gap: '8px',
-            zIndex: 10,
-            backdropFilter: 'blur(8px)'
+            padding: '3px 6px',
+            gap: '6px',
+            zIndex: 10
           }}>
             <button
               onClick={() => setViewport(prev => ({ ...prev, zoom: Math.min(2, prev.zoom + 0.1) }))}
-              style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontWeight: 700 }}
+              style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', cursor: 'pointer', fontWeight: 700 }}
             >+</button>
-            <span style={{ fontSize: '0.8rem', color: '#94a3b8', minWidth: '40px', textAlign: 'center' }}>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', minWidth: '36px', textAlign: 'center' }}>
               {Math.round(viewport.zoom * 100)}%
             </span>
             <button
               onClick={() => setViewport(prev => ({ ...prev, zoom: Math.max(0.5, prev.zoom - 0.1) }))}
-              style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontWeight: 700 }}
+              style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', cursor: 'pointer', fontWeight: 700 }}
             >-</button>
             <button
               onClick={() => setViewport({ x: 0, y: 0, zoom: 1 })}
-              style={{ background: 'transparent', border: 'none', color: '#a855f7', cursor: 'pointer', fontSize: '0.75rem', marginLeft: '6px' }}
+              style={{ background: 'transparent', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontSize: '0.7rem', marginLeft: '4px' }}
             >Fit</button>
           </div>
 
@@ -1098,7 +1029,6 @@ export default function ProjectEditorPage() {
             pointerEvents: 'none'
           }}>
             <g transform={`translate(${viewport.x}, ${viewport.y}) scale(${viewport.zoom})`}>
-              {/* Existing Edges */}
               {edges.map(edge => {
                 const srcNode = nodes.find(n => n.id === edge.source);
                 const tgtNode = nodes.find(n => n.id === edge.target);
@@ -1117,7 +1047,6 @@ export default function ProjectEditorPage() {
                 const startX = srcPos.x + NODE_WIDTH;
                 const startY = srcPos.y + NODE_HEIGHT / 2;
 
-                // Model Node has two distinct target ports: in (top 32%) and system_instruction (top 72%)
                 let endY = tgtPos.y + NODE_HEIGHT / 2;
                 if (tgtNode.type === 'model') {
                   endY = isPromptEdge ? tgtPos.y + NODE_HEIGHT * 0.72 : tgtPos.y + NODE_HEIGHT * 0.32;
@@ -1127,11 +1056,10 @@ export default function ProjectEditorPage() {
                 const dx = Math.max(60, Math.abs(endX - startX) * 0.5);
                 const pathData = `M ${startX} ${startY} C ${startX + dx} ${startY}, ${endX - dx} ${endY}, ${endX} ${endY}`;
 
-                const edgeStroke = isSelected ? '#f43f5e' : (isPromptEdge ? '#f59e0b' : '#38bdf8');
+                const edgeStroke = isSelected ? 'var(--danger)' : (isPromptEdge ? '#f59e0b' : '#38bdf8');
 
                 return (
                   <g key={edge.id} style={{ pointerEvents: 'auto' }}>
-                    {/* Invisible wider path for easy clicking */}
                     <path
                       d={pathData}
                       fill="none"
@@ -1140,7 +1068,6 @@ export default function ProjectEditorPage() {
                       onClick={() => setSelectedEdgeId(edge.id)}
                       style={{ cursor: 'pointer' }}
                     />
-                    {/* Glowing Visible Path */}
                     <path
                       d={pathData}
                       fill="none"
@@ -1150,10 +1077,9 @@ export default function ProjectEditorPage() {
                       onClick={() => setSelectedEdgeId(edge.id)}
                       style={{ cursor: 'pointer' }}
                     />
-                    {/* Delete button when edge selected */}
                     {isSelected && (
                       <g transform={`translate(${(startX + endX) / 2}, ${(startY + endY) / 2})`}>
-                        <circle r={10} fill="#ef4444" style={{ cursor: 'pointer' }} onClick={() => handleDeleteEdge(edge.id)} />
+                        <circle r={10} fill="var(--danger)" style={{ cursor: 'pointer' }} onClick={() => handleDeleteEdge(edge.id)} />
                         <text textAnchor="middle" dy={4} fill="#fff" fontSize={11} fontWeight={700} style={{ pointerEvents: 'none' }}>×</text>
                       </g>
                     )}
@@ -1161,7 +1087,6 @@ export default function ProjectEditorPage() {
                 );
               })}
 
-              {/* In-progress Dragging Connection Line */}
               {connectingSourceNodeId && (() => {
                 const srcNode = nodes.find(n => n.id === connectingSourceNodeId);
                 if (!srcNode) return null;
@@ -1203,7 +1128,7 @@ export default function ProjectEditorPage() {
               const isModel = node.type === 'model';
               const isOutput = node.type === 'output';
 
-              const accentColor = isInput ? '#06b6d4' : isPrompt ? '#f59e0b' : isModel ? '#a855f7' : '#10b981';
+              const accentColor = isInput ? '#06b6d4' : isPrompt ? '#f59e0b' : isModel ? '#a855f7' : 'var(--accent)';
               const nodePos = (node.position && typeof node.position.x === 'number' && typeof node.position.y === 'number')
                 ? node.position
                 : { x: 80, y: 180 };
@@ -1219,115 +1144,110 @@ export default function ProjectEditorPage() {
                     top: `${nodePos.y}px`,
                     width: `${NODE_WIDTH}px`,
                     minHeight: `${NODE_HEIGHT}px`,
-                    background: 'rgba(15, 23, 42, 0.95)',
-                    border: `2px solid ${isSelected ? accentColor : 'rgba(255, 255, 255, 0.12)'}`,
-                    borderRadius: '12px',
-                    padding: '12px',
-                    boxShadow: isSelected ? `0 0 24px ${accentColor}40` : '0 10px 20px rgba(0,0,0,0.3)',
+                    background: 'var(--bg-surface)',
+                    border: `1.5px solid ${isSelected ? accentColor : 'var(--border-subtle)'}`,
+                    borderRadius: '8px',
+                    padding: '10px',
+                    boxShadow: isSelected ? `0 0 16px ${accentColor}30` : '0 4px 12px rgba(0,0,0,0.3)',
                     cursor: 'move',
                     userSelect: 'none',
                     display: 'flex',
                     flexDirection: 'column',
-                    justifyContent: 'space-between',
-                    transition: 'border-color 0.2s, box-shadow 0.2s'
+                    justifyContent: 'space-between'
                   }}
                 >
-                  {/* Left Target Handles */}
-                  {/* 1. For Output Node: single in handle */}
                   {isOutput && (
                     <div
                       className="handle-circle"
                       onMouseUp={e => handleTargetHandleMouseUp(e, node.id, 'in')}
                       style={{
                         position: 'absolute',
-                        left: '-8px',
+                        left: '-7px',
                         top: '50%',
                         transform: 'translateY(-50%)',
-                        width: '16px',
-                        height: '16px',
+                        width: '14px',
+                        height: '14px',
                         borderRadius: '50%',
-                        background: '#10b981',
-                        border: '2px solid #0f172a',
+                        background: 'var(--accent)',
+                        border: '2px solid var(--bg-surface)',
                         cursor: 'crosshair',
                         zIndex: 20
                       }}
-                      title="Cổng Nhận Dữ Liệu (In)"
+                      title="Data Input Port (In)"
                     />
                   )}
 
-                  {/* 2. For Model Node: DUAL INPUT HANDLES (Data Flow + System Instruction) */}
                   {isModel && (
                     <>
-                      {/* Port 1: User Message / Data Flow (Top Left 32%) */}
                       <div
                         className="handle-circle"
                         onMouseUp={e => handleTargetHandleMouseUp(e, node.id, 'in')}
                         style={{
                           position: 'absolute',
-                          left: '-8px',
+                          left: '-7px',
                           top: '32%',
                           transform: 'translateY(-50%)',
-                          width: '16px',
-                          height: '16px',
+                          width: '14px',
+                          height: '14px',
                           borderRadius: '50%',
                           background: '#38bdf8',
-                          border: '2px solid #0f172a',
+                          border: '2px solid var(--bg-surface)',
                           cursor: 'crosshair',
                           zIndex: 20
                         }}
-                        title="Cổng Nhận Dữ Liệu: Web Input (In)"
+                        title="User Message Port: Web Input (In)"
                       />
-                      {/* Port 2: System Instruction / Prompt (Bottom Left 72%) */}
                       <div
                         className="handle-circle"
                         onMouseUp={e => handleTargetHandleMouseUp(e, node.id, 'system_instruction')}
                         style={{
                           position: 'absolute',
-                          left: '-8px',
+                          left: '-7px',
                           top: '72%',
                           transform: 'translateY(-50%)',
-                          width: '16px',
-                          height: '16px',
+                          width: '14px',
+                          height: '14px',
                           borderRadius: '50%',
                           background: '#f59e0b',
-                          border: '2px solid #0f172a',
+                          border: '2px solid var(--bg-surface)',
                           cursor: 'crosshair',
                           zIndex: 20
                         }}
-                        title="Cổng Chỉ Dẫn Hệ Thống: System Prompt (In)"
+                        title="Instruction Port: System Prompt (In)"
                       />
                     </>
                   )}
 
-                  {/* Right Source Handle (Out) for Web Input, System Prompt & Model */}
                   {!isOutput && (
                     <div
                       className="handle-circle"
                       onMouseDown={e => handleSourceHandleMouseDown(e, node.id)}
                       style={{
                         position: 'absolute',
-                        right: '-8px',
+                        right: '-7px',
                         top: '50%',
                         transform: 'translateY(-50%)',
-                        width: '16px',
-                        height: '16px',
+                        width: '14px',
+                        height: '14px',
                         borderRadius: '50%',
                         background: accentColor,
-                        border: '2px solid #0f172a',
+                        border: '2px solid var(--bg-surface)',
                         cursor: 'crosshair',
                         zIndex: 20
                       }}
-                      title={`Cổng Xuất ${isPrompt ? 'Chỉ Dẫn' : 'Dữ Liệu'} (Out) - Kéo để nối`}
+                      title="Output Port: Drag to connect"
                     />
                   )}
 
                   {/* Node Header */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <span style={{ fontSize: '1.1rem' }}>
-                        {isInput ? '📥' : isPrompt ? '📜' : isModel ? '🧠' : '💬'}
-                      </span>
-                      <span style={{ fontWeight: 700, fontSize: '0.9rem', color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '140px' }}>
+                      <Icon
+                        name={isInput ? 'chat' : isPrompt ? 'prompts' : isModel ? 'settings' : 'check'}
+                        size={14}
+                        style={{ color: accentColor }}
+                      />
+                      <span style={{ fontWeight: 600, fontSize: '0.8rem', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '140px' }}>
                         {node.data.label}
                       </span>
                     </div>
@@ -1337,32 +1257,32 @@ export default function ProjectEditorPage() {
                       style={{
                         background: 'transparent',
                         border: 'none',
-                        color: '#64748b',
+                        color: 'var(--text-muted)',
                         cursor: 'pointer',
-                        fontSize: '0.9rem',
-                        padding: '2px 4px'
+                        fontSize: '0.85rem',
+                        padding: '1px 3px'
                       }}
-                      title="Xóa node"
+                      title="Delete node"
                     >×</button>
                   </div>
 
                   {/* Node Preview Meta */}
-                  <div style={{ fontSize: '0.72rem', color: '#94a3b8', background: 'rgba(0,0,0,0.3)', padding: '6px 8px', borderRadius: '6px' }}>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', background: 'var(--bg-subtle)', padding: '4px 6px', borderRadius: '4px' }}>
                     {isInput && (
-                      <div>Giới hạn: <strong style={{ color: '#fff' }}>{node.data.config?.max_words || 500} từ</strong></div>
+                      <div>Limit: <strong style={{ color: 'var(--text-primary)' }}>{node.data.config?.max_words || 500} words</strong></div>
                     )}
                     {isPrompt && (
                       <div>
-                        Prompt: <strong style={{ color: '#fbbf24' }}>{node.data.config?.name || 'Đã liên kết'}</strong>
+                        Prompt: <strong style={{ color: '#fbbf24' }}>{node.data.config?.name || 'Linked'}</strong>
                       </div>
                     )}
                     {isModel && (
                       <div>
-                        Model: <strong style={{ color: '#fff' }}>{node.data.config?.model_id || 'Chưa chọn'}</strong>
+                        Model: <strong style={{ color: 'var(--text-primary)' }}>{node.data.config?.model_id || 'Not selected'}</strong>
                       </div>
                     )}
                     {isOutput && (
-                      <div>Stream: <strong style={{ color: '#4ade80' }}>Bật (SSE)</strong></div>
+                      <div>Stream: <strong style={{ color: 'var(--accent)' }}>Enabled (SSE)</strong></div>
                     )}
                   </div>
                 </div>
@@ -1374,38 +1294,37 @@ export default function ProjectEditorPage() {
         {/* Right Drawer: Node Configuration */}
         {selectedNode && (
           <aside className="config-drawer" style={{
-            width: '320px',
-            borderLeft: '1px solid rgba(255, 255, 255, 0.08)',
-            background: 'rgba(15, 23, 42, 0.95)',
-            backdropFilter: 'blur(16px)',
-            padding: '1.5rem',
+            width: '300px',
+            borderLeft: '1px solid var(--border-subtle)',
+            background: 'var(--bg-surface)',
+            padding: '1.25rem',
             display: 'flex',
             flexDirection: 'column',
-            gap: '1.25rem',
+            gap: '1rem',
             zIndex: 30,
-            boxShadow: '-10px 0 30px rgba(0,0,0,0.4)',
             overflowY: 'auto'
           }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255, 255, 255, 0.1)', paddingBottom: '0.75rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontSize: '1.2rem' }}>
-                  {selectedNode.type === 'web_input' ? '📥' : selectedNode.type === 'system_prompt' ? '📜' : selectedNode.type === 'model' ? '🧠' : '💬'}
-                </span>
-                <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#fff' }}>
-                  Cấu Hình {selectedNode.data.label}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '0.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Icon
+                  name={selectedNode.type === 'web_input' ? 'chat' : selectedNode.type === 'system_prompt' ? 'prompts' : selectedNode.type === 'model' ? 'settings' : 'check'}
+                  size={15}
+                  style={{ color: 'var(--accent)' }}
+                />
+                <h3 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                  Configure {selectedNode.data.label}
                 </h3>
               </div>
               <button
                 onClick={() => setSelectedNodeId(null)}
-                style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '1.2rem' }}
+                style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '1.1rem' }}
               >×</button>
             </div>
 
-            {/* Config Fields by Type */}
             {selectedNode.type === 'web_input' && (
               <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#cbd5e1', marginBottom: '8px' }}>
-                  Giới Hạn Số Từ (max_words): <span style={{ color: '#38bdf8', fontWeight: 700 }}>{selectedNode.data.config?.max_words || 500} từ</span>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                  Word Limit (max_words): <span style={{ color: '#06b6d4', fontWeight: 700 }}>{selectedNode.data.config?.max_words || 500} words</span>
                 </label>
                 <input
                   type="range"
@@ -1414,7 +1333,7 @@ export default function ProjectEditorPage() {
                   step={10}
                   value={selectedNode.data.config?.max_words || 500}
                   onChange={e => updateNodeConfig('max_words', parseInt(e.target.value))}
-                  style={{ width: '100%', accentColor: '#06b6d4', cursor: 'pointer', marginBottom: '8px' }}
+                  style={{ width: '100%', accentColor: '#06b6d4', cursor: 'pointer', marginBottom: '6px' }}
                 />
                 <input
                   type="number"
@@ -1422,28 +1341,20 @@ export default function ProjectEditorPage() {
                   max={4000}
                   value={selectedNode.data.config?.max_words || 500}
                   onChange={e => updateNodeConfig('max_words', parseInt(e.target.value) || 10)}
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    borderRadius: '6px',
-                    border: '1px solid rgba(255, 255, 255, 0.15)',
-                    background: 'rgba(0,0,0,0.3)',
-                    color: '#fff',
-                    fontSize: '0.9rem'
-                  }}
+                  className="input"
+                  style={{ padding: '6px 8px', fontSize: '0.8rem' }}
                 />
-                <p style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '6px' }}>
-                  Nếu câu hỏi của người dùng vượt quá số từ này khi chat trên Trang Chủ, hệ thống sẽ chặn và cảnh báo.
+                <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                  If user input exceeds this word threshold during chat, the request is halted with a warning.
                 </p>
               </div>
             )}
 
-            {/* Configuration for System Prompt Node (MVP - DEC-SPN-01, DEC-SPN-03) */}
             {selectedNode.type === 'system_prompt' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#cbd5e1', marginBottom: '6px' }}>
-                    Chọn Prompt Liên Kết (Thư Viện):
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                    Linked System Prompt:
                   </label>
                   <select
                     value={selectedNode.data.config?.prompt_id || ''}
@@ -1469,80 +1380,55 @@ export default function ProjectEditorPage() {
                         setHasUnsavedChanges(true);
                       }
                     }}
-                    style={{
-                      width: '100%',
-                      padding: '10px 12px',
-                      borderRadius: '6px',
-                      border: '1px solid rgba(255, 255, 255, 0.15)',
-                      background: '#1e293b',
-                      color: '#fff',
-                      fontSize: '0.85rem',
-                      cursor: 'pointer'
-                    }}
+                    className="input"
+                    style={{ padding: '8px', fontSize: '0.8rem' }}
                   >
                     {availablePrompts.map(p => (
-                      <option key={p.id} value={p.id}>
+                      <option key={p.id} value={p.id} style={{ background: '#111827', color: '#fff' }}>
                         {p.name}
                       </option>
                     ))}
                   </select>
                 </div>
 
-                <div style={{ background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.2)', padding: '10px', borderRadius: '8px' }}>
-                  <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#fbbf24', marginBottom: '4px' }}>
-                    Định Danh: {selectedNode.data.config?.prompt_id}
+                <div style={{ background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.2)', padding: '8px', borderRadius: '4px' }}>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#fbbf24', marginBottom: '2px' }}>
+                    Prompt ID: {selectedNode.data.config?.prompt_id}
                   </div>
-                  <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
-                    {selectedNode.data.config?.description || 'Không có mô tả bổ sung'}
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                    {selectedNode.data.config?.description || 'No additional description'}
                   </div>
                 </div>
 
-                <div style={{ fontSize: '0.75rem', color: '#64748b', lineHeight: '1.4' }}>
-                  ℹ️ <strong>Cơ chế tham chiếu động (DEC-SPN-01):</strong> Khi người dùng chat, Backend sẽ tự động lấy nội dung mới nhất của System Prompt này từ thư viện để gửi tới Model AI.
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+                  <strong>Dynamic Reference:</strong> When a user chats, the runtime resolves the latest version of this prompt from the prompt library.
                 </div>
 
                 <Link
-                  href="/system-prompts"
+                  href="/prompts"
                   target="_blank"
-                  style={{
-                    display: 'inline-block',
-                    textAlign: 'center',
-                    padding: '8px 12px',
-                    borderRadius: '6px',
-                    background: 'rgba(255, 255, 255, 0.05)',
-                    border: '1px solid rgba(255, 255, 255, 0.15)',
-                    color: '#fbbf24',
-                    fontSize: '0.8rem',
-                    textDecoration: 'none'
-                  }}
+                  className="btn btn-secondary"
+                  style={{ textAlign: 'center', fontSize: '0.75rem', padding: '6px' }}
                 >
-                  ↗ Mở Quản Lý System Prompt
+                  Open System Prompt Manager
                 </Link>
               </div>
             )}
 
             {selectedNode.type === 'model' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#cbd5e1', marginBottom: '6px' }}>
-                    Chọn Mô Hình AI (Model Catalog):
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                    Model Selection:
                   </label>
                   <select
                     value={selectedNode.data.config?.model_id || 'gemini-3.8-flash'}
                     onChange={e => updateNodeConfig('model_id', e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '10px 12px',
-                      borderRadius: '6px',
-                      border: '1px solid rgba(255, 255, 255, 0.15)',
-                      background: '#1e293b',
-                      color: '#fff',
-                      fontSize: '0.9rem',
-                      cursor: 'pointer'
-                    }}
+                    className="input"
+                    style={{ padding: '8px', fontSize: '0.8rem' }}
                   >
                     {availableModels.map(m => (
-                      <option key={m.id} value={m.id}>
+                      <option key={m.id} value={m.id} style={{ background: '#111827', color: '#fff' }}>
                         {m.name} ({m.provider.toUpperCase()})
                       </option>
                     ))}
@@ -1550,8 +1436,8 @@ export default function ProjectEditorPage() {
                 </div>
 
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#cbd5e1', marginBottom: '6px' }}>
-                    Nhiệt Độ Sáng Tạo (temperature): <span style={{ color: '#a855f7', fontWeight: 700 }}>{selectedNode.data.config?.temperature ?? 0.7}</span>
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                    Temperature: <span style={{ color: '#a855f7', fontWeight: 700 }}>{selectedNode.data.config?.temperature ?? 0.7}</span>
                   </label>
                   <input
                     type="range"
@@ -1562,16 +1448,16 @@ export default function ProjectEditorPage() {
                     onChange={e => updateNodeConfig('temperature', parseFloat(e.target.value))}
                     style={{ width: '100%', accentColor: '#a855f7', cursor: 'pointer' }}
                   />
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#64748b' }}>
-                    <span>0.0 (Chính xác)</span>
-                    <span>1.0 (Cân bằng)</span>
-                    <span>2.0 (Sáng tạo)</span>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', color: 'var(--text-muted)' }}>
+                    <span>0.0 (Precise)</span>
+                    <span>1.0 (Balanced)</span>
+                    <span>2.0 (Creative)</span>
                   </div>
                 </div>
 
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#cbd5e1', marginBottom: '6px' }}>
-                    Phản Hồi Tối Đa (max_tokens):
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                    Max Output Tokens:
                   </label>
                   <input
                     type="number"
@@ -1579,15 +1465,8 @@ export default function ProjectEditorPage() {
                     max={8192}
                     value={selectedNode.data.config?.max_tokens || 2048}
                     onChange={e => updateNodeConfig('max_tokens', parseInt(e.target.value) || 256)}
-                    style={{
-                      width: '100%',
-                      padding: '8px 12px',
-                      borderRadius: '6px',
-                      border: '1px solid rgba(255, 255, 255, 0.15)',
-                      background: 'rgba(0,0,0,0.3)',
-                      color: '#fff',
-                      fontSize: '0.9rem'
-                    }}
+                    className="input"
+                    style={{ padding: '6px 8px', fontSize: '0.8rem' }}
                   />
                 </div>
               </div>
@@ -1595,17 +1474,17 @@ export default function ProjectEditorPage() {
 
             {selectedNode.type === 'output' && (
               <div>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.9rem', color: '#fff' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.85rem', color: 'var(--text-primary)' }}>
                   <input
                     type="checkbox"
                     checked={selectedNode.data.config?.streaming ?? true}
                     onChange={e => updateNodeConfig('streaming', e.target.checked)}
-                    style={{ width: '16px', height: '16px', accentColor: '#10b981' }}
+                    style={{ width: '15px', height: '15px', accentColor: 'var(--accent)' }}
                   />
-                  <span>Bật Phản Hồi Dòng Chảy (Server-Sent Events)</span>
+                  <span>Enable Streaming (Server-Sent Events)</span>
                 </label>
-                <p style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '8px' }}>
-                  Cho phép người dùng nhìn thấy từng từ xuất hiện theo thời gian thực tương tự ChatGPT.
+                <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '6px' }}>
+                  Streams words incrementally to the chat UI in real time.
                 </p>
               </div>
             )}
@@ -1622,57 +1501,34 @@ export default function ProjectEditorPage() {
           right: 0,
           bottom: 0,
           background: 'rgba(0, 0, 0, 0.75)',
-          backdropFilter: 'blur(8px)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           zIndex: 1000,
           padding: '1rem'
         }}>
-          <div style={{
-            background: 'var(--bg-card, #0f172a)',
-            border: '1px solid rgba(245, 158, 11, 0.3)',
-            borderRadius: '12px',
-            padding: '2rem',
-            maxWidth: '420px',
-            width: '100%'
-          }}>
-            <h3 style={{ color: '#fbbf24', margin: '0 0 0.5rem 0', fontWeight: 700 }}>
-              Thay Đổi Chưa Lưu!
+          <div className="card" style={{ maxWidth: '400px', width: '100%', padding: '1.5rem' }}>
+            <h3 style={{ color: '#fbbf24', margin: '0 0 0.5rem 0', fontWeight: 600, fontSize: '1rem' }}>
+              Unsaved Changes
             </h3>
-            <p style={{ color: '#cbd5e1', fontSize: '0.9rem', lineHeight: '1.5', margin: '0 0 1.5rem 0' }}>
-              Bạn có một số thay đổi trên Canvas chưa được lưu lại. Bạn có chắc chắn muốn rời đi không?
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', lineHeight: '1.5', margin: '0 0 1.25rem 0' }}>
+              You have unsaved changes on the canvas. Are you sure you want to discard them?
             </p>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
               <button
                 onClick={() => setShowUnsavedModal(false)}
-                style={{
-                  padding: '8px 16px',
-                  background: 'transparent',
-                  border: '1px solid rgba(255, 255, 255, 0.15)',
-                  color: '#94a3b8',
-                  borderRadius: '6px',
-                  cursor: 'pointer'
-                }}
+                className="btn btn-secondary"
               >
-                Ở Lại
+                Keep Editing
               </button>
               <button
                 onClick={() => {
                   setShowUnsavedModal(false);
                   router.push('/projects');
                 }}
-                style={{
-                  padding: '8px 18px',
-                  background: '#ef4444',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: '6px',
-                  fontWeight: 600,
-                  cursor: 'pointer'
-                }}
+                className="btn btn-danger"
               >
-                Rời Đi Không Lưu
+                Discard & Leave
               </button>
             </div>
           </div>
