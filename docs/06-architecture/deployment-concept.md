@@ -70,4 +70,9 @@ flowchart TD
 2. **Lưu Trữ Bền Vững (Volume Persistence)**:
    - Thư mục dữ liệu `/var/lib/postgresql/data` của PostgreSQL được ánh xạ vào Docker Volume `pgdata` trên máy chủ Host nhằm bảo đảm dữ liệu không bị mất khi container khởi động lại.
 3. **Cấu Hình Môi Trường Tập Trung (.env Configuration)**:
-   - Toàn bộ bí mật (`POSTGRES_PASSWORD`, `SECRET_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY`) được nạp qua tệp môi trường `.env` an toàn, không hardcode vào Dockerfile hay mã nguồn.
+   - Toàn bộ bí mật (`POSTGRES_PASSWORD`, `SECRET_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `DISCORD_BOT_TOKEN`) được nạp qua tệp môi trường `.env` an toàn, không hardcode vào Dockerfile hay mã nguồn.
+4. **Dịch Vụ Discord Bot Tích Hợp & Cô Lập Tiến Trình (Unified Discord Bot Process Isolation)**:
+   - Discord Bot duy trì kết nối WebSocket Gateway liên tục (long-running connection) và được triển khai dưới dạng container riêng biệt (`discord-bot`) hoặc tiến trình độc lập (`python -m src.discord_bot.main`).
+   - Tuyệt đối không nhúng bot client trực tiếp vào các worker Uvicorn/FastAPI nhằm ngăn chặn trùng lặp Gateway sessions và conflict slash commands.
+   - Discord Bot gửi yêu cầu suy luận AI trực tiếp tới backend thông qua endpoint nội bộ `http://ai-backend:8000/api/v1/prompt`.
+

@@ -34,6 +34,11 @@ deployment:
       role: "Cache & Rate Limiting Token Store"
       internal_port: 6379
       volume: "redis_data"
+    - name: "discord-bot"
+      build_context: "ai-backend"
+      dockerfile: "ai-infra/docker/discord-bot.Dockerfile"
+      role: "Discord Bot Long-running Gateway Client (Isolated Process)"
+      internal_port: null
   connections:
     - from: "Internet Clients"
       to: "nginx-gateway"
@@ -44,6 +49,12 @@ deployment:
     - from: "nginx-gateway"
       to: "ai-backend"
       protocol: "HTTP / SSE (port 8000)"
+    - from: "discord-bot"
+      to: "ai-backend"
+      protocol: "HTTP (port 8000 Internal)"
+    - from: "discord-bot"
+      to: "Discord Gateway"
+      protocol: "WSS / TLS 1.3 (port 443 Outbound)"
     - from: "ai-backend"
       to: "postgres"
       protocol: "PostgreSQL Native TCP (port 5432)"
@@ -58,6 +69,7 @@ deployment:
     - "POSTGRES_PASSWORD"
     - "GEMINI_API_KEY"
     - "OPENAI_API_KEY"
+    - "DISCORD_BOT_TOKEN"
   observability:
     health_endpoint: "/api/v1/health"
     log_format: "JSON Structured Logging (timestamp, level, trace_id, message)"

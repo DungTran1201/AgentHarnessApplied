@@ -585,7 +585,7 @@ async def execute_antigravity_prompt(prompt_req: PromptRequest, req: Request) ->
 
     if explicit_project_id:
         proj = query_one(
-            "SELECT * FROM projects WHERE id = ? AND (user_id = ? OR user_id = 'guest_user') AND status != 'DELETED'",
+            "SELECT * FROM projects WHERE id = ? AND user_id = ? AND status != 'DELETED'",
             (explicit_project_id, user_id)
         )
         if not proj:
@@ -597,7 +597,7 @@ async def execute_antigravity_prompt(prompt_req: PromptRequest, req: Request) ->
     else:
         # Search all active projects belonging to this user
         active_projects = query_all(
-            "SELECT * FROM projects WHERE (user_id = ? OR user_id = 'guest_user') AND status = 'ACTIVE'",
+            "SELECT * FROM projects WHERE user_id = ? AND status = 'ACTIVE'",
             (user_id,)
         )
         

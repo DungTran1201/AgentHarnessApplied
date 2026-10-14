@@ -46,6 +46,18 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  discord-bot:
+    build:
+      context: ../../ai-backend
+      dockerfile: ../ai-infra/docker/discord-bot.Dockerfile
+    env_file:
+      - ../../ai-backend/.env
+    environment:
+      - DISCORD_BOT_API_BASE_URL=http://ai-backend:8000
+    depends_on:
+      - ai-backend
+    restart: unless-stopped
+
   postgres:
     image: postgres:16-alpine
     environment:

@@ -29,3 +29,6 @@ langchain-openai>=0.2.0
 # Background Tasks & Cache
 redis>=5.1.0
 tiktoken>=0.8.0
+
+# Discord Bot Gateway & Integration
+discord.py>=2.3.2
