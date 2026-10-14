@@ -16,6 +16,7 @@ import { ProjectService } from '@/services/projectService';
 import { SystemPromptService } from '@/services/systemPromptService';
 import Icon from '@/components/ui/Icon';
 import { getErrorMessage } from '@/lib/errors';
+import FloatingProjectChat from '@/components/chat/FloatingProjectChat';
 
 export default function ProjectEditorPage() {
   const router = useRouter();
@@ -1289,6 +1290,27 @@ export default function ProjectEditorPage() {
               );
             })}
           </div>
+
+          {/* Floating Project Chat inside the Graph Canvas Viewport */}
+          <FloatingProjectChat
+            project={project}
+            nodes={nodes}
+            edges={edges}
+            isGraphValid={isGraphValid}
+            onActivateProject={async () => {
+              if (project) {
+                try {
+                  await ProjectService.activateProject(project.id);
+                  const updatedProj = await ProjectService.getProject(project.id);
+                  setProject(updatedProj);
+                  showToast('success', 'Project activated successfully!');
+                } catch (err: any) {
+                  showToast('error', err?.message || 'Failed to activate project.');
+                }
+              }
+            }}
+            canvasContainerRef={canvasRef}
+          />
         </div>
 
         {/* Right Drawer: Node Configuration */}

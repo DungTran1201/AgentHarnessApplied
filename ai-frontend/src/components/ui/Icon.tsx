@@ -22,6 +22,8 @@ export type IconName =
   | 'refresh'
   | 'chevronLeft'
   | 'chevronRight'
+  | 'chevronUp'
+  | 'chevronDown'
   | 'play'
   | 'stop'
   | 'pause'
@@ -194,6 +196,18 @@ export default function Icon({ name, size = 16, style, ...rest }: IconProps) {
       return (
         <svg {...s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...rest}>
           <polyline points="9 18 15 12 9 6" />
+        </svg>
+      );
+    case 'chevronUp':
+      return (
+        <svg {...s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...rest}>
+          <polyline points="18 15 12 9 6 15" />
+        </svg>
+      );
+    case 'chevronDown':
+      return (
+        <svg {...s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...rest}>
+          <polyline points="6 9 12 15 18 9" />
         </svg>
       );
     case 'play':

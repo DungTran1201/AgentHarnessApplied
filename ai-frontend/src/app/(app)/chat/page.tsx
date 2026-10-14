@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { AgentModel, Project } from '@/types';
 import { ProjectService } from '@/services/projectService';
-import { useApp } from '../layout';
+import { useApp } from '@/context/AppContext';
 import ChatWorkspace, { Message } from '@/components/chat/ChatWorkspace';
 import MessageComposer from '@/components/chat/MessageComposer';
 

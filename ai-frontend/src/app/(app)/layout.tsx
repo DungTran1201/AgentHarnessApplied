@@ -1,42 +1,10 @@
 'use client';
 
-import React, { useState, useEffect, createContext, useContext, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import DesktopHeader from '@/components/chat/DesktopHeader';
 import Sidebar, { Conversation } from '@/components/chat/Sidebar';
-
-// ── Auth + Conversation Context ────────────────────────────────────────
-interface AppContextValue {
-  currentUser: any;
-  conversations: Conversation[];
-  activeConvId: string | null;
-  setActiveConvId: (id: string | null) => void;
-  fetchConversations: () => Promise<void>;
-  createConversation: () => Promise<string | null>;
-  renameConversation: (id: string, title: string) => Promise<void>;
-  deleteConversation: (conv: Conversation) => Promise<void>;
-  sidebarCollapsed: boolean;
-  setSidebarCollapsed: (v: boolean) => void;
-  handleLogout: () => Promise<void>;
-}
-
-export const AppContext = createContext<AppContextValue>({
-  currentUser: null,
-  conversations: [],
-  activeConvId: null,
-  setActiveConvId: () => {},
-  fetchConversations: async () => {},
-  createConversation: async () => null,
-  renameConversation: async () => {},
-  deleteConversation: async () => {},
-  sidebarCollapsed: false,
-  setSidebarCollapsed: () => {},
-  handleLogout: async () => {},
-});
-
-export function useApp() {
-  return useContext(AppContext);
-}
+import { AppContext, AppContextValue } from '@/context/AppContext';
 
 // ── Shell ──────────────────────────────────────────────────────────────
 export default function AppShellLayout({ children }: { children: React.ReactNode }) {
