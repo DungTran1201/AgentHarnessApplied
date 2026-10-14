@@ -74,6 +74,19 @@ export default function ProjectEditorPage() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
 
+  // Conflicting element visual highlight states (BR-001, BR-002, UI feedback)
+  const [conflictingEdgeId, setConflictingEdgeId] = useState<string | null>(null);
+  const [conflictingNodeId, setConflictingNodeId] = useState<string | null>(null);
+
+  const triggerConflictHighlight = (edgeId?: string | null, nodeId?: string | null) => {
+    if (edgeId) setConflictingEdgeId(edgeId);
+    if (nodeId) setConflictingNodeId(nodeId);
+    setTimeout(() => {
+      setConflictingEdgeId(null);
+      setConflictingNodeId(null);
+    }, 2500);
+  };
+
   // Dragging connection state
   const [connectingSourceNodeId, setConnectingSourceNodeId] = useState<string | null>(null);
   const [mousePos, setMousePos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -365,8 +378,10 @@ export default function ProjectEditorPage() {
 
   // Add Bot Node from Authorized Bots
   const handleAddBotNode = (bot: AvailableBotItem) => {
-    if (nodes.some(n => n.type === 'bot')) {
-      showToast('error', 'This model can be connected to only one bot. Remove the existing bot connection before selecting another.');
+    const existingBotNode = nodes.find(n => n.type === 'bot');
+    if (existingBotNode) {
+      showToast('error', 'This model already has a bot connected. Remove the existing bot connection before selecting another.');
+      triggerConflictHighlight(null, existingBotNode.id);
       return;
     }
 
@@ -396,8 +411,10 @@ export default function ProjectEditorPage() {
 
   // Add Skill Node from Skills Library
   const handleAddSkillNode = (skill: SkillSummary) => {
-    if (nodes.some(n => n.type === 'skill' && n.data.config?.skill_id === skill.id)) {
-      showToast('error', `Skill "${skill.name}" is already on the canvas.`);
+    const existingSkillNode = nodes.find(n => n.type === 'skill' && n.data.config?.skill_id === skill.id);
+    if (existingSkillNode) {
+      showToast('error', 'This skill is already connected to the model.');
+      triggerConflictHighlight(null, existingSkillNode.id);
       return;
     }
 
@@ -578,20 +595,47 @@ export default function ProjectEditorPage() {
 
     // Duplicate connection check
     if (edges.some(e => e.source === srcNode.id && e.target === tgtNode.id)) {
-      showToast('error', 'Duplicate connection rejected. This connection already exists.');
+      const existingEdge = edges.find(e => e.source === srcNode.id && e.target === tgtNode.id);
+      if (tgtNode.type === 'bot') {
+        showToast('error', 'This model already has a bot connected. Remove the existing bot connection before selecting another.');
+      } else if (tgtNode.type === 'skill') {
+        showToast('error', 'This skill is already connected to the model.');
+      } else {
+        showToast('error', 'Duplicate connection rejected. This connection already exists.');
+      }
+      triggerConflictHighlight(existingEdge?.id, tgtNode.id);
       setConnectingSourceNodeId(null);
       return;
     }
 
-    // One Model to at most one Bot rule (Requirement 7.1)
+    // One Model to at most one Bot rule (BR-001)
     if (srcNode.type === 'model' && tgtNode.type === 'bot') {
       const existingBotEdge = edges.find(
         e => e.source === srcNode.id && nodes.find(n => n.id === e.target)?.type === 'bot'
       );
       if (existingBotEdge && existingBotEdge.target !== tgtNode.id) {
-        showToast('error', 'This model can be connected to only one bot. Remove the existing bot connection before selecting another.');
+        showToast('error', 'This model already has a bot connected. Remove the existing bot connection before selecting another.');
+        triggerConflictHighlight(existingBotEdge.id, existingBotEdge.target);
         setConnectingSourceNodeId(null);
         return;
+      }
+    }
+
+    // Duplicate skill binding on same Model (BR-002)
+    if (srcNode.type === 'model' && tgtNode.type === 'skill') {
+      const targetSkillId = tgtNode.data.config?.skill_id;
+      if (targetSkillId) {
+        const existingSkillEdge = edges.find(e => {
+          if (e.source !== srcNode.id) return false;
+          const sNode = nodes.find(n => n.id === e.target);
+          return sNode?.type === 'skill' && sNode.data.config?.skill_id === targetSkillId;
+        });
+        if (existingSkillEdge) {
+          showToast('error', 'This skill is already connected to the model.');
+          triggerConflictHighlight(existingSkillEdge.id, existingSkillEdge.target);
+          setConnectingSourceNodeId(null);
+          return;
+        }
       }
     }
 
@@ -602,6 +646,7 @@ export default function ProjectEditorPage() {
       );
       if (existingPromptEdge && existingPromptEdge.source !== srcNode.id) {
         showToast('error', 'Model node already has a connected System Prompt.');
+        triggerConflictHighlight(existingPromptEdge.id, existingPromptEdge.source);
         setConnectingSourceNodeId(null);
         return;
       }
@@ -1397,7 +1442,11 @@ export default function ProjectEditorPage() {
                 const dx = Math.max(60, Math.abs(endX - startX) * 0.5);
                 const pathData = `M ${startX} ${startY} C ${startX + dx} ${startY}, ${endX - dx} ${endY}, ${endX} ${endY}`;
 
-                const edgeStroke = isSelected
+                const isConflicting = conflictingEdgeId === edge.id;
+
+                const edgeStroke = isConflicting
+                  ? '#ef4444'
+                  : isSelected
                   ? 'var(--danger)'
                   : isPromptEdge
                   ? '#f59e0b'
@@ -1421,8 +1470,9 @@ export default function ProjectEditorPage() {
                       d={pathData}
                       fill="none"
                       stroke={edgeStroke}
-                      strokeWidth={isSelected ? 3 : 2}
-                      strokeDasharray={isPromptEdge ? '4 3' : (isBotEdge || isSkillEdge) ? '3 3' : '6 4'}
+                      strokeWidth={isConflicting ? 4 : isSelected ? 3 : 2}
+                      strokeDasharray={isConflicting ? '6 4' : isPromptEdge ? '4 3' : (isBotEdge || isSkillEdge) ? '3 3' : '6 4'}
+                      filter={isConflicting ? 'drop-shadow(0 0 8px rgba(239, 68, 68, 0.9))' : undefined}
                       onClick={() => setSelectedEdgeId(edge.id)}
                       style={{ cursor: 'pointer' }}
                     />
@@ -1513,10 +1563,10 @@ export default function ProjectEditorPage() {
                     width: `${NODE_WIDTH}px`,
                     minHeight: `${NODE_HEIGHT}px`,
                     background: 'var(--bg-surface)',
-                    border: `1.5px solid ${isSelected ? accentColor : 'var(--border-subtle)'}`,
+                    border: `1.5px solid ${conflictingNodeId === node.id ? '#ef4444' : isSelected ? accentColor : 'var(--border-subtle)'}`,
                     borderRadius: '8px',
                     padding: '10px',
-                    boxShadow: isSelected ? `0 0 16px ${accentColor}30` : '0 4px 12px rgba(0,0,0,0.3)',
+                    boxShadow: conflictingNodeId === node.id ? '0 0 20px rgba(239, 68, 68, 0.8)' : isSelected ? `0 0 16px ${accentColor}30` : '0 4px 12px rgba(0,0,0,0.3)',
                     cursor: 'move',
                     userSelect: 'none',
                     display: 'flex',

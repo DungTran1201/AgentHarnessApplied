@@ -1,5 +1,6 @@
 import uuid
 import time
+import json
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, status, Depends, Request, Header
 from pydantic import BaseModel, Field
@@ -7,7 +8,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.exceptions import InvalidSignature
 
 from src.core.config import settings
-from src.core.security import get_current_user
+from src.core.security import get_current_user, decode_access_token
 from src.core.telemetry import quota_manager, metric_logger
 from src.db import query_one, query_all, execute_commit
 
@@ -82,6 +83,37 @@ class TestDispatchPromptResponse(BaseModel):
     remaining_quota: Dict[str, Any]
     web_synced: bool
     conversation_id: Optional[str] = None
+ 
+# ------------------------------------------------------------------------------
+# Antigravity / Discord Reference Integration Schemas (BR-001..005)
+# Compatible with discord-bot-connect-to-antigravity
+# ------------------------------------------------------------------------------
+class PromptRequest(BaseModel):
+    model_config = {"extra": "ignore"}
+    prompt: str = Field(..., min_length=1, description="Prompt text to send to AI model")
+    model: str = Field(default="default", description="Model identifier to use")
+    temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
+    max_tokens: Optional[int] = Field(default=None, gt=0)
+    metadata: Dict[str, str] = Field(default_factory=dict)
+
+class UsageInfo(BaseModel):
+    model_config = {"extra": "ignore"}
+    prompt_tokens: int = Field(default=0, ge=0)
+    completion_tokens: int = Field(default=0, ge=0)
+    total_tokens: int = Field(default=0, ge=0)
+
+class PromptResponse(BaseModel):
+    model_config = {"extra": "ignore"}
+    response: str
+    model: Optional[str] = None
+    usage: Optional[UsageInfo] = None
+
+class HealthResponse(BaseModel):
+    model_config = {"extra": "allow"}
+    status: str = Field(default="healthy")
+    service: Optional[str] = Field(default="ai-backend")
+    version: Optional[str] = Field(default="1.0.0")
+    details: Dict[str, str] = Field(default_factory=dict)
 
 # ==============================================================================
 # HELPER FUNCTIONS
@@ -493,3 +525,353 @@ async def handle_discord_interaction_webhook(
 
     # Interaction Type 1: PING -> PONG
     return {"type": 1}
+
+# ==============================================================================
+# ANTIGRAVITY / DISCORD BOT EXECUTION ENGINE (BR-001..005)
+# ==============================================================================
+
+async def execute_antigravity_prompt(prompt_req: PromptRequest, req: Request) -> PromptResponse:
+    """
+    Executes an AI interaction request from Discord Bot through AI-Chan's active Project Graph,
+    resolving the bound Model and connected Skills with strict authorization and validation.
+    Compatible with discord-bot-connect-to-antigravity (AntigravityService.ask).
+    """
+    # 1. Resolve User / Authentication
+    current_user = None
+    token = req.cookies.get("access_token")
+    if not token:
+        auth_header = req.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+
+    if token:
+        payload = decode_access_token(token)
+        if payload and "sub" in payload:
+            current_user = query_one(
+                "SELECT id, email, discord_id, status FROM users WHERE id = ?",
+                (payload["sub"],)
+            )
+
+    # Fallback to Discord metadata if user not resolved via JWT
+    if not current_user:
+        discord_user_id = prompt_req.metadata.get("user_id") if prompt_req.metadata else None
+        if discord_user_id:
+            current_user = query_one(
+                "SELECT id, email, discord_id, status FROM users WHERE discord_id = ? OR id = ?",
+                (discord_user_id, discord_user_id)
+            )
+
+    # Fallback to guest_user if available
+    if not current_user:
+        current_user = query_one("SELECT id, email, discord_id, status FROM users WHERE id = 'guest_user'")
+
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required or user could not be resolved from Discord metadata."
+        )
+
+    if current_user.get("status") != "ACTIVE":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account is suspended or inactive."
+        )
+
+    user_id = current_user["id"]
+
+    # 2. Resolve Project Graph & Check for Ambiguous Routes
+    explicit_project_id = prompt_req.metadata.get("project_id") if prompt_req.metadata else None
+    bot_id_filter = prompt_req.metadata.get("bot_id") if prompt_req.metadata else None
+
+    if explicit_project_id:
+        proj = query_one(
+            "SELECT * FROM projects WHERE id = ? AND (user_id = ? OR user_id = 'guest_user') AND status != 'DELETED'",
+            (explicit_project_id, user_id)
+        )
+        if not proj:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Project '{explicit_project_id}' not found or not accessible."
+            )
+        resolved_proj = proj
+    else:
+        # Search all active projects belonging to this user
+        active_projects = query_all(
+            "SELECT * FROM projects WHERE (user_id = ? OR user_id = 'guest_user') AND status = 'ACTIVE'",
+            (user_id,)
+        )
+        
+        # Filter candidate projects that have a Bot node bound in the graph
+        candidate_projects = []
+        for p in active_projects:
+            g_raw = p.get("graph_data")
+            if not g_raw:
+                continue
+            try:
+                g = json.loads(g_raw)
+                nodes = g.get("nodes", [])
+                edges = g.get("edges", [])
+                bot_nodes = [n for n in nodes if n.get("type") == "bot"]
+                if not bot_nodes:
+                    continue
+                model_nodes = [n for n in nodes if n.get("type") == "model"]
+                if not model_nodes:
+                    continue
+                m_id = model_nodes[0].get("id")
+                has_bot_binding = any(
+                    e.get("source") == m_id and any(b.get("id") == e.get("target") for b in bot_nodes)
+                    for e in edges
+                )
+                if not has_bot_binding:
+                    continue
+
+                if bot_id_filter:
+                    matched_bots = [b for b in bot_nodes if b.get("data", {}).get("config", {}).get("bot_id") == bot_id_filter]
+                    if matched_bots:
+                        candidate_projects.append(p)
+                else:
+                    candidate_projects.append(p)
+            except Exception:
+                continue
+
+        if len(candidate_projects) == 0:
+            if len(active_projects) == 1:
+                resolved_proj = active_projects[0]
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="No active project with a bound Discord Bot was found for this user."
+                )
+        elif len(candidate_projects) > 1:
+            # Ambiguous Bot execution target rule (Section 4.2 & Section 8)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="The Discord bot cannot determine which model to execute. Configure an explicit route before running this workflow."
+            )
+        else:
+            resolved_proj = candidate_projects[0]
+
+    # 3. Parse Graph and Model Node Configuration
+    g_data = {}
+    if resolved_proj.get("graph_data"):
+        try:
+            g_data = json.loads(resolved_proj["graph_data"])
+        except Exception:
+            pass
+
+    nodes = g_data.get("nodes", [])
+    edges = g_data.get("edges", [])
+    model_nodes = [n for n in nodes if n.get("type") == "model"]
+    if not model_nodes:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="The resolved project graph has no configured Model node."
+        )
+
+    model_node = model_nodes[0]
+    m_node_id = model_node.get("id")
+    m_cfg = model_node.get("data", {}).get("config", {})
+    configured_model_id = m_cfg.get("model_id") or resolved_proj.get("target_model_id") or "gemini-3.8-flash"
+
+    # 4. Model Selection Precedence (Section 5.1)
+    # The saved Model node configuration determines the default model.
+    # An override is accepted only if verified active and authorized in models table.
+    effective_model = configured_model_id
+    if prompt_req.model and prompt_req.model not in ("default", configured_model_id):
+        valid_model = query_one(
+            "SELECT * FROM models WHERE id = ? AND status = 'ACTIVE'",
+            (prompt_req.model,)
+        )
+        if not valid_model:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Requested model override '{prompt_req.model}' is not active or authorized."
+            )
+        effective_model = prompt_req.model
+
+    model_record = query_one("SELECT * FROM models WHERE id = ?", (effective_model,))
+    if not model_record or model_record.get("status") != "ACTIVE":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"AI Model '{effective_model}' is currently unavailable or inactive."
+        )
+
+    # 5. Resolve Bound Skills (Section 7.1 - 7.3)
+    skill_nodes = [n for n in nodes if n.get("type") == "skill"]
+    connected_skill_nodes = []
+    for s_node in skill_nodes:
+        s_id = s_node.get("id")
+        is_connected = any(
+            e.get("source") == m_node_id and e.get("target") == s_id
+            for e in edges
+        )
+        if is_connected:
+            connected_skill_nodes.append(s_node)
+
+    # Deterministic ordering by skill name or ID
+    connected_skill_nodes.sort(key=lambda x: x.get("data", {}).get("label") or x.get("id", ""))
+
+    from src.core.skill_storage import read_skill_md_content
+    skill_instructions = []
+    for s_node in connected_skill_nodes:
+        ref_skill_id = s_node.get("data", {}).get("config", {}).get("skill_id")
+        if not ref_skill_id:
+            continue
+        skill_row = query_one(
+            "SELECT id, name, description, status, storage_path FROM skills WHERE id = ? AND (user_id = ? OR user_id = 'guest_user')",
+            (ref_skill_id, user_id)
+        )
+        if not skill_row or skill_row.get("status") != "VALID":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Connected skill '{ref_skill_id}' is unavailable, disabled, or not in VALID status."
+            )
+        content = read_skill_md_content(skill_row.get("storage_path", ""))
+        if content:
+            skill_instructions.append(f"### Skill: {skill_row['name']}\n{content}")
+        elif skill_row.get("description"):
+            skill_instructions.append(f"### Skill: {skill_row['name']}\nDescription: {skill_row['description']}")
+
+    # 6. Resolve Bound System Prompt
+    prompt_nodes = [n for n in nodes if n.get("type") == "system_prompt"]
+    system_prompt_instruction = ""
+    for p_node in prompt_nodes:
+        p_id = p_node.get("id")
+        is_connected = any(
+            e.get("source") == p_id and e.get("target") == m_node_id
+            for e in edges
+        )
+        if is_connected:
+            ref_prompt_id = p_node.get("data", {}).get("config", {}).get("prompt_id")
+            if ref_prompt_id:
+                p_row = query_one(
+                    "SELECT id, content FROM system_prompts WHERE id = ? AND (user_id = ? OR user_id = 'guest_user')",
+                    (ref_prompt_id, user_id)
+                )
+                if p_row and p_row.get("content"):
+                    system_prompt_instruction = p_row["content"]
+
+    # Combine System Prompt + Skills block
+    combined_instruction = system_prompt_instruction or ""
+    if skill_instructions:
+        skills_block = "\n\n--- ACTIVE SKILLS INSTRUCTIONS ---\n" + "\n\n".join(skill_instructions) + "\n--- END SKILLS INSTRUCTIONS ---"
+        combined_instruction = (combined_instruction + skills_block).strip()
+
+    # Context size guard (Section 7.3)
+    if len(combined_instruction) + len(prompt_req.prompt) > 200000:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Combined prompt and skill context exceeds maximum context limit."
+        )
+
+    # 7. Execute AI Orchestration
+    from llm.agent import chat_agent
+    accumulated_tokens = []
+    final_model_used = effective_model
+    start_time = time.perf_counter()
+
+    try:
+        async for event in chat_agent.astream_agent(
+            prompt=prompt_req.prompt,
+            history=[],
+            model_override=effective_model,
+            system_instruction=combined_instruction if combined_instruction else None
+        ):
+            if event.get("status") == "streaming":
+                t_str = event.get("token", "")
+                if t_str:
+                    accumulated_tokens.append(t_str)
+            elif event.get("status") == "done":
+                final_model_used = event.get("model", final_model_used)
+            elif event.get("status") == "error":
+                err_msg = event.get("message", "Error generating response from AI model")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"AI service error: {err_msg}"
+                )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"AI service unavailable: {str(exc)}"
+        )
+
+    elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+    reply_text = "".join(accumulated_tokens).strip()
+    if not reply_text:
+        reply_text = "I received your prompt, but no response was generated."
+
+    # 8. Token Accounting, Quota Consumption & Metric Logging
+    prompt_tokens = max(10, len(prompt_req.prompt) // 4 + len(combined_instruction) // 4)
+    completion_tokens = max(10, len(reply_text) // 4)
+    total_tokens = prompt_tokens + completion_tokens
+
+    quota_manager.consume_quota(user_id, total_tokens)
+    metric_logger.log_metric(
+        endpoint="/api/v1/prompt",
+        method="POST",
+        status_code=200,
+        latency_ms=elapsed_ms,
+        user_id=user_id,
+        model_name=final_model_used,
+        provider=model_record.get("provider", "unknown"),
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens
+    )
+
+    # 9. Sync to Web Conversation if enabled
+    bot_nodes = [n for n in nodes if n.get("type") == "bot"]
+    sync_to_web = True
+    bot_name = "Discord Bot"
+    if bot_nodes:
+        b_cfg = bot_nodes[0].get("data", {}).get("config", {})
+        ref_bot_id = b_cfg.get("bot_id")
+        if ref_bot_id:
+            b_row = query_one("SELECT * FROM discord_bot_configs WHERE id = ?", (ref_bot_id,))
+            if b_row:
+                sync_to_web = bool(b_row.get("sync_to_web", 1))
+                bot_name = b_row.get("guild_name") or b_row.get("id") or "Discord Bot"
+
+    if sync_to_web:
+        conv_title = f"Discord Bot: {bot_name}"
+        existing_conv = query_one(
+            "SELECT id FROM conversations WHERE user_id = ? AND title = ?",
+            (user_id, conv_title)
+        )
+        if existing_conv:
+            conv_id = existing_conv["id"]
+        else:
+            conv_id = f"conv_{uuid.uuid4().hex}"
+            execute_commit(
+                "INSERT INTO conversations (id, user_id, project_id, title) VALUES (?, ?, ?, ?)",
+                (conv_id, user_id, resolved_proj["id"], conv_title)
+            )
+
+        execute_commit(
+            "INSERT INTO messages (id, conversation_id, role, content, source) VALUES (?, ?, 'user', ?, 'DISCORD')",
+            (f"msg_{uuid.uuid4().hex}", conv_id, prompt_req.prompt)
+        )
+        execute_commit(
+            "INSERT INTO messages (id, conversation_id, role, content, model_used, tokens_prompt, tokens_completion, source) VALUES (?, ?, 'assistant', ?, ?, ?, ?, 'DISCORD')",
+            (f"msg_{uuid.uuid4().hex}", conv_id, reply_text, final_model_used, prompt_tokens, completion_tokens)
+        )
+
+    return PromptResponse(
+        response=reply_text,
+        model=final_model_used,
+        usage=UsageInfo(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens
+        )
+    )
+
+@bot_router.post("/prompt", response_model=PromptResponse, summary="Execute prompt through Discord Bot project graph")
+async def bot_prompt_endpoint(
+    prompt_req: PromptRequest,
+    req: Request
+):
+    return await execute_antigravity_prompt(prompt_req, req)
+

@@ -385,6 +385,13 @@ requirements:
     priority: "MUST"
     status: "IMPLEMENTED"
     actors: ["Registered User", "Guest"]
+  - id: "FR-053"
+    name: "Model-Bot-Skill Graph Connections, Validation, and Discord Execution"
+    type: "functional"
+    capability: "CAP-AGENT-MGMT"
+    priority: "MUST"
+    status: "IMPLEMENTED"
+    actors: ["Registered User"]
 
 business_rules:
   - id: "BR-001"
@@ -482,6 +489,15 @@ business_rules:
     status: "BASELINED"
   - id: "BR-035"
     name: "VRM Animation Multi-Channel Priority & Non-Conflicting Bone Allocation"
+    status: "IMPLEMENTED"
+  - id: "BR-036"
+    name: "Model to Bot Cardinality Constraint (0..1 Bot per Model)"
+    status: "IMPLEMENTED"
+  - id: "BR-037"
+    name: "Model to Skill Cardinality & Duplicate Rejection Invariant"
+    status: "IMPLEMENTED"
+  - id: "BR-038"
+    name: "Deterministic Discord-to-Project Routing & Ambiguous Route Rejection"
     status: "IMPLEMENTED"
 
 security_requirements:

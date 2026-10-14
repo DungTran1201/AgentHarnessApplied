@@ -266,5 +266,145 @@ class TestProjectBotSkillGraph(unittest.TestCase):
             self.assertIn("Canvas Skill 1", sys_inst)
             self.assertIn("Canvas Skill 2", sys_inst)
 
+    def test_health_endpoints_match_reference_schema(self):
+        # 1. Root /health (called by reference Discord bot)
+        res_root = self.client.get("/health")
+        self.assertEqual(res_root.status_code, 200)
+        data_root = res_root.json()
+        self.assertIn(data_root.get("status"), ("ok", "healthy"))
+        self.assertIsNotNone(data_root.get("version"))
+        self.assertIsInstance(data_root.get("details"), dict)
+
+        # 2. Sub-path /api/v1/health
+        res_v1 = self.client.get("/api/v1/health")
+        self.assertEqual(res_v1.status_code, 200)
+        data_v1 = res_v1.json()
+        self.assertIn(data_v1.get("status"), ("ok", "healthy"))
+        self.assertIsInstance(data_v1.get("details"), dict)
+
+    def test_discord_prompt_execution_through_project(self):
+        # 1. Save valid graph with bot and 2 skills
+        payload = self._build_graph(include_bot=True, bot_count=1, skill_ids=[self.skill_id_1, self.skill_id_2])
+        save_res = self.client.put(f"/api/v1/projects/{self.project_id}/graph", json=payload, headers=self.headers)
+        self.assertEqual(save_res.status_code, 200)
+
+        # 2. Activate project
+        act_res = self.client.post(f"/api/v1/projects/{self.project_id}/activate", headers=self.headers)
+        self.assertEqual(act_res.status_code, 200)
+
+        from unittest.mock import patch
+
+        captured_kwargs = {}
+        async def mock_astream_agent(*args, **kwargs):
+            captured_kwargs.update(kwargs)
+            yield {"status": "streaming", "token": "Discord bot response text generated through project model"}
+            yield {"status": "done", "model": "gemini-3.8-flash"}
+
+        with patch("llm.agent.chat_agent.astream_agent", side_effect=mock_astream_agent):
+            # Call POST /api/v1/prompt via Discord Bot PromptRequest format
+            prompt_req = {
+                "prompt": "What are your capabilities?",
+                "model": "default",
+                "metadata": {
+                    "user_id": self.discord_id,
+                    "channel_id": "112233445566778899"
+                }
+            }
+            res = self.client.post("/api/v1/prompt", json=prompt_req, headers=self.headers)
+            self.assertEqual(res.status_code, 200)
+            data = res.json()
+            self.assertEqual(data["model"], "gemini-3.8-flash")
+            self.assertIn("Discord bot response text", data["response"])
+            self.assertIsNotNone(data.get("usage"))
+            self.assertGreater(data["usage"]["total_tokens"], 0)
+
+            # Check that skills context was passed
+            sys_inst = captured_kwargs.get("system_instruction", "")
+            self.assertIn("ACTIVE SKILLS INSTRUCTIONS", sys_inst)
+            self.assertIn("Canvas Skill 1", sys_inst)
+            self.assertIn("Canvas Skill 2", sys_inst)
+
+            # Check web conversation sync
+            msg_rows = query_one(
+                "SELECT count(*) as count FROM messages WHERE source = 'DISCORD'"
+            )
+            self.assertGreaterEqual(msg_rows["count"], 2)
+
+    def test_discord_prompt_model_override_precedence(self):
+        # Save & activate project with default model gemini-3.8-flash
+        payload = self._build_graph(include_bot=True, bot_count=1)
+        self.client.put(f"/api/v1/projects/{self.project_id}/graph", json=payload, headers=self.headers)
+        self.client.post(f"/api/v1/projects/{self.project_id}/activate", headers=self.headers)
+
+        from unittest.mock import patch
+
+        async def mock_astream_agent(*args, **kwargs):
+            yield {"status": "streaming", "token": "Response from overridden model"}
+            yield {"status": "done", "model": kwargs.get("model_override")}
+
+        with patch("llm.agent.chat_agent.astream_agent", side_effect=mock_astream_agent):
+            # 1. Non-existent / unauthorized model override => Rejected with 400
+            bad_req = {
+                "prompt": "Test bad override",
+                "model": "non-existent-hack-model-v99",
+                "metadata": {"user_id": self.discord_id}
+            }
+            bad_res = self.client.post("/api/v1/prompt", json=bad_req, headers=self.headers)
+            self.assertEqual(bad_res.status_code, 400)
+            self.assertIn("not active or authorized", bad_res.json().get("detail", ""))
+
+            # 2. Valid active model override => Accepted and used
+            valid_override_req = {
+                "prompt": "Test valid override",
+                "model": "gemini-3.5-flash",
+                "metadata": {"user_id": self.discord_id}
+            }
+            good_res = self.client.post("/api/v1/prompt", json=valid_override_req, headers=self.headers)
+            self.assertEqual(good_res.status_code, 200)
+            self.assertEqual(good_res.json()["model"], "gemini-3.5-flash")
+
+    def test_ambiguous_bot_route_rejected(self):
+        # 1. Project 1 is ACTIVE with bot
+        p1_graph = self._build_graph(include_bot=True, bot_count=1)
+        self.client.put(f"/api/v1/projects/{self.project_id}/graph", json=p1_graph, headers=self.headers)
+        self.client.post(f"/api/v1/projects/{self.project_id}/activate", headers=self.headers)
+
+        # 2. Create Project 2 and also activate with bot
+        p2_id = f"proj2_{uuid.uuid4().hex[:10]}"
+        execute_commit("INSERT INTO projects (id, user_id, name, description, status) VALUES (?, ?, 'Project 2', '', 'ACTIVE')", (p2_id, self.user_id))
+        p2_graph = self._build_graph(include_bot=True, bot_count=1)
+        self.client.put(f"/api/v1/projects/{p2_id}/graph", json=p2_graph, headers=self.headers)
+
+        try:
+            from unittest.mock import patch
+            async def mock_astream_agent(*args, **kwargs):
+                yield {"status": "streaming", "token": "Ambiguous mock"}
+                yield {"status": "done", "model": "gemini-3.8-flash"}
+
+            with patch("llm.agent.chat_agent.astream_agent", side_effect=mock_astream_agent):
+                # 3. Call /api/v1/prompt with no explicit project_id route => Rejected with 400
+                ambig_req = {
+                    "prompt": "Route this prompt",
+                    "metadata": {"user_id": self.discord_id}
+                }
+                res = self.client.post("/api/v1/prompt", json=ambig_req, headers=self.headers)
+                self.assertEqual(res.status_code, 400)
+                detail = res.json().get("detail", "")
+                self.assertIn("The Discord bot cannot determine which model to execute. Configure an explicit route before running this workflow.", detail)
+
+                # 4. Call /api/v1/prompt WITH explicit project_id => Disambiguated and succeeded
+                explicit_req = {
+                    "prompt": "Route this prompt explicitly",
+                    "metadata": {
+                        "user_id": self.discord_id,
+                        "project_id": self.project_id
+                    }
+                }
+                ok_res = self.client.post("/api/v1/prompt", json=explicit_req, headers=self.headers)
+                self.assertEqual(ok_res.status_code, 200)
+        finally:
+            execute_commit("DELETE FROM projects WHERE id = ?", (p2_id,))
+
 if __name__ == "__main__":
     unittest.main()
+

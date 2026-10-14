@@ -139,3 +139,71 @@ Executes a chat session against an active project, streaming model tokens and em
     ]
   }
   ```
+
+---
+
+## 4. POST /api/v1/prompt (Discord Bot Runtime Execution)
+Executes an AI interaction request from Discord Bot through AI-Chan's active Project Graph, resolving the bound Model and connected Skills with strict authorization and validation. Compatible with `discord-bot-connect-to-antigravity` (`AntigravityService.ask`).
+
+- **Request Schema (`PromptRequest`)**:
+  ```json
+  {
+    "prompt": "Explain quantum computing in simple terms",
+    "model": "default",
+    "temperature": 0.7,
+    "max_tokens": 2048,
+    "metadata": {
+      "user_id": "112233445566778899",
+      "channel_id": "998877665544332211",
+      "project_id": "proj_123..."
+    }
+  }
+  ```
+
+- **Ambiguous Execution Rejection (400 Bad Request)**:
+  If a user has multiple active projects with bound bots and no explicit `project_id` route:
+  ```json
+  {
+    "detail": "The Discord bot cannot determine which model to execute. Configure an explicit route before running this workflow."
+  }
+  ```
+
+- **Model Override Validation (400 Bad Request)**:
+  If `request.model` specifies an inactive or unconfigured model:
+  ```json
+  {
+    "detail": "Requested model override 'unauthorized-model' is not active or authorized."
+  }
+  ```
+
+- **Successful Response 200 OK (`PromptResponse`)**:
+  ```json
+  {
+    "response": "Quantum computing is a type of computation that harnesses the collective properties of quantum states...",
+    "model": "gemini-3.8-flash",
+    "usage": {
+      "prompt_tokens": 128,
+      "completion_tokens": 256,
+      "total_tokens": 384
+    }
+  }
+  ```
+
+---
+
+## 5. GET /health & GET /api/v1/health (Service Healthcheck)
+Healthcheck endpoint compatible with reference Discord bot's `HealthResponse`.
+
+- **Response 200 OK (`HealthResponse`)**:
+  ```json
+  {
+    "status": "healthy",
+    "version": "1.0.0",
+    "service": "ai-backend",
+    "details": {
+      "service": "ai-backend",
+      "database": "sqlite_connected"
+    }
+  }
+  ```
+

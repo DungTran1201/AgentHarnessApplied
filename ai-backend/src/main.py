@@ -25,6 +25,8 @@ app.add_middleware(TelemetryMiddleware)
 # Mount API Routers
 app.include_router(api_router, prefix="/api/v1")
 
+from src.api.v1.bot import HealthResponse
+
 @app.get("/")
 async def root():
     return {
@@ -32,6 +34,19 @@ async def root():
         "status": "running",
         "docs_url": "/docs"
     }
+
+@app.get("/health", response_model=HealthResponse)
+async def health_check():
+    return HealthResponse(
+        status="healthy",
+        service="ai-backend",
+        version="1.0.0",
+        details={
+            "service": "ai-backend",
+            "database": "sqlite_connected"
+        }
+    )
+
 
 if __name__ == "__main__":
     import uvicorn

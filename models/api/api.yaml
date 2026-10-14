@@ -249,6 +249,21 @@ apis:
         use_case: "UC-034"
         source_refs: ["FR-052", "BR-036", "SEC-013"]
 
+      - id: "OP-036"
+        method: "POST"
+        path: "/prompt"
+        summary: "Execute AI prompt through connected Discord Bot project graph, resolving bound Model and connected Skills"
+        use_case: "UC-035"
+        source_refs: ["FR-053", "BR-001", "BR-002", "BR-003", "BR-004", "BR-005", "SEC-013"]
+
+      - id: "OP-037"
+        method: "GET"
+        path: "/health"
+        summary: "Service healthcheck compatible with reference Discord bot HealthResponse"
+        use_case: "UC-035"
+        source_refs: ["FR-053"]
+
+
 
 
 

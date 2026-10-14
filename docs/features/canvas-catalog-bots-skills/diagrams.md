@@ -78,4 +78,36 @@ sequenceDiagram
     Agent-->>ChatUI: event: chunk { content: "token..." }
     Model-->>Agent: Completed
     Agent-->>ChatUI: event: done
+
+## 4. Discord Bot to Model & Skills Execution Runtime (`POST /api/v1/prompt`)
+```mermaid
+sequenceDiagram
+    autonumber
+    actor DiscordUser as Discord User
+    participant DiscordApp as Discord Client / Gateway
+    participant DiscordBot as Reference Discord Bot (AntigravityService)
+    participant AIChan as AI-Chan Backend (/api/v1/prompt)
+    participant DB as SQLite (projects, models, skills)
+    participant Agent as AI Orchestration Engine (LLM)
+
+    DiscordUser->>DiscordApp: Invokes /ask prompt="Hello" model="default"
+    DiscordApp->>DiscordBot: Interaction create
+    DiscordBot->>DiscordApp: Defer reply (thinking=True)
+    DiscordBot->>AIChan: POST /api/v1/prompt (PromptRequest with metadata)
+    AIChan->>DB: Resolve User (discord_id) & Active Projects
+    alt Ambiguous Target (>1 Active Projects with bound Bot, no project_id)
+        AIChan-->>DiscordBot: 400 Bad Request ("The Discord bot cannot determine which model to execute...")
+        DiscordBot-->>DiscordApp: Followup error message
+    else Unambiguous Project Resolved
+        AIChan->>DB: Extract Model node config & validate model override precedence
+        AIChan->>DB: Resolve connected Skills (deterministic order) & read SKILL.md
+        AIChan->>Agent: astream_agent(prompt, system_instruction=prompt+skills)
+        Agent-->>AIChan: Generated text response
+        AIChan->>DB: Record Quota, Telemetry, & Sync to Web Conversation (source='DISCORD')
+        AIChan-->>DiscordBot: 200 OK PromptResponse(response, model, usage)
+        DiscordBot->>DiscordApp: Followup reply with Embed (Model footer, token metrics)
+        DiscordApp-->>DiscordUser: Renders AI response in Discord channel
+    end
+```
+
 ```
