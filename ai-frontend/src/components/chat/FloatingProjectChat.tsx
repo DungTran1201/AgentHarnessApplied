@@ -69,132 +69,234 @@ export default function FloatingProjectChat({
   const [savedExpandedWidth, setSavedExpandedWidth] = useState<number>(380);
   const [savedExpandedHeight, setSavedExpandedHeight] = useState<number>(460);
 
-  // Responsive boundary tracking
+  // Active Dragging State for Visual Feedback
+  const [isResizingH, setIsResizingH] = useState(false);
+  const [isResizingV, setIsResizingV] = useState(false);
+
+  // Responsive boundary tracking (strictly clamped inside canvas)
   const [maxBounds, setMaxBounds] = useState<{ width: number; height: number }>({
     width: 600,
     height: 700,
   });
 
-  const updateBounds = useCallback(() => {
-    if (canvasContainerRef?.current) {
-      const rect = canvasContainerRef.current.getBoundingClientRect();
-      const availableW = Math.max(280, rect.width - 32);
-      const availableH = Math.max(240, rect.height - 32);
+  // Calculate dynamic minimums based on canvas availability
+  const minWidth = Math.min(300, maxBounds.width);
+  const minHeight = Math.min(320, maxBounds.height);
+
+  // ── ResizeObserver for Real Rendered Canvas Boundaries ───────────
+  useEffect(() => {
+    const container = canvasContainerRef?.current;
+    if (!container) return;
+
+    const updateFromRect = (widthPx: number, heightPx: number) => {
+      // Usable bounds: rightInset = 16px, leftInset = 16px -> -32px total
+      // topInset = 16px, bottomInset = 16px -> -32px total
+      const availableW = Math.max(260, widthPx - 32);
+      const availableH = Math.max(220, heightPx - 32);
       setMaxBounds({ width: availableW, height: availableH });
 
+      // Always clamp panel inside real rendered canvas
       setWidth(prev => Math.min(prev, availableW));
       setHeight(prev => Math.min(prev, availableH));
+    };
+
+    const rect = container.getBoundingClientRect();
+    updateFromRect(rect.width, rect.height);
+
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(entries => {
+        for (const entry of entries) {
+          const { width: cW, height: cH } = entry.contentRect;
+          updateFromRect(cW, cH);
+        }
+      });
+      ro.observe(container);
     }
+
+    const handleWindowResize = () => {
+      const r = container.getBoundingClientRect();
+      updateFromRect(r.width, r.height);
+    };
+    window.addEventListener('resize', handleWindowResize);
+
+    return () => {
+      if (ro) ro.disconnect();
+      window.removeEventListener('resize', handleWindowResize);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+    };
   }, [canvasContainerRef]);
 
-  useEffect(() => {
-    updateBounds();
-    window.addEventListener('resize', updateBounds);
-    return () => window.removeEventListener('resize', updateBounds);
-  }, [updateBounds]);
-
-  // ── Drag Resizing Logic ──────────────────────────────────────────
-  const isDraggingHRef = useRef(false);
-  const isDraggingVRef = useRef(false);
-  const dragStartRef = useRef<{ startX: number; startY: number; startW: number; startH: number }>({
-    startX: 0,
-    startY: 0,
-    startW: 380,
-    startH: 460,
-  });
-
-  const handlePointerDownH = (e: React.PointerEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    isDraggingHRef.current = true;
-    dragStartRef.current = {
-      startX: e.clientX,
-      startY: e.clientY,
-      startW: width,
-      startH: height,
-    };
-
-    const handlePointerMove = (moveEvent: PointerEvent) => {
-      if (!isDraggingHRef.current) return;
-      // Anchored to right: dragging left (negative delta) increases width!
-      const deltaX = dragStartRef.current.startX - moveEvent.clientX;
-      const targetW = dragStartRef.current.startW + deltaX;
-      const clampedW = Math.max(280, Math.min(maxBounds.width, targetW));
-      setWidth(clampedW);
-      if (clampedW > 330) {
-        setSavedExpandedWidth(clampedW);
-      }
-    };
-
-    const handlePointerUp = () => {
-      isDraggingHRef.current = false;
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('pointerup', handlePointerUp);
-    };
-
-    window.addEventListener('pointermove', handlePointerMove);
-    window.addEventListener('pointerup', handlePointerUp);
-  };
-
-  const handlePointerDownV = (e: React.PointerEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    isDraggingVRef.current = true;
-    dragStartRef.current = {
-      startX: e.clientX,
-      startY: e.clientY,
-      startW: width,
-      startH: height,
-    };
-
-    const handlePointerMove = (moveEvent: PointerEvent) => {
-      if (!isDraggingVRef.current) return;
-      // Anchored to bottom: dragging upward (negative delta) increases height!
-      const deltaY = dragStartRef.current.startY - moveEvent.clientY;
-      const targetH = dragStartRef.current.startH + deltaY;
-      const clampedH = Math.max(240, Math.min(maxBounds.height, targetH));
-      setHeight(clampedH);
-      if (clampedH > 290) {
-        setSavedExpandedHeight(clampedH);
-      }
-    };
-
-    const handlePointerUp = () => {
-      isDraggingVRef.current = false;
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('pointerup', handlePointerUp);
-    };
-
-    window.addEventListener('pointermove', handlePointerMove);
-    window.addEventListener('pointerup', handlePointerUp);
-  };
-
   // ── Arrow Quick Dimension Toggles ────────────────────────────────
-  const isWidthCompact = width <= 310;
-  const toggleWidthCompact = (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const isWidthCompact = width <= minWidth + 10;
+  const toggleWidthCompact = useCallback(() => {
     if (isWidthCompact) {
-      // Restore expanded
+      // Restore previous custom expanded width
       const restoreW = Math.min(maxBounds.width, Math.max(380, savedExpandedWidth));
       setWidth(restoreW);
     } else {
-      // Save current and collapse to compact
+      // Save current width and collapse to compact
       setSavedExpandedWidth(width);
-      setWidth(290);
+      setWidth(minWidth);
     }
-  };
+  }, [isWidthCompact, maxBounds.width, minWidth, savedExpandedWidth, width]);
 
-  const isHeightCompact = height <= 270;
-  const toggleHeightCompact = (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const isHeightCompact = height <= minHeight + 10;
+  const toggleHeightCompact = useCallback(() => {
     if (isHeightCompact) {
-      // Restore expanded
+      // Restore previous custom expanded height
       const restoreH = Math.min(maxBounds.height, Math.max(460, savedExpandedHeight));
       setHeight(restoreH);
     } else {
-      // Save current and collapse to compact
+      // Save current height and collapse to compact
       setSavedExpandedHeight(height);
-      setHeight(250);
+      setHeight(minHeight);
+    }
+  }, [isHeightCompact, maxBounds.height, minHeight, savedExpandedHeight, height]);
+
+  // ── Horizontal Drag to Resize Handler (Left Edge Arrow) ──────────
+  const handlePointerDownH = (e: React.PointerEvent) => {
+    if (e.button !== 0) return; // Only primary left mouse button
+    e.preventDefault();
+    e.stopPropagation();
+
+    const startX = e.clientX;
+    const startW = width;
+    let hasDragged = false;
+    setIsResizingH(true);
+
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'ew-resize';
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      // Anchored to right boundary: dragging left increases width, dragging right decreases width
+      const deltaX = startX - moveEvent.clientX;
+      if (Math.abs(deltaX) >= 4) {
+        hasDragged = true;
+      }
+      if (hasDragged) {
+        const targetW = startW + deltaX;
+        const clampedW = Math.max(minWidth, Math.min(maxBounds.width, targetW));
+        setWidth(clampedW);
+        if (clampedW > minWidth + 20) {
+          setSavedExpandedWidth(clampedW);
+        }
+      }
+    };
+
+    const handlePointerUp = (upEvent: PointerEvent) => {
+      upEvent.stopPropagation();
+      setIsResizingH(false);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerCancel);
+
+      // If user simply clicked without dragging (<4px), toggle compact/expand
+      if (!hasDragged) {
+        toggleWidthCompact();
+      }
+    };
+
+    const handlePointerCancel = () => {
+      setIsResizingH(false);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerCancel);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerCancel);
+  };
+
+  // ── Vertical Drag to Resize Handler (Top Edge Arrow) ────────────
+  const handlePointerDownV = (e: React.PointerEvent) => {
+    if (e.button !== 0) return; // Only primary left mouse button
+    e.preventDefault();
+    e.stopPropagation();
+
+    const startY = e.clientY;
+    const startH = height;
+    let hasDragged = false;
+    setIsResizingV(true);
+
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'ns-resize';
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      // Anchored to bottom boundary: dragging upward increases height, dragging downward decreases height
+      const deltaY = startY - moveEvent.clientY;
+      if (Math.abs(deltaY) >= 4) {
+        hasDragged = true;
+      }
+      if (hasDragged) {
+        const targetH = startH + deltaY;
+        const clampedH = Math.max(minHeight, Math.min(maxBounds.height, targetH));
+        setHeight(clampedH);
+        if (clampedH > minHeight + 20) {
+          setSavedExpandedHeight(clampedH);
+        }
+      }
+    };
+
+    const handlePointerUp = (upEvent: PointerEvent) => {
+      upEvent.stopPropagation();
+      setIsResizingV(false);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerCancel);
+
+      // If user simply clicked without dragging (<4px), toggle compact/expand
+      if (!hasDragged) {
+        toggleHeightCompact();
+      }
+    };
+
+    const handlePointerCancel = () => {
+      setIsResizingV(false);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerCancel);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerCancel);
+  };
+
+  // ── Keyboard Accessibility for Resize Handles ────────────────────
+  const handleKeyDownH = (e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      setWidth(prev => Math.min(maxBounds.width, prev + 24));
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      setWidth(prev => Math.max(minWidth, prev - 24));
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      toggleWidthCompact();
+    }
+  };
+
+  const handleKeyDownV = (e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHeight(prev => Math.min(maxBounds.height, prev + 24));
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHeight(prev => Math.max(minHeight, prev - 24));
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      toggleHeightCompact();
     }
   };
 
@@ -442,569 +544,642 @@ export default function FloatingProjectChat({
         backgroundColor: `rgba(15, 15, 18, ${panelOpacity / 100})`,
         backdropFilter: 'blur(10px)',
         WebkitBackdropFilter: 'blur(10px)',
-        border: '1px solid rgba(255, 255, 255, 0.12)',
+        border: `1px solid ${isResizingH || isResizingV ? 'rgba(62, 207, 142, 0.45)' : 'rgba(255, 255, 255, 0.12)'}`,
         borderRadius: '10px',
-        boxShadow: '0 16px 40px rgba(0, 0, 0, 0.55), 0 0 1px rgba(255, 255, 255, 0.15)',
-        overflow: 'hidden',
-        userSelect: 'text',
+        boxShadow: isResizingH || isResizingV
+          ? '0 20px 48px rgba(0, 0, 0, 0.65), 0 0 16px rgba(62, 207, 142, 0.15)'
+          : '0 16px 40px rgba(0, 0, 0, 0.55), 0 0 1px rgba(255, 255, 255, 0.15)',
+        overflow: 'visible', // allows handle tabs to extend slightly for effortless grabbing
+        userSelect: isResizingH || isResizingV ? 'none' : 'text',
+        transition: isResizingH || isResizingV ? 'none' : 'border-color 0.15s ease, box-shadow 0.15s ease',
       }}
     >
-      {/* ── Left Edge Drag Handle (Horizontal Resize) ── */}
+      {/* ── Left Edge Continuous Drag Strip ── */}
       <div
         onPointerDown={handlePointerDownH}
         title="Drag horizontally to resize width"
         style={{
           position: 'absolute',
-          left: 0,
+          left: '-4px',
           top: 0,
           bottom: 0,
-          width: '7px',
+          width: '8px',
           cursor: 'ew-resize',
           zIndex: 60,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
           background: 'transparent',
-          transition: 'background 0.15s ease',
-        }}
-        onMouseEnter={e => {
-          e.currentTarget.style.background = 'rgba(62, 207, 142, 0.25)';
-        }}
-        onMouseLeave={e => {
-          e.currentTarget.style.background = 'transparent';
         }}
       />
 
-      {/* ── Top Edge Drag Handle (Vertical Resize) ── */}
+      {/* ── Top Edge Continuous Drag Strip ── */}
       <div
         onPointerDown={handlePointerDownV}
         title="Drag vertically to resize height"
         style={{
           position: 'absolute',
           left: 0,
-          top: 0,
+          top: '-4px',
           right: 0,
-          height: '7px',
+          height: '8px',
           cursor: 'ns-resize',
           zIndex: 60,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
           background: 'transparent',
-          transition: 'background 0.15s ease',
-        }}
-        onMouseEnter={e => {
-          e.currentTarget.style.background = 'rgba(62, 207, 142, 0.25)';
-        }}
-        onMouseLeave={e => {
-          e.currentTarget.style.background = 'transparent';
         }}
       />
 
-      {/* ── Floating Left Edge Arrow Control (Quick Compact / Expand Width) ── */}
-      <button
-        type="button"
-        onClick={toggleWidthCompact}
-        title={isWidthCompact ? 'Expand width' : 'Compact width'}
-        aria-label={isWidthCompact ? 'Expand width' : 'Compact width'}
+      {/* ── Dedicated Horizontal Resize Arrow Control (Left Edge Handle) ── */}
+      <div
+        role="slider"
+        aria-label="Drag to resize chat width"
+        aria-valuenow={width}
+        aria-valuemin={minWidth}
+        aria-valuemax={maxBounds.width}
+        tabIndex={0}
+        onKeyDown={handleKeyDownH}
+        onPointerDown={handlePointerDownH}
+        title="Drag horizontally to resize width (or click to toggle compact)"
         style={{
           position: 'absolute',
-          left: '8px',
+          left: '-12px',
           top: '50%',
           transform: 'translateY(-50%)',
           zIndex: 65,
-          width: '18px',
-          height: '28px',
-          background: 'rgba(25, 25, 30, 0.85)',
-          border: '1px solid rgba(255, 255, 255, 0.15)',
-          borderRadius: '4px',
+          width: '24px',
+          height: '48px',
+          background: isResizingH ? 'rgba(32, 32, 40, 0.98)' : 'rgba(22, 22, 26, 0.94)',
+          border: `1.5px solid ${isResizingH ? 'var(--accent)' : 'rgba(255, 255, 255, 0.18)'}`,
+          borderRadius: '6px',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '2px',
+          color: isResizingH ? 'var(--accent)' : 'var(--text-secondary)',
+          cursor: 'ew-resize',
+          boxShadow: isResizingH
+            ? '0 0 14px rgba(62, 207, 142, 0.35), 0 4px 14px rgba(0, 0, 0, 0.5)'
+            : '0 4px 12px rgba(0, 0, 0, 0.45)',
+          touchAction: 'none',
+          userSelect: 'none',
+          outline: 'none',
+          transition: isResizingH ? 'none' : 'border-color 0.15s ease, background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease',
+        }}
+        onMouseEnter={e => {
+          if (!isResizingH) {
+            e.currentTarget.style.color = 'var(--accent)';
+            e.currentTarget.style.borderColor = 'rgba(62, 207, 142, 0.6)';
+            e.currentTarget.style.background = 'rgba(28, 28, 35, 0.98)';
+          }
+        }}
+        onMouseLeave={e => {
+          if (!isResizingH) {
+            e.currentTarget.style.color = 'var(--text-secondary)';
+            e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.18)';
+            e.currentTarget.style.background = 'rgba(22, 22, 26, 0.94)';
+          }
+        }}
+      >
+        <Icon name={isWidthCompact ? 'chevronLeft' : 'chevronRight'} size={13} />
+        <div style={{ display: 'flex', gap: '2px', opacity: 0.5 }}>
+          <span style={{ width: '1.5px', height: '6px', background: 'currentColor', borderRadius: '1px' }} />
+          <span style={{ width: '1.5px', height: '6px', background: 'currentColor', borderRadius: '1px' }} />
+        </div>
+      </div>
+
+      {/* ── Dedicated Vertical Resize Arrow Control (Top Edge Handle) ── */}
+      <div
+        role="slider"
+        aria-label="Drag to resize chat height"
+        aria-valuenow={height}
+        aria-valuemin={minHeight}
+        aria-valuemax={maxBounds.height}
+        tabIndex={0}
+        onKeyDown={handleKeyDownV}
+        onPointerDown={handlePointerDownV}
+        title="Drag vertically to resize height (or click to toggle compact)"
+        style={{
+          position: 'absolute',
+          top: '-12px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 65,
+          height: '24px',
+          width: '48px',
+          background: isResizingV ? 'rgba(32, 32, 40, 0.98)' : 'rgba(22, 22, 26, 0.94)',
+          border: `1.5px solid ${isResizingV ? 'var(--accent)' : 'rgba(255, 255, 255, 0.18)'}`,
+          borderRadius: '6px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          color: 'var(--text-muted)',
-          cursor: 'pointer',
-          padding: 0,
-          transition: 'all 0.15s ease',
+          gap: '4px',
+          color: isResizingV ? 'var(--accent)' : 'var(--text-secondary)',
+          cursor: 'ns-resize',
+          boxShadow: isResizingV
+            ? '0 0 14px rgba(62, 207, 142, 0.35), 0 4px 14px rgba(0, 0, 0, 0.5)'
+            : '0 4px 12px rgba(0, 0, 0, 0.45)',
+          touchAction: 'none',
+          userSelect: 'none',
+          outline: 'none',
+          transition: isResizingV ? 'none' : 'border-color 0.15s ease, background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease',
         }}
         onMouseEnter={e => {
-          e.currentTarget.style.color = 'var(--accent)';
-          e.currentTarget.style.borderColor = 'var(--accent)';
-          e.currentTarget.style.background = 'rgba(30, 30, 38, 0.95)';
+          if (!isResizingV) {
+            e.currentTarget.style.color = 'var(--accent)';
+            e.currentTarget.style.borderColor = 'rgba(62, 207, 142, 0.6)';
+            e.currentTarget.style.background = 'rgba(28, 28, 35, 0.98)';
+          }
         }}
         onMouseLeave={e => {
-          e.currentTarget.style.color = 'var(--text-muted)';
-          e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.15)';
-          e.currentTarget.style.background = 'rgba(25, 25, 30, 0.85)';
+          if (!isResizingV) {
+            e.currentTarget.style.color = 'var(--text-secondary)';
+            e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.18)';
+            e.currentTarget.style.background = 'rgba(22, 22, 26, 0.94)';
+          }
         }}
       >
-        <Icon name={isWidthCompact ? 'chevronLeft' : 'chevronRight'} size={12} />
-      </button>
-
-      {/* ── Header ── */}
-      <header
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '8px 12px 8px 14px',
-          borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-          background: 'rgba(255, 255, 255, 0.02)',
-          flexShrink: 0,
-          gap: '8px',
-        }}
-      >
-        {/* Left: Title & Status */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
-          <span
-            style={{
-              width: '8px',
-              height: '8px',
-              borderRadius: '50%',
-              backgroundColor: isProjectActive ? 'var(--accent)' : '#f59e0b',
-              boxShadow: isProjectActive ? '0 0 6px rgba(62, 207, 142, 0.6)' : 'none',
-              flexShrink: 0,
-            }}
-            title={isProjectActive ? 'Project is ACTIVE' : `Project is ${project?.status || 'PAUSED'}`}
-          />
-          <span style={{ fontWeight: 600, fontSize: '0.82rem', color: 'var(--text-primary)' }}>
-            Project Chat
-          </span>
-          {project && (
-            <span
-              style={{
-                fontSize: '0.7rem',
-                color: 'var(--text-muted)',
-                background: 'rgba(255, 255, 255, 0.05)',
-                padding: '2px 6px',
-                borderRadius: '4px',
-                border: '1px solid rgba(255, 255, 255, 0.06)',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                maxWidth: '120px',
-              }}
-              title={project.name}
-            >
-              {project.name}
-            </span>
-          )}
+        <Icon name={isHeightCompact ? 'chevronUp' : 'chevronDown'} size={13} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', opacity: 0.5 }}>
+          <span style={{ width: '6px', height: '1.5px', background: 'currentColor', borderRadius: '1px' }} />
+          <span style={{ width: '6px', height: '1.5px', background: 'currentColor', borderRadius: '1px' }} />
         </div>
-
-        {/* Right: Opacity Slider, Quick Toggles & Close Button */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
-          {/* Transparency Slider */}
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              padding: '2px 6px',
-              background: 'rgba(255, 255, 255, 0.04)',
-              borderRadius: '4px',
-              border: '1px solid rgba(255, 255, 255, 0.06)',
-            }}
-            title="Panel opacity (background transparency)"
-          >
-            <label
-              htmlFor="chat-panel-opacity"
-              style={{
-                fontSize: '0.65rem',
-                color: 'var(--text-muted)',
-                userSelect: 'none',
-                cursor: 'pointer',
-              }}
-            >
-              Opacity
-            </label>
-            <input
-              id="chat-panel-opacity"
-              type="range"
-              min="45"
-              max="95"
-              step="1"
-              value={panelOpacity}
-              onChange={e => handleOpacityChange(parseInt(e.target.value, 10))}
-              aria-label="Panel opacity"
-              style={{
-                width: '48px',
-                height: '4px',
-                accentColor: 'var(--accent)',
-                cursor: 'pointer',
-              }}
-            />
-            <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', minWidth: '24px', textAlign: 'right' }}>
-              {panelOpacity}%
-            </span>
-          </div>
-
-          {/* Vertical Toggle (Height) */}
-          <button
-            type="button"
-            onClick={toggleHeightCompact}
-            title={isHeightCompact ? 'Expand height' : 'Compact height'}
-            aria-label={isHeightCompact ? 'Expand height' : 'Compact height'}
-            style={{
-              background: 'transparent',
-              border: '1px solid rgba(255, 255, 255, 0.08)',
-              borderRadius: '4px',
-              width: '24px',
-              height: '24px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'var(--text-muted)',
-              cursor: 'pointer',
-              padding: 0,
-            }}
-            onMouseEnter={e => {
-              e.currentTarget.style.color = 'var(--text-primary)';
-              e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
-            }}
-            onMouseLeave={e => {
-              e.currentTarget.style.color = 'var(--text-muted)';
-              e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
-            }}
-          >
-            <Icon name={isHeightCompact ? 'chevronUp' : 'chevronDown'} size={12} />
-          </button>
-
-          {/* Close Button */}
-          <button
-            type="button"
-            onClick={e => {
-              e.stopPropagation();
-              handleToggleOpen(false);
-            }}
-            title="Close Project Chat"
-            aria-label="Close Project Chat"
-            style={{
-              background: 'transparent',
-              border: '1px solid rgba(255, 255, 255, 0.08)',
-              borderRadius: '4px',
-              width: '24px',
-              height: '24px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'var(--text-muted)',
-              cursor: 'pointer',
-              padding: 0,
-            }}
-            onMouseEnter={e => {
-              e.currentTarget.style.color = 'var(--danger)';
-              e.currentTarget.style.borderColor = 'var(--danger)';
-            }}
-            onMouseLeave={e => {
-              e.currentTarget.style.color = 'var(--text-muted)';
-              e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
-            }}
-          >
-            <Icon name="close" size={13} />
-          </button>
-        </div>
-      </header>
-
-      {/* ── Status Notice Banner (if not active or graph invalid) ── */}
-      {(!isProjectActive || !isGraphValid) && (
-        <div
-          style={{
-            padding: '6px 12px',
-            fontSize: '0.72rem',
-            lineHeight: '1.4',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            background: !isGraphValid
-              ? 'rgba(240, 113, 120, 0.12)'
-              : 'rgba(245, 158, 11, 0.12)',
-            borderBottom: `1px solid ${!isGraphValid ? 'rgba(240, 113, 120, 0.25)' : 'rgba(245, 158, 11, 0.25)'}`,
-            color: !isGraphValid ? 'var(--danger)' : '#fbbf24',
-            flexShrink: 0,
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <Icon name="alert" size={12} />
-            <span>
-              {!isGraphValid
-                ? 'Pipeline has incomplete connections. Save graph before chatting.'
-                : `Project is currently ${project?.status || 'STOPPED'}.`}
-            </span>
-          </div>
-          {onActivateProject && !isProjectActive && isGraphValid && (
-            <button
-              type="button"
-              onClick={onActivateProject}
-              className="btn btn-secondary"
-              style={{
-                padding: '2px 8px',
-                fontSize: '0.65rem',
-                height: 'auto',
-                marginLeft: '8px',
-              }}
-            >
-              Activate Now
-            </button>
-          )}
-        </div>
-      )}
-
-      {errorBanner && (
-        <div
-          style={{
-            padding: '6px 12px',
-            fontSize: '0.72rem',
-            background: 'rgba(240, 113, 120, 0.15)',
-            borderBottom: '1px solid rgba(240, 113, 120, 0.3)',
-            color: 'var(--danger)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            flexShrink: 0,
-          }}
-        >
-          <span>{errorBanner}</span>
-          <button
-            type="button"
-            onClick={() => setErrorBanner(null)}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: 'var(--text-muted)',
-              cursor: 'pointer',
-            }}
-          >
-            ✕
-          </button>
-        </div>
-      )}
-
-      {/* ── Scrollable Chat Messages Thread ── */}
-      <div
-        style={{
-          flex: 1,
-          overflowY: 'auto',
-          padding: '12px 14px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '10px',
-        }}
-      >
-        {messages.length === 0 ? (
-          <div
-            style={{
-              margin: 'auto',
-              textAlign: 'center',
-              padding: '20px 10px',
-              color: 'var(--text-muted)',
-              fontSize: '0.78rem',
-            }}
-          >
-            <div
-              style={{
-                width: '36px',
-                height: '36px',
-                borderRadius: '8px',
-                background: 'rgba(255, 255, 255, 0.04)',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                marginBottom: '8px',
-                color: 'var(--accent)',
-              }}
-            >
-              <Icon name="chat" size={18} />
-            </div>
-            <p style={{ margin: '0 0 4px', fontWeight: 600, color: 'var(--text-secondary)' }}>
-              Interactive Project Chat
-            </p>
-            <p style={{ margin: 0, fontSize: '0.72rem', maxWidth: '240px', lineHeight: '1.4' }}>
-              Test your configured graph pipeline in real-time. Word limits and linked system prompts are automatically applied.
-            </p>
-          </div>
-        ) : (
-          messages.map(m => {
-            const isUser = m.role === 'user';
-            return (
-              <div
-                key={m.id}
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignSelf: isUser ? 'flex-end' : 'flex-start',
-                  maxWidth: '85%',
-                }}
-              >
-                <div
-                  style={{
-                    padding: '8px 12px',
-                    borderRadius: '8px',
-                    fontSize: '0.8rem',
-                    lineHeight: '1.45',
-                    wordBreak: 'break-word',
-                    backgroundColor: isUser ? 'var(--bg-elevated)' : 'rgba(255, 255, 255, 0.05)',
-                    border: isUser
-                      ? '1px solid rgba(62, 207, 142, 0.3)'
-                      : '1px solid rgba(255, 255, 255, 0.08)',
-                    color: 'var(--text-primary)',
-                  }}
-                >
-                  {m.content ? (
-                    <span style={{ whiteSpace: 'pre-wrap' }}>{m.content}</span>
-                  ) : (
-                    <span style={{ color: 'var(--text-muted)', fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <span
-                        style={{
-                          width: '6px',
-                          height: '6px',
-                          borderRadius: '50%',
-                          background: 'var(--accent)',
-                          animation: 'pulse 1s infinite',
-                        }}
-                      />
-                      Thinking...
-                    </span>
-                  )}
-                </div>
-                <span
-                  style={{
-                    fontSize: '0.62rem',
-                    color: 'var(--text-muted)',
-                    marginTop: '2px',
-                    alignSelf: isUser ? 'flex-end' : 'flex-start',
-                    padding: '0 2px',
-                  }}
-                >
-                  {isUser ? 'You' : project?.name || 'Assistant'}
-                </span>
-              </div>
-            );
-          })
-        )}
-        <div ref={messagesEndRef} />
       </div>
 
-      {/* ── Message Composer ── */}
-      <footer
+      {/* ── Chat Content Inner Container (clips content with border radius) ── */}
+      <div
         style={{
-          borderTop: '1px solid rgba(255, 255, 255, 0.08)',
-          background: 'rgba(0, 0, 0, 0.2)',
-          padding: '8px 10px',
-          flexShrink: 0,
+          width: '100%',
+          height: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+          borderRadius: '9px',
+          overflow: 'hidden',
         }}
       >
-        <div
+        {/* ── Header ── */}
+        <header
           style={{
             display: 'flex',
-            alignItems: 'flex-end',
-            gap: '8px',
-            background: 'var(--bg-surface)',
-            border: isWordLimitExceeded
-              ? '1px solid var(--danger)'
-              : '1px solid var(--border-default)',
-            borderRadius: '6px',
-            padding: '6px 8px',
-          }}
-        >
-          <textarea
-            value={inputPrompt}
-            onChange={e => setInputPrompt(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={
-              !isProjectActive
-                ? 'Project must be ACTIVE to chat...'
-                : 'Send message to project pipeline... (Enter to send)'
-            }
-            rows={1}
-            disabled={!isProjectActive && !messages.length}
-            style={{
-              flex: 1,
-              background: 'transparent',
-              border: 'none',
-              outline: 'none',
-              resize: 'none',
-              color: 'var(--text-primary)',
-              fontSize: '0.8rem',
-              lineHeight: '1.4',
-              maxHeight: '80px',
-              overflowY: 'auto',
-              fontFamily: 'inherit',
-            }}
-          />
-
-          {isStreaming ? (
-            <button
-              type="button"
-              onClick={handleStopStreaming}
-              title="Stop generation"
-              style={{
-                background: 'rgba(240, 113, 120, 0.15)',
-                border: '1px solid var(--danger)',
-                color: 'var(--danger)',
-                borderRadius: '4px',
-                padding: '4px 8px',
-                cursor: 'pointer',
-                fontSize: '0.72rem',
-                fontWeight: 600,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-                height: '28px',
-              }}
-            >
-              <Icon name="stop" size={11} />
-              <span>Stop</span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={handleSendMessage}
-              disabled={!inputPrompt.trim() || isWordLimitExceeded}
-              title="Send message (Enter)"
-              style={{
-                background: inputPrompt.trim() && !isWordLimitExceeded
-                  ? 'var(--accent)'
-                  : 'rgba(255, 255, 255, 0.08)',
-                color: inputPrompt.trim() && !isWordLimitExceeded
-                  ? '#000'
-                  : 'var(--text-muted)',
-                border: 'none',
-                borderRadius: '4px',
-                padding: '4px 10px',
-                cursor: inputPrompt.trim() && !isWordLimitExceeded ? 'pointer' : 'not-allowed',
-                fontSize: '0.75rem',
-                fontWeight: 600,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-                height: '28px',
-                transition: 'all 0.15s ease',
-              }}
-            >
-              <span>Send</span>
-              <Icon name="chevronRight" size={12} />
-            </button>
-          )}
-        </div>
-
-        {/* Word count & limit indicator */}
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
             alignItems: 'center',
-            marginTop: '4px',
-            fontSize: '0.65rem',
-            color: 'var(--text-muted)',
-            padding: '0 2px',
+            justifyContent: 'space-between',
+            padding: '8px 12px 8px 14px',
+            borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+            background: 'rgba(255, 255, 255, 0.02)',
+            flexShrink: 0,
+            gap: '8px',
           }}
         >
-          <span>Shift+Enter for new line</span>
-          <span style={{ color: isWordLimitExceeded ? 'var(--danger)' : 'var(--text-muted)' }}>
-            {currentWordCount} / {maxWordsLimit} words
-          </span>
+          {/* Left: Title & Status */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+            <span
+              style={{
+                width: '8px',
+                height: '8px',
+                borderRadius: '50%',
+                backgroundColor: isProjectActive ? 'var(--accent)' : '#f59e0b',
+                boxShadow: isProjectActive ? '0 0 6px rgba(62, 207, 142, 0.6)' : 'none',
+                flexShrink: 0,
+              }}
+              title={isProjectActive ? 'Project is ACTIVE' : `Project is ${project?.status || 'PAUSED'}`}
+            />
+            <span style={{ fontWeight: 600, fontSize: '0.82rem', color: 'var(--text-primary)' }}>
+              Project Chat
+            </span>
+            {project && (
+              <span
+                style={{
+                  fontSize: '0.7rem',
+                  color: 'var(--text-muted)',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  padding: '2px 6px',
+                  borderRadius: '4px',
+                  border: '1px solid rgba(255, 255, 255, 0.06)',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  maxWidth: '120px',
+                }}
+                title={project.name}
+              >
+                {project.name}
+              </span>
+            )}
+          </div>
+
+          {/* Right: Opacity Slider, Quick Toggles & Close Button */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+            {/* Transparency Slider */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                padding: '2px 6px',
+                background: 'rgba(255, 255, 255, 0.04)',
+                borderRadius: '4px',
+                border: '1px solid rgba(255, 255, 255, 0.06)',
+              }}
+              title="Panel opacity (background transparency)"
+            >
+              <label
+                htmlFor="chat-panel-opacity"
+                style={{
+                  fontSize: '0.65rem',
+                  color: 'var(--text-muted)',
+                  userSelect: 'none',
+                  cursor: 'pointer',
+                }}
+              >
+                Opacity
+              </label>
+              <input
+                id="chat-panel-opacity"
+                type="range"
+                min="45"
+                max="95"
+                step="1"
+                value={panelOpacity}
+                onChange={e => handleOpacityChange(parseInt(e.target.value, 10))}
+                aria-label="Panel opacity"
+                style={{
+                  width: '48px',
+                  height: '4px',
+                  accentColor: 'var(--accent)',
+                  cursor: 'pointer',
+                }}
+              />
+              <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', minWidth: '24px', textAlign: 'right' }}>
+                {panelOpacity}%
+              </span>
+            </div>
+
+            {/* Vertical Toggle Button (Quick Height Toggle) */}
+            <button
+              type="button"
+              onClick={toggleHeightCompact}
+              title={isHeightCompact ? 'Expand height' : 'Compact height'}
+              aria-label={isHeightCompact ? 'Expand height' : 'Compact height'}
+              style={{
+                background: 'transparent',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                borderRadius: '4px',
+                width: '24px',
+                height: '24px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: 'var(--text-muted)',
+                cursor: 'pointer',
+                padding: 0,
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.color = 'var(--text-primary)';
+                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.color = 'var(--text-muted)';
+                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
+              }}
+            >
+              <Icon name={isHeightCompact ? 'chevronUp' : 'chevronDown'} size={12} />
+            </button>
+
+            {/* Close Button */}
+            <button
+              type="button"
+              onClick={e => {
+                e.stopPropagation();
+                handleToggleOpen(false);
+              }}
+              title="Close Project Chat"
+              aria-label="Close Project Chat"
+              style={{
+                background: 'transparent',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                borderRadius: '4px',
+                width: '24px',
+                height: '24px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: 'var(--text-muted)',
+                cursor: 'pointer',
+                padding: 0,
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.color = 'var(--danger)';
+                e.currentTarget.style.borderColor = 'var(--danger)';
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.color = 'var(--text-muted)';
+                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
+              }}
+            >
+              <Icon name="close" size={13} />
+            </button>
+          </div>
+        </header>
+
+        {/* ── Status Notice Banner (if not active or graph invalid) ── */}
+        {(!isProjectActive || !isGraphValid) && (
+          <div
+            style={{
+              padding: '6px 12px',
+              fontSize: '0.72rem',
+              lineHeight: '1.4',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              background: !isGraphValid
+                ? 'rgba(240, 113, 120, 0.12)'
+                : 'rgba(245, 158, 11, 0.12)',
+              borderBottom: `1px solid ${!isGraphValid ? 'rgba(240, 113, 120, 0.25)' : 'rgba(245, 158, 11, 0.25)'}`,
+              color: !isGraphValid ? 'var(--danger)' : '#fbbf24',
+              flexShrink: 0,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Icon name="alert" size={12} />
+              <span>
+                {!isGraphValid
+                  ? 'Pipeline has incomplete connections. Save graph before chatting.'
+                  : `Project is currently ${project?.status || 'STOPPED'}.`}
+              </span>
+            </div>
+            {onActivateProject && !isProjectActive && isGraphValid && (
+              <button
+                type="button"
+                onClick={onActivateProject}
+                className="btn btn-secondary"
+                style={{
+                  padding: '2px 8px',
+                  fontSize: '0.65rem',
+                  height: 'auto',
+                  marginLeft: '8px',
+                }}
+              >
+                Activate Now
+              </button>
+            )}
+          </div>
+        )}
+
+        {errorBanner && (
+          <div
+            style={{
+              padding: '6px 12px',
+              fontSize: '0.72rem',
+              background: 'rgba(240, 113, 120, 0.15)',
+              borderBottom: '1px solid rgba(240, 113, 120, 0.3)',
+              color: 'var(--danger)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexShrink: 0,
+            }}
+          >
+            <span>{errorBanner}</span>
+            <button
+              type="button"
+              onClick={() => setErrorBanner(null)}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--text-muted)',
+                cursor: 'pointer',
+              }}
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* ── Scrollable Chat Messages Thread ── */}
+        <div
+          style={{
+            flex: 1,
+            overflowY: 'auto',
+            padding: '12px 14px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '10px',
+          }}
+        >
+          {messages.length === 0 ? (
+            <div
+              style={{
+                margin: 'auto',
+                textAlign: 'center',
+                padding: '20px 10px',
+                color: 'var(--text-muted)',
+                fontSize: '0.78rem',
+              }}
+            >
+              <div
+                style={{
+                  width: '36px',
+                  height: '36px',
+                  borderRadius: '8px',
+                  background: 'rgba(255, 255, 255, 0.04)',
+                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginBottom: '8px',
+                  color: 'var(--accent)',
+                }}
+              >
+                <Icon name="chat" size={18} />
+              </div>
+              <p style={{ margin: '0 0 4px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                Interactive Project Chat
+              </p>
+              <p style={{ margin: 0, fontSize: '0.72rem', maxWidth: '240px', lineHeight: '1.4' }}>
+                Test your configured graph pipeline in real-time. Word limits and linked system prompts are automatically applied.
+              </p>
+            </div>
+          ) : (
+            messages.map(m => {
+              const isUser = m.role === 'user';
+              return (
+                <div
+                  key={m.id}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignSelf: isUser ? 'flex-end' : 'flex-start',
+                    maxWidth: '85%',
+                  }}
+                >
+                  <div
+                    style={{
+                      padding: '8px 12px',
+                      borderRadius: '8px',
+                      fontSize: '0.8rem',
+                      lineHeight: '1.45',
+                      wordBreak: 'break-word',
+                      backgroundColor: isUser ? 'var(--bg-elevated)' : 'rgba(255, 255, 255, 0.05)',
+                      border: isUser
+                        ? '1px solid rgba(62, 207, 142, 0.3)'
+                        : '1px solid rgba(255, 255, 255, 0.08)',
+                      color: 'var(--text-primary)',
+                    }}
+                  >
+                    {m.content ? (
+                      <span style={{ whiteSpace: 'pre-wrap' }}>{m.content}</span>
+                    ) : (
+                      <span style={{ color: 'var(--text-muted)', fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span
+                          style={{
+                            width: '6px',
+                            height: '6px',
+                            borderRadius: '50%',
+                            background: 'var(--accent)',
+                            animation: 'pulse 1s infinite',
+                          }}
+                        />
+                        Thinking...
+                      </span>
+                    )}
+                  </div>
+                  <span
+                    style={{
+                      fontSize: '0.62rem',
+                      color: 'var(--text-muted)',
+                      marginTop: '2px',
+                      alignSelf: isUser ? 'flex-end' : 'flex-start',
+                      padding: '0 2px',
+                    }}
+                  >
+                    {isUser ? 'You' : project?.name || 'Assistant'}
+                  </span>
+                </div>
+              );
+            })
+          )}
+          <div ref={messagesEndRef} />
         </div>
-      </footer>
+
+        {/* ── Message Composer ── */}
+        <footer
+          style={{
+            borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+            background: 'rgba(0, 0, 0, 0.2)',
+            padding: '8px 10px',
+            flexShrink: 0,
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'flex-end',
+              gap: '8px',
+              background: 'var(--bg-surface)',
+              border: isWordLimitExceeded
+                ? '1px solid var(--danger)'
+                : '1px solid var(--border-default)',
+              borderRadius: '6px',
+              padding: '6px 8px',
+            }}
+          >
+            <textarea
+              value={inputPrompt}
+              onChange={e => setInputPrompt(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={
+                !isProjectActive
+                  ? 'Project must be ACTIVE to chat...'
+                  : 'Send message to project pipeline... (Enter to send)'
+              }
+              rows={1}
+              disabled={!isProjectActive && !messages.length}
+              style={{
+                flex: 1,
+                background: 'transparent',
+                border: 'none',
+                outline: 'none',
+                resize: 'none',
+                color: 'var(--text-primary)',
+                fontSize: '0.8rem',
+                lineHeight: '1.4',
+                maxHeight: '80px',
+                overflowY: 'auto',
+                fontFamily: 'inherit',
+              }}
+            />
+
+            {isStreaming ? (
+              <button
+                type="button"
+                onClick={handleStopStreaming}
+                title="Stop generation"
+                style={{
+                  background: 'rgba(240, 113, 120, 0.15)',
+                  border: '1px solid var(--danger)',
+                  color: 'var(--danger)',
+                  borderRadius: '4px',
+                  padding: '4px 8px',
+                  cursor: 'pointer',
+                  fontSize: '0.72rem',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  height: '28px',
+                }}
+              >
+                <Icon name="stop" size={11} />
+                <span>Stop</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleSendMessage}
+                disabled={!inputPrompt.trim() || isWordLimitExceeded}
+                title="Send message (Enter)"
+                style={{
+                  background: inputPrompt.trim() && !isWordLimitExceeded
+                    ? 'var(--accent)'
+                    : 'rgba(255, 255, 255, 0.08)',
+                  color: inputPrompt.trim() && !isWordLimitExceeded
+                    ? '#000'
+                    : 'var(--text-muted)',
+                  border: 'none',
+                  borderRadius: '4px',
+                  padding: '4px 10px',
+                  cursor: inputPrompt.trim() && !isWordLimitExceeded ? 'pointer' : 'not-allowed',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  height: '28px',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                <span>Send</span>
+                <Icon name="chevronRight" size={12} />
+              </button>
+            )}
+          </div>
+
+          {/* Word count & limit indicator */}
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginTop: '4px',
+              fontSize: '0.65rem',
+              color: 'var(--text-muted)',
+              padding: '0 2px',
+            }}
+          >
+            <span>Shift+Enter for new line</span>
+            <span style={{ color: isWordLimitExceeded ? 'var(--danger)' : 'var(--text-muted)' }}>
+              {currentWordCount} / {maxWordsLimit} words
+            </span>
+          </div>
+        </footer>
+      </div>
     </div>
   );
 }
