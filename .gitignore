@@ -11,6 +11,11 @@ certs/
 credentials.json
 secrets/
 
+# SQLite database files
+*.db
+*.sqlite
+*.sqlite3
+
 # Cache & Temporary Directories
 .cache/
 *.cache/
