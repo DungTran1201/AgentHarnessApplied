@@ -37,7 +37,10 @@ export type IconName =
   | 'sparkles'
   | 'key'
   | 'lock'
-  | 'cpu';
+  | 'cpu'
+  | 'workspace'
+  | 'git'
+  | 'terminal';
 
 interface IconProps extends React.SVGProps<SVGSVGElement> {
   name: IconName;
@@ -318,6 +321,30 @@ export default function Icon({ name, size = 16, style, ...rest }: IconProps) {
           <line x1="20" y1="14" x2="23" y2="14" />
           <line x1="1" y1="9" x2="4" y2="9" />
           <line x1="1" y1="14" x2="4" y2="14" />
+        </svg>
+      );
+    case 'workspace':
+      return (
+        <svg {...s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...rest}>
+          <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+          <path d="M8 11l3 3-3 3" />
+        </svg>
+      );
+    case 'git':
+      return (
+        <svg {...s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...rest}>
+          <circle cx="6" cy="18" r="3" />
+          <circle cx="6" cy="6" r="3" />
+          <circle cx="18" cy="6" r="3" />
+          <line x1="6" y1="9" x2="6" y2="15" />
+          <path d="M18 9a9 9 0 01-9 9" />
+        </svg>
+      );
+    case 'terminal':
+      return (
+        <svg {...s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...rest}>
+          <polyline points="4 17 10 11 4 5" />
+          <line x1="12" y1="19" x2="20" y2="19" />
         </svg>
       );
     default:

@@ -1,0 +1,62 @@
+%% ==============================================================================
+%% AI-Chan Development Orchestrator — Verification Pipeline Sequence Diagram
+%% Document Reference: DIAG-VERIF-06
+%% Specification: Prompt 06 — Verification Pipeline
+%% ==============================================================================
+
+sequenceDiagram
+    autonumber
+    actor Dev as Developer (Browser Console)
+    participant Backend as Backend Control Plane (/api/v1/orchestrator)
+    participant DB as SQLite (app.db)
+    participant Runner as Local Agent Runner
+    participant Validator as CommandSecurityValidator
+    participant Pipeline as VerificationPipeline
+    participant OS as Subprocess (Host OS)
+
+    Note over Runner,Pipeline: Triggered upon Agent completing edits in worktree
+    Runner->>Pipeline: run_all(worktree_path, policy)
+    activate Pipeline
+
+    loop For each step in [lint, typecheck, test, build]
+        Pipeline->>Validator: validate_command(step.command)
+        activate Validator
+
+        alt Command contains banned operator (| & ; > < $)
+            Validator-->>Pipeline: Raises SecurityError("Banned operator detected")
+            Pipeline->>Pipeline: Mark status = 'SKIPPED_BY_POLICY'
+        else Command binary not in allowlist
+            Validator-->>Pipeline: Raises SecurityError("Binary not allowlisted")
+            Pipeline->>Pipeline: Mark status = 'SKIPPED_BY_POLICY'
+        else Safe allowlisted command (e.g., npm test, pytest)
+            Validator-->>Pipeline: Validated safe arguments [cmd, arg1, arg2]
+            deactivate Validator
+
+            Pipeline->>OS: subprocess.Popen(args, cwd=worktree, shell=False)
+            activate OS
+
+            alt Process finishes within timeout (e.g., 180s)
+                OS-->>Pipeline: exit_code, stdout, stderr
+                Pipeline->>Pipeline: status = 'PASSED' (if 0) else 'FAILED'
+            else Process times out
+                Pipeline->>OS: Process Tree Kill (taskkill /T /F or SIGKILL)
+                OS-->>Pipeline: Terminated
+                Pipeline->>Pipeline: status = 'ERROR' (TimeoutExpired)
+            end
+            deactivate OS
+        end
+
+        Pipeline->>Pipeline: Record duration, exit_code, stdout/stderr (capped at 4KB)
+    end
+
+    Pipeline-->>Runner: List[VerificationStepResult]
+    deactivate Pipeline
+
+    Runner->>Backend: POST /runners/tasks/verification-reports (Bearer token, reports)
+    activate Backend
+    Backend->>DB: INSERT INTO task_verification_reports (...)
+    Backend->>Dev: SSE Broadcast "VERIFICATION_REPORT" (task_id, steps)
+    Backend-->>Runner: 200 OK (ingested)
+    deactivate Backend
+
+    Dev->>Dev: Render Verification Cards in Task Console (Status Badges & Logs)

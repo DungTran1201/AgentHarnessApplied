@@ -1,0 +1,282 @@
+%% ==============================================================================
+%% AI-Chan Development Orchestrator — Workspace & Agent Runner Diagrams
+%% Document Reference: DIAG-ORCH-01
+%% Specification: Prompt 01 Baseline
+%% Verified Syntax: Mermaid v10+ compatible
+%% ==============================================================================
+
+%% ------------------------------------------------------------------------------
+%% DIAGRAM 1: System Context & Container Architecture
+%% ------------------------------------------------------------------------------
+graph TB
+    subgraph UserSpace ["User Environment"]
+        DevUser["Developer / User<br/>[Actor]"]
+        BrowserUI["AI-Chan Web UI<br/>[Next.js 16 + React 19]"]
+    end
+
+    subgraph BackendCloud ["AI-Chan Control Plane (Backend)"]
+        APIRouter["API Router (/api/v1)<br/>[FastAPI]"]
+        AuthModule["Auth & Tenant Filter<br/>[JWT / Runner Token]"]
+        Orchestrator["Orchestrator Core<br/>[Workspace & Runner Service]"]
+        SSEHub["Event Dispatch Hub<br/>[Server-Sent Events]"]
+        Database[("SQLite Database<br/>[app.db]")]
+    end
+
+    subgraph HostWorkstation ["Developer Workstation (Local Host)"]
+        RunnerDaemon["AI-Chan Agent Runner<br/>[Outbound Daemon]"]
+        GitCLI["Local Git Engine<br/>[git binary]"]
+        AgyRuntime["Antigravity CLI<br/>[agy.exe v1.2.16]"]
+        ClaudeRuntime["Claude Code CLI<br/>[claude v2.1.300]"]
+        LocalFilesystem["Workspace Repository<br/>[Filesystem Path]"]
+    end
+
+    %% Interactions
+    DevUser -->|"Interacts with UI"| BrowserUI
+    BrowserUI -->|"HTTPS REST /api/v1"| APIRouter
+    BrowserUI -->|"SSE /tasks/{id}/events"| SSEHub
+    APIRouter --> AuthModule
+    AuthModule --> Orchestrator
+    Orchestrator --> Database
+    Orchestrator --> SSEHub
+
+    %% Outbound connection from Runner to Backend
+    RunnerDaemon -->|"Outbound HTTPS Handshake & Heartbeat"| APIRouter
+    RunnerDaemon -->|"Long-polling / SSE Task Channel"| SSEHub
+    
+    %% Host Operations
+    RunnerDaemon -->|"Validates path & branches"| GitCLI
+    GitCLI -->|"Reads/writes"| LocalFilesystem
+    RunnerDaemon -->|"Spawns process"| AgyRuntime
+    RunnerDaemon -->|"Spawns process"| ClaudeRuntime
+    AgyRuntime -->|"Operates in directory"| LocalFilesystem
+    ClaudeRuntime -->|"Operates in directory"| LocalFilesystem
+
+%% ------------------------------------------------------------------------------
+%% DIAGRAM 2: Workspace Registration & Validation Swimlane Flow
+%% ------------------------------------------------------------------------------
+%% Rendered as Sequence Flow
+sequenceDiagram
+    autonumber
+    actor Dev as Developer (User)
+    participant FE as Frontend (Next.js)
+    participant API as Backend API (FastAPI)
+    participant DB as SQLite (app.db)
+    participant Runner as Local Agent Runner
+
+    Dev->>FE: Fills Workspace Form (name, runner_id, local_path)
+    FE->>API: POST /api/v1/orchestrator/workspaces
+    activate API
+    API->>DB: Check runner status (Must be ONLINE) and user ownership
+    DB-->>API: Runner confirmed valid
+    API->>DB: INSERT development_workspaces (status='PENDING_VALIDATION')
+    DB-->>API: Workspace record created (id=e4b6c31a)
+    API-->>FE: 201 Created (status: PENDING_VALIDATION)
+    deactivate API
+    FE-->>Dev: Displays card with "Validating Path..." spinner
+
+    %% Validation Challenge Dispatched to Runner
+    activate API
+    API->>Runner: SSE dispatch: validate_workspace(challenge_id, path)
+    deactivate API
+    activate Runner
+    Runner->>Runner: Check directory existence on host
+    Runner->>Runner: Verify read/write permissions
+    Runner->>Runner: Run: git rev-parse --abbrev-ref HEAD
+    Runner->>Runner: Run: git status --porcelain
+    Runner->>API: POST /api/v1/orchestrator/runners/{id}/validation-result
+    deactivate Runner
+    activate API
+    API->>DB: UPDATE development_workspaces SET status='READY', default_branch='main'
+    API->>DB: INSERT workspace_validations (status='SUCCESS')
+    API-->>Runner: 200 OK (Acknowledged)
+    API-->>FE: SSE Event: workspace_updated (id=e4b6c31a, status='READY')
+    deactivate API
+    FE-->>Dev: UI badge transitions to green [READY]
+
+%% ------------------------------------------------------------------------------
+%% DIAGRAM 3: Runner Pairing & Credential Rotation Sequence
+%% ------------------------------------------------------------------------------
+sequenceDiagram
+    autonumber
+    actor Dev as Developer
+    participant UI as Browser (Settings)
+    participant API as Backend Control Plane
+    participant DB as SQLite (app.db)
+    participant CLI as Terminal / Runner Process
+
+    %% Step 1: Pairing Token
+    Dev->>UI: Clicks "Pair New Runner"
+    UI->>API: POST /api/v1/orchestrator/runners/pairing-token
+    API->>DB: INSERT runner_pairing_tokens (token=rpt_..., ttl=15m)
+    API-->>UI: 201 Created (rpt_token, CLI command)
+    UI-->>Dev: Shows CLI command: ai-chan-runner pair --token rpt_...
+
+    %% Step 2: Handshake
+    Dev->>CLI: Executes pairing command
+    CLI->>API: POST /api/v1/orchestrator/runners/pair (token, machine_info, capabilities)
+    activate API
+    API->>DB: SELECT * FROM runner_pairing_tokens WHERE token=rpt_... AND is_used=0
+    DB-->>API: Token valid & active
+    API->>DB: UPDATE runner_pairing_tokens SET is_used=1
+    API->>API: Generate runner_id (UUID) & runner_secret (rsk_...)
+    API->>DB: INSERT agent_runners (id, secret_hash=SHA256(rsk), status='ONLINE')
+    API-->>CLI: 200 OK (runner_id, runner_secret, heartbeat_interval=25s)
+    deactivate API
+    CLI->>CLI: Save credentials in ~/.ai-chan/runner.json (0600)
+    CLI->>API: Initiates periodic POST /runners/{id}/heartbeat
+    API-->>UI: SSE Event: runner_paired (name=Desktop-Win11, status=ONLINE)
+    UI-->>Dev: Modal shows success checkmark
+
+    %% Step 3: Secret Rotation
+    Note over Dev,CLI: Credential Rotation (On-demand)
+    Dev->>UI: Clicks "Rotate Secret"
+    UI->>API: POST /api/v1/orchestrator/runners/{id}/rotate-secret
+    API->>API: Generate new_runner_secret
+    API->>DB: UPDATE agent_runners SET secret_hash=SHA256(new_secret)
+    API-->>UI: 200 OK (new_runner_secret)
+    UI-->>Dev: Displays new secret to update in runner.json
+
+%% ------------------------------------------------------------------------------
+%% DIAGRAM 4: Runner State Machine
+%% ------------------------------------------------------------------------------
+stateDiagram-v2
+    [*] --> PENDING : Token Generated (Awaiting Pairing)
+    PENDING --> ONLINE : Handshake Successful (Valid Pairing Token)
+    PENDING --> [*] : Pairing Token Expired (15m TTL)
+
+    ONLINE --> OFFLINE : Heartbeat Timeout (> 60s without heartbeat)
+    ONLINE --> OFFLINE : Graceful Shutdown (Farewell Beacon sent)
+    OFFLINE --> ONLINE : Reconnected (Valid Heartbeat received)
+
+    ONLINE --> REVOKED : User Revokes in UI
+    OFFLINE --> REVOKED : User Revokes in UI
+    REVOKED --> [*] : Permanent Invalidation (Token Rejected)
+
+%% ------------------------------------------------------------------------------
+%% DIAGRAM 5: Workspace Validation Activity / Flow
+%% ------------------------------------------------------------------------------
+flowchart TD
+    Start([Workspace Validation Triggered]) --> CheckRunner{Is Paired Runner ONLINE?}
+    CheckRunner -- No --> MarkUnavailable[Mark status = UNAVAILABLE<br/>Error: Runner is offline]
+    CheckRunner -- Yes --> DispatchChallenge[Dispatch Challenge to Runner via Channel]
+    
+    DispatchChallenge --> CheckPathExists{Does local_path exist<br/>on Runner Host?}
+    CheckPathExists -- No --> PathMissing[Runner reports PATH_NOT_FOUND]
+    PathMissing --> UpdateUnavailable[Update status = UNAVAILABLE<br/>Reason: Directory not found]
+
+    CheckPathExists -- Yes --> CheckPermissions{Is directory readable<br/>and writable?}
+    CheckPermissions -- No --> PermDenied[Runner reports PERMISSION_DENIED]
+    PermDenied --> UpdateUnavailablePerm[Update status = UNAVAILABLE<br/>Reason: Access Denied]
+
+    CheckPermissions -- Yes --> CheckGit{Contains .git folder?}
+    CheckGit -- No --> NonGit[Runner reports IS_GIT = false]
+    NonGit --> UpdateNonGit[Update status = NON_GIT_READY<br/>Git branch isolation disabled]
+
+    CheckGit -- Yes --> InspectGit[Execute git branch & status]
+    InspectGit --> UpdateReady[Update status = READY<br/>Record branch & commit hash]
+
+    UpdateUnavailable --> End([Validation Complete])
+    UpdateUnavailablePerm --> End
+    UpdateNonGit --> End
+    UpdateReady --> End
+
+%% ------------------------------------------------------------------------------
+%% DIAGRAM 6: Workspace & Runner Domain Model ERD
+%% ------------------------------------------------------------------------------
+erDiagram
+    USERS ||--o{ DEVELOPMENT_WORKSPACES : "owns"
+    USERS ||--o{ AGENT_RUNNERS : "registers"
+    USERS ||--o{ RUNNER_PAIRING_TOKENS : "creates"
+    AGENT_RUNNERS ||--o{ DEVELOPMENT_WORKSPACES : "bound to"
+    DEVELOPMENT_WORKSPACES ||--o{ WORKSPACE_VALIDATIONS : "records"
+    PROJECTS |o--o| DEVELOPMENT_WORKSPACES : "MVP 1:1 binding"
+
+    USERS {
+        string id PK
+        string email
+        string full_name
+    }
+
+    DEVELOPMENT_WORKSPACES {
+        string id PK
+        string user_id FK
+        string runner_id FK
+        string name
+        string local_path
+        string git_remote_url
+        string default_branch
+        string status
+        int is_git_repo
+        string last_commit_hash
+        datetime last_validated_at
+    }
+
+    AGENT_RUNNERS {
+        string id PK
+        string user_id FK
+        string name
+        string machine_name
+        string platform
+        string architecture
+        string status
+        string secret_hash
+        text capabilities
+        text system_info
+        datetime last_heartbeat_at
+    }
+
+    RUNNER_PAIRING_TOKENS {
+        string token PK
+        string user_id FK
+        int is_used
+        datetime expires_at
+    }
+
+    WORKSPACE_VALIDATIONS {
+        string id PK
+        string workspace_id FK
+        string runner_id FK
+        string status
+        string branch_detected
+        int has_uncommitted_changes
+        text error_message
+    }
+
+    PROJECTS {
+        string id PK
+        string workspace_id FK
+        string name
+        text graph_data
+    }
+
+%% ------------------------------------------------------------------------------
+%% DIAGRAM 7: Network Connectivity & Trust Boundaries
+%% ------------------------------------------------------------------------------
+flowchart LR
+    subgraph PublicBoundary ["Zone 1: Developer Browser (Untrusted WAN/LAN)"]
+        Browser["User Browser"]
+    end
+
+    subgraph CentralBoundary ["Zone 2: AI-Chan Central Server (DMZ / Cloud / Localhost)"]
+        ReverseProxy["TLS Ingress / Reverse Proxy"]
+        BackendAPI["FastAPI Control Plane (Port 8000)"]
+        SQLiteDB[("SQLite Database")]
+    end
+
+    subgraph HostBoundary ["Zone 3: Workstation Host (Behind NAT / Firewall)"]
+        RunnerProcess["Agent Runner Process"]
+        LocalRepo["Git Working Tree"]
+        ToolEngines["CLI Runtimes (agy / claude)"]
+    end
+
+    %% Network arrows showing outbound initiation
+    Browser -->|"1. HTTPS / JWT Auth (Inbound to Backend)"| ReverseProxy
+    ReverseProxy --> BackendAPI
+    BackendAPI --> SQLiteDB
+
+    %% Crucial security feature: Runner connects OUTBOUND to Backend
+    RunnerProcess -->|"2. Outbound HTTPS Long-Poll / SSE<br/>(Bearer Runner Secret Key)"| ReverseProxy
+    
+    %% Localhost actions
+    RunnerProcess -->|"3. Local filesystem access"| LocalRepo
+    RunnerProcess -->|"4. Subprocess execution"| ToolEngines

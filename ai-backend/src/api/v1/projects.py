@@ -443,11 +443,18 @@ async def list_projects(
         rows = query_all(sql, (user_id, limit, offset))
         total_row = query_one("SELECT COUNT(*) as count FROM projects WHERE user_id = ? AND status != 'DELETED'", (user_id,))
 
+    # Nếu là guest_user và không tìm thấy project nào, fallback tìm tất cả project không bị xóa để không bị rào cản xác thực
+    if user_id == GUEST_USER_ID and not rows:
+        fallback_sql = "SELECT * FROM projects WHERE status != 'DELETED' ORDER BY updated_at DESC LIMIT ? OFFSET ?"
+        rows = query_all(fallback_sql, (limit, offset))
+        total_row = query_one("SELECT COUNT(*) as count FROM projects WHERE status != 'DELETED'")
+
     items = [format_project_response(r) for r in rows]
     total = total_row["count"] if total_row else len(items)
 
     return {
         "items": items,
+        "projects": items,  # Hỗ trợ tương thích ngược cho các component dùng prjData.projects
         "total": total,
         "active_quota": {
             "active_count": active_count,

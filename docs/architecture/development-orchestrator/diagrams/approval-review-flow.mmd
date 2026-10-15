@@ -1,0 +1,60 @@
+%% ==============================================================================
+%% AI-Chan Development Orchestrator — Approval & Review Gate Flow
+%% Document Reference: DIAG-REVIEW-06
+%% Specification: Prompt 06 — Diff Review and Acceptance
+%% ==============================================================================
+
+sequenceDiagram
+    autonumber
+    actor Dev as Developer (Reviewer)
+    participant ConsoleUI as TaskConsole.tsx (Web UI)
+    participant Backend as Backend Control Plane (/api/v1/orchestrator)
+    participant DB as SQLite (app.db)
+    participant Runner as Local Agent Runner
+
+    Note over ConsoleUI,Backend: Task status = 'REVIEW_REQUIRED'
+    ConsoleUI->>Backend: GET /tasks/{id} & GET /tasks/{id}/diff
+    Backend-->>ConsoleUI: Task details, verification reports & Redacted Diff
+
+    Dev->>ConsoleUI: Inspects Diff Stat, File List & Verification Badges
+
+    alt Decision: APPROVE (Accept Changes)
+        Dev->>ConsoleUI: Clicks "Approve & Accept Changes"
+        ConsoleUI->>Backend: POST /tasks/{id}/review {decision: "APPROVE", feedback: "..."}
+        activate Backend
+        Backend->>DB: UPDATE development_tasks SET status='COMPLETED', review_status='APPROVED'
+        Backend->>DB: INSERT INTO task_approvals (action_type='CODE_REVIEW', decision='APPROVED')
+        Backend->>ConsoleUI: SSE Broadcast "STATUS_TRANSITION" (status: 'COMPLETED')
+        Backend-->>ConsoleUI: 200 OK
+        deactivate Backend
+        ConsoleUI-->>Dev: Shows "Task Completed" Banner (Safe for manual merge/PR)
+
+    else Decision: REQUEST_CHANGES (Follow-up Attempt)
+        Dev->>ConsoleUI: Clicks "Request Changes..." and enters feedback
+        ConsoleUI->>Backend: POST /tasks/{id}/review {decision: "REQUEST_CHANGES", feedback: "Cần bổ sung test..."}
+        activate Backend
+        Backend->>DB: UPDATE task_attempts SET review_feedback=... WHERE id=current_attempt_id
+        Backend->>DB: INSERT INTO task_attempts (attempt_number=N+1, parent_attempt_id=current_attempt_id, status='QUEUED')
+        Backend->>DB: UPDATE development_tasks SET status='QUEUED', review_status='CHANGES_REQUESTED'
+        Backend->>ConsoleUI: SSE Broadcast "STATUS_TRANSITION" (status: 'QUEUED')
+        Backend-->>ConsoleUI: 200 OK (new attempt_id created)
+        deactivate Backend
+
+        %% Runner picks up follow-up attempt
+        Backend->>Runner: SSE Task Dispatch (attempt_number=N+1, parent_attempt_id, reviewer_feedback)
+        activate Runner
+        Runner->>Runner: Reuse or re-attach worktree & inject reviewer feedback into prompt
+        Runner-->>Backend: Next attempt execution starts without losing prior diff
+        deactivate Runner
+
+    else Decision: REJECT
+        Dev->>ConsoleUI: Clicks "Reject"
+        ConsoleUI->>Backend: POST /tasks/{id}/review {decision: "REJECT", feedback: "..."}
+        activate Backend
+        Backend->>DB: UPDATE development_tasks SET status='FAILED', review_status='REJECTED'
+        Backend->>DB: INSERT INTO task_approvals (action_type='CODE_REVIEW', decision='REJECTED')
+        Backend->>ConsoleUI: SSE Broadcast "STATUS_TRANSITION" (status: 'FAILED')
+        Backend-->>ConsoleUI: 200 OK
+        deactivate Backend
+        ConsoleUI-->>Dev: Shows "Task Rejected" Banner
+    end

@@ -31,14 +31,17 @@ import { useApp } from '@/context/AppContext';
 
 // ── Nav items – driven by pathname ─────────────────────────────────────
 export const NAV_ITEMS: { key: string; label: string; icon: IconName; href: string }[] = [
-  { key: 'chat',      label: 'Chat',            icon: 'chat',      href: '/chat' },
-  { key: 'projects',  label: 'Projects',        icon: 'projects',  href: '/projects' },
-  { key: 'bot',       label: 'Bot',             icon: 'bot',       href: '/bot/discord' },
-  { key: 'prompts',   label: 'System Prompts',  icon: 'prompts',   href: '/prompts' },
-  { key: 'skills',    label: 'Skills',          icon: 'skills',    href: '/skills' },
-  { key: 'dashboard', label: 'Dashboard',       icon: 'dashboard', href: '/dashboard' },
-  { key: 'settings',  label: 'Settings',        icon: 'settings',  href: '/settings' },
+  { key: 'chat',        label: 'Chat',            icon: 'chat',      href: '/chat' },
+  { key: 'projects',    label: 'Projects',        icon: 'projects',  href: '/projects' },
+  { key: 'bot',         label: 'Bot',             icon: 'bot',       href: '/bot/discord' },
+  { key: 'prompts',     label: 'System Prompts',  icon: 'prompts',   href: '/prompts' },
+  { key: 'skills',      label: 'Skills',          icon: 'skills',    href: '/skills' },
+  { key: 'workspaces',  label: 'Workspaces',      icon: 'workspace', href: '/workspaces' },
+  { key: 'tasks',       label: 'Tasks',           icon: 'terminal',  href: '/tasks' },
+  { key: 'dashboard',   label: 'Dashboard',       icon: 'dashboard', href: '/dashboard' },
+  { key: 'settings',    label: 'Settings',        icon: 'settings',  href: '/settings' },
 ];
+
 
 export function navIsActive(pathname: string, href: string): boolean {
   if (href === '/') return pathname === '/';
