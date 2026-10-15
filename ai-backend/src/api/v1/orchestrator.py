@@ -5,6 +5,7 @@ Implements: SRS-ORCH-01, API-ORCH-01, DOM-ORCH-01, ADR-015
 """
 
 import os
+import sys
 import json
 import uuid
 import time
@@ -854,6 +855,39 @@ async def delete_workspace(id: str, user: Dict = Depends(get_orchestrator_user))
 
     execute_commit("DELETE FROM development_workspaces WHERE id = ?", (id,))
     return {"success": True, "message": "Workspace đã được xóa thành công."}
+
+
+@orchestrator_router.post("/workspaces/{id}/open-ide", summary="Mở Workspace trên máy host")
+async def open_workspace_in_ide(id: str, user: Dict = Depends(get_orchestrator_user)):
+    ws = query_one(
+        "SELECT * FROM development_workspaces WHERE id = ? AND (user_id = ? OR user_id = 'guest_user')",
+        (id, user["id"])
+    )
+    if not ws:
+        ws = query_one("SELECT * FROM development_workspaces WHERE id = ?", (id,))
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace không tồn tại.")
+
+    local_path = ws["local_path"]
+    if not os.path.exists(local_path):
+        raise HTTPException(status_code=400, detail=f"Thư mục không tồn tại trên máy: {local_path}")
+
+    opened = False
+    message = f"Workspace path: {local_path}"
+    if sys.platform == "win32":
+        try:
+            os.startfile(local_path)
+            opened = True
+            message = f"Đã mở thư mục '{local_path}' trên hệ thống."
+        except Exception as e:
+            message = f"Không thể tự động mở: {str(e)}"
+
+    return {
+        "success": True,
+        "path": local_path,
+        "opened": opened,
+        "message": message
+    }
 
 
 # ==============================================================================

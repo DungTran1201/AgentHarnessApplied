@@ -59,6 +59,8 @@ export default function WorkspacesPage() {
 
   // Action states
   const [validatingWsId, setValidatingWsId] = useState<string | null>(null);
+  const [copiedPathWsId, setCopiedPathWsId] = useState<string | null>(null);
+  const [openingIdeWsId, setOpeningIdeWsId] = useState<string | null>(null);
 
   // ── Fetch Data ────────────────────────────────────────────────────────
   const loadData = useCallback(async () => {
@@ -246,6 +248,33 @@ export default function WorkspacesPage() {
       setErrorBanner(err.message);
     } finally {
       setValidatingWsId(null);
+    }
+  };
+
+  // ── Open in IDE & Copy Path ─────────────────────────────────────────
+  const handleCopyPath = (wsId: string, path: string) => {
+    navigator.clipboard.writeText(path);
+    setCopiedPathWsId(wsId);
+    setTimeout(() => setCopiedPathWsId(null), 2000);
+  };
+
+  const handleOpenInIDE = async (wsId: string) => {
+    setOpeningIdeWsId(wsId);
+    setErrorBanner(null);
+    try {
+      const res = await fetch(`/api/v1/orchestrator/workspaces/${wsId}/open-ide`, {
+        method: 'POST',
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Không thể mở thư mục trên máy trạm.');
+      }
+      const data = await res.json();
+      setSuccessBanner(data.message || 'Đã kích hoạt mở thư mục dự án trên IDE / File Explorer.');
+    } catch (err: any) {
+      setErrorBanner(err.message);
+    } finally {
+      setOpeningIdeWsId(null);
     }
   };
 
@@ -599,22 +628,66 @@ export default function WorkspacesPage() {
                   </span>
                 </div>
 
-                {/* Local Path */}
-                <div
-                  style={{
-                    background: 'var(--bg-primary, #0a0b10)',
-                    padding: '8px 10px',
-                    borderRadius: '6px',
-                    fontFamily: 'monospace',
-                    fontSize: '12px',
-                    color: '#94a3b8',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                  title={ws.local_path}
-                >
-                  {ws.local_path}
+                {/* Local Path & Explorer / IDE Actions */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div
+                    style={{
+                      flex: 1,
+                      background: 'var(--bg-primary, #0a0b10)',
+                      padding: '8px 10px',
+                      borderRadius: '6px',
+                      fontFamily: 'monospace',
+                      fontSize: '12px',
+                      color: '#94a3b8',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                    title={ws.local_path}
+                  >
+                    {ws.local_path}
+                  </div>
+                  <button
+                    onClick={() => handleCopyPath(ws.id, ws.local_path)}
+                    title="Copy local absolute path"
+                    style={{
+                      background: 'var(--bg-primary, #0a0b10)',
+                      border: '1px solid var(--border-subtle, #1e2433)',
+                      color: copiedPathWsId === ws.id ? '#10b981' : 'var(--text-muted)',
+                      padding: '7px 9px',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      fontSize: '11px',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <Icon name={copiedPathWsId === ws.id ? 'check' : 'copy'} size={12} />
+                    <span>{copiedPathWsId === ws.id ? 'Copied' : 'Copy'}</span>
+                  </button>
+                  <button
+                    onClick={() => handleOpenInIDE(ws.id)}
+                    disabled={openingIdeWsId === ws.id}
+                    title="Open workspace folder in Antigravity IDE / File Explorer"
+                    style={{
+                      background: 'var(--bg-primary, #0a0b10)',
+                      border: '1px solid var(--border-subtle, #1e2433)',
+                      color: 'var(--accent-primary, #6366f1)',
+                      padding: '7px 9px',
+                      borderRadius: '6px',
+                      cursor: openingIdeWsId === ws.id ? 'wait' : 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      fontSize: '11px',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <Icon name="external" size={12} />
+                    <span>{openingIdeWsId === ws.id ? 'Opening...' : 'Open IDE'}</span>
+                  </button>
                 </div>
 
                 {/* Runner & Git Meta */}

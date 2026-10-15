@@ -37,3 +37,9 @@ venv/
 .vscode/
 .idea/
 
+# Local Demo Runtime & Logs
+logs/
+*.log
+.demo_pids.json
+.ai-chan/
+

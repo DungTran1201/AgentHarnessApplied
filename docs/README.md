@@ -72,4 +72,5 @@ Hồ sơ baseline chính thức được tổng hợp và khóa tại tệp:
 | Nhánh Tính Năng | Thư Mục Hồ Sơ Chi Tiết | Mô Tả Trọng Tâm | Trạng Thái Quản Trị |
 | :--- | :--- | :--- | :---: |
 | **Quản Lý Project (Project Management MVP)** | [docs/features/project-management/](file:///c:/Users/PC/Project/ai-chan/docs/features/project-management/README.md) | Xây dựng đồ thị Node-based trực quan (Web Input → Model → Output), quản lý 3 trạng thái (`active`, `stop`, `deactive`), kiểm soát hạn ngạch `MAX_ACTIVE_PROJECTS`, và thực thi chat thời gian thực từ Trang Chủ. | **`PROPOSED`** |
+| **Development Orchestrator (External Projects)** | [docs/development-orchestrator/](file:///c:/Users/PC/Project/ai-chan/docs/development-orchestrator/README.md) | Điều phối coding agent Antigravity (`agy`) trên repository ngoài dự án AI-Chan, Runner daemon outbound an toàn, quản lý tác vụ, live stream events, diffs và tích hợp launcher `run-demo.bat`. | **`APPROVED`** |
 

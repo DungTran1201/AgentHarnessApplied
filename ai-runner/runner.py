@@ -13,6 +13,7 @@ import os
 import sys
 import json
 import time
+import uuid
 import shutil
 import random
 import signal
@@ -616,7 +617,7 @@ def cmd_start(args):
                         elif current_event == "TASK_DISPATCH":
                             threading.Thread(
                                 target=handle_task_dispatch,
-                                args=(data_obj, server, runner_id, secret),
+                                args=(data_obj, server, runner_id, runner_secret),
                                 daemon=True
                             ).start()
 
@@ -669,6 +670,7 @@ def cmd_start(args):
 
 def main():
     parser = argparse.ArgumentParser(description="AI-Chan Agent Runner Daemon")
+    parser.add_argument("--version", action="version", version="AI-Chan Agent Runner 1.0.0")
     subparsers = parser.add_subparsers(dest="command")
 
     p_pair = subparsers.add_parser("pair", help="Pair runner with AI-Chan backend using token")

@@ -24,5 +24,14 @@ Natural-language change -> classification -> discovery -> impact -> selected art
 3. `/hooks` in CLI surfaces that support hook inspection.
 4. Run `python tools/validators/run_all.py` before declaring a documentation baseline complete.
 
+## Quick Start Demo
+To launch the full AI-Chan platform (Backend, Frontend, and Local Agent Runner) with automatic preflight checks:
+```cmd
+run-demo.bat
+```
+- Preflight diagnostics only: `run-demo.bat --check`
+- Stop demo services cleanly: `run-demo.bat --stop` (or `stop-demo.bat`)
+- Full documentation: [docs/development-orchestrator/README.md](file:///c:/Users/PC/Project/ai-chan/docs/development-orchestrator/README.md)
+
 ## First task
 Ask the agent to inspect the repository read-only and build an evidence register. Then use `/plan` only after requirements/design inputs are sufficiently understood.
