@@ -15,6 +15,15 @@ from pathlib import Path
 from dataclasses import dataclass, asdict
 from typing import Dict, Any, Optional, List, Tuple
 
+try:
+    from adapters.antigravity import redact_sensitive_text
+except ImportError:
+    try:
+        from .adapters.antigravity import redact_sensitive_text
+    except ImportError:
+        def redact_sensitive_text(text: str) -> str:
+            return text
+
 # Allowed base executables for verification commands
 ALLOWED_EXECUTABLES = {
     "npm", "npx", "pnpm", "yarn", "bun",
@@ -211,8 +220,8 @@ class VerificationPipeline:
             status=step_status,
             exit_code=exit_code,
             duration_seconds=duration,
-            stdout_preview=stdout_data,
-            stderr_preview=stderr_data
+            stdout_preview=redact_sensitive_text(stdout_data),
+            stderr_preview=redact_sensitive_text(stderr_data)
         )
 
     def terminate_active_process(self):

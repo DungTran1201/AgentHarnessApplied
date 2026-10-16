@@ -5,9 +5,9 @@
 > **Version:** 1.0.0  
 > **Target Runtime:** Antigravity CLI (`agy`)  
 > **Empirical Validation Reference:**  
-> - Host Executable: `C:\Users\PC\AppData\Local\agy\bin\agy.exe` (Version `1.2.16`, verified 2026-10-15)  
-> - Official Documentation: `https://antigravity.google/docs/cli/headless/` (verified 2026-10-15)  
-> **Fact Classification:** `FACT` (verified CLI flags and behavior), `DECISION` (adapter implementation choices).
+> - Host Executable: `agy.exe` (Version `1.3.5`, verified on host PATH 2026-10-16)  
+> - Official Documentation: `https://antigravity.google/docs/cli/headless/` (verified 2026-10-16)  
+> **Fact Classification:** `FACT` (verified CLI flags, nested NDJSON envelopes, and subprocess behavior), `DECISION` (adapter implementation choices).
 
 ---
 
@@ -20,7 +20,7 @@ The Antigravity CLI provides native support for automated and programmatic execu
 - `--output-format stream-json`: Emits continuous NDJSON events on `stdout`.
 - `--input-format stream-json`: Reads NDJSON messages on `stdin` for continuous piped turns.
 - `--print-timeout <duration>`: Sets turn execution deadline (e.g. `900s`).
-- `--mode <plan|accept-edits>`: Execution mode (`plan` restricts to read-only tools; `accept-edits` permits automated file changes).
+- `--mode <plan|accept-edits|auto>`: Execution mode (`plan` restricts to read-only inspection; `accept-edits` permits automated file changes).
 - `--sandbox`: Runs in an isolated sandbox with terminal restrictions enabled.
 - `--conversation <id>`: Resumes a specific historical conversation session.
 - `--model <name>`: Model override (e.g., `gemini-2.5-pro`).
@@ -95,44 +95,53 @@ In `stream-json` mode, Antigravity CLI strictly separates data channels:
    Chunks read from the stream are appended to an in-memory buffer until a newline `\n` is encountered.
 3. **Oversized Line Guard:**
    To prevent denial of service from large runaway payloads (e.g. huge file dumps in tool output), a hard limit of **2 MB per line** is enforced. Lines exceeding this threshold are truncated, and a warning event is emitted.
-4. **Malformed JSON Handling:**
-   If a line fails `json.loads()`, the adapter does NOT crash. It packages the raw line into a `diagnostic_log` event with severity `WARN` and continues reading subsequent lines.
+4. **Malformed JSON & Missing Field Handling:**
+   If a line fails `json.loads()`, the adapter does NOT crash. It packages the raw line into a `DIAGNOSTIC_LOG` event with severity `WARN` and continues reading subsequent lines. If an expected field is absent, default values (`None` / empty dict) are used safely.
 
 ---
 
 ## 4. Antigravity Event Mapping & Normalization
 
-Antigravity CLI emits three primary event types in `stream-json` mode:
+Antigravity CLI emits three primary event envelopes in `stream-json` mode (`FACT` empirically verified on `agy 1.3.5`):
 
-| Raw CLI Event (`event`) | Raw Field Highlights | Normalized AI-Chan Event | Mapping Logic |
-|---|---|---|---|
-| `init` | `cwd`, `tools`, `permission_mode`, `model` | `TASK_INITIALIZED` | Extracts verified session tools, confirms working directory, captures initial model metadata. |
-| `step_update` (type: `user_input`) | `step_index`, `state: DONE` | `STEP_USER_INPUT` | Internal echo confirmation of prompt. |
-| `step_update` (type: `agent_response`) | `text_delta`, `step_index` | `TEXT_DELTA` | Streams partial markdown text directly to frontend chat/log view. |
-| `step_update` (type: `tool`) | `tool_name`, `tool_info`, `state: ACTIVE` | `TOOL_EXECUTION_START` | Identifies tool being invoked (e.g. `view_file`, `replace_file_content`, `run_command`). |
-| `step_update` (type: `tool`) | `tool_info`, `duration_seconds`, `state: DONE` | `TOOL_EXECUTION_END` | Captures tool duration, return status, and file diffs if applicable. |
-| `step_update` (type: `checkpoint`) | `conversation_id`, `step_index` | `CHECKPOINT_SAVED` | Updates task progress milestone in database. |
-| `result` | `status: SUCCESS`, `structured_output`, `usage`, `total_tokens` | `TASK_COMPLETED` | Extracts aggregate `input_tokens`, `output_tokens`, `total_tokens`, and marks task `COMPLETED`. |
-
-### Raw Antigravity Event Sample:
 ```json
-{"event": "step_update", "conversation_id": "c_9f8b", "step_index": 2, "state": "ACTIVE", "step_type": "agent_response", "text_delta": "Checking file structure..."}
+{"event":"init", "conversation_id":"...", "init":{"cwd":"...", "tools":[...], "permission_mode":"..."}}
+{"event":"step_update", "step_update":{"conversation_id":"...", "step_index":1, "state":"ACTIVE|DONE", "step_type":"agent_response", "text_delta":"..."}}
+{"event":"result", "result":{"conversation_id":"...", "status":"SUCCESS", "response":"...", "duration_seconds":..., "usage":{...}}}
 ```
 
-### Normalized AI-Chan Domain Event:
+### Event Mapping Specification:
+
+| Raw CLI Event (`event`) | Nested Data Container | Extracted Fields | Normalized AI-Chan Event | Mapping Logic & Extraction Rule |
+|---|---|---|---|---|
+| `init` | `raw_json.get("init")` | `cwd`, `tools`, `permission_mode` | `TASK_INITIALIZED` | Extract from nested `init` object: `cwd = init_obj.get("cwd")`, `tools = init_obj.get("tools")`, `conversation_id = raw_json.get("conversation_id")`. |
+| `step_update` (step_type: `user_input`) | `raw_json.get("step_update")` | `step_index`, `state` | `STEP_USER_INPUT` | Internal confirmation that prompt was ingested by CLI runtime. |
+| `step_update` (step_type: `agent_response`) | `raw_json.get("step_update")` | `text_delta`, `step_index` | `TEXT_DELTA` | Extract `text_delta` from `step_update_obj.get("text_delta")`. Stream directly to frontend SSE. |
+| `step_update` (step_type: `tool` / `tool_call`) | `raw_json.get("step_update")` | `tool_name`, `tool_info`, `state: ACTIVE` | `TOOL_CALL_START` | Extract tool details from `step_update_obj`. Capture call ID and sanitized parameters. |
+| `step_update` (step_type: `tool` / `tool_call`) | `raw_json.get("step_update")` | `tool_info`, `duration_seconds`, `state: DONE` | `TOOL_CALL_END` | Extract tool duration and execution status. |
+| `step_update` (step_type: `subagent_info`) | `raw_json.get("step_update")` | `subagent_id`, `task_summary` | `SUBAGENT_ACTIVITY` | Diagnostic tracking for subagents spawned by the CLI. |
+| `result` | `raw_json.get("result")` | `status`, `response`, `duration_seconds`, `usage` | `TASK_TERMINATED` / `PLAN_CREATED` | Extract `result_obj.get("response")` (plan report or completion summary) and `usage` (`input_tokens`, `output_tokens`). |
+
+### Empirical CLI Event Sample (`agy 1.3.5` output):
+```json
+{"event":"step_update","step_update":{"conversation_id":"77008a44-de37-44b0-90b6-047ddd1a55b7","step_index":1,"state":"ACTIVE","step_type":"agent_response","text_delta":"pong"}}
+```
+
+### Normalized AI-Chan Domain Event (Tier 2):
 ```json
 {
   "event_id": "evt_01J9X4A8B2C3D4E5",
   "sequence_number": 3,
   "task_id": "tsk_01J9X48Z",
-  "runner_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "attempt_id": "att_639266a3ba0e4f4e",
+  "runner_id": "rnr_9b1deb4d3b7d4bad",
   "runtime": "antigravity",
-  "timestamp": "2026-10-15T10:11:00.124Z",
+  "timestamp": "2026-10-16T10:39:27.124Z",
   "event_type": "TEXT_DELTA",
   "severity": "INFO",
   "payload": {
-    "text_delta": "Checking file structure...",
-    "accumulated_length": 26
+    "text_delta": "pong",
+    "step_index": 1
   }
 }
 ```

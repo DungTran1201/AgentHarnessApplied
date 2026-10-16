@@ -15,6 +15,7 @@ import json
 import time
 import uuid
 import shutil
+import hashlib
 import random
 import signal
 import platform
@@ -22,7 +23,16 @@ import argparse
 import subprocess
 import threading
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Set
+
+if sys.platform == "win32":
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 try:
     import urllib.request
@@ -45,6 +55,8 @@ CONFIG_DIR = Path.home() / ".ai-chan"
 CONFIG_FILE = CONFIG_DIR / "runner.json"
 
 active_adapters: Dict[str, AntigravityCLIAdapter] = {}
+active_attempts: Set[str] = set()
+saved_task_contexts: Dict[str, Dict[str, Any]] = {}
 
 def get_platform_info() -> Dict[str, Any]:
     os_name = sys.platform
@@ -153,13 +165,31 @@ def http_json_post(url: str, body: Dict[str, Any], headers: Optional[Dict[str, s
 # WORKSPACE VALIDATION ON HOST FILESYSTEM
 # ==============================================================================
 
-def validate_host_path(local_path: str) -> Dict[str, Any]:
+def validate_host_path(local_path: str, allowed_roots: Optional[List[str]] = None) -> Dict[str, Any]:
     """
     Validates physical workspace path on runner host.
-    Checks directory existence, canonicalization, read/write permissions, and Git status.
+    Checks directory existence, canonicalization, read/write permissions, Git status,
+    UNC path rejection, operating system root protection, and allowlist policy.
     """
+    if not local_path or not local_path.strip():
+        return {
+            "is_valid": False,
+            "is_git_repo": False,
+            "error_message": "Workspace path cannot be empty."
+        }
+
+    clean_path = local_path.strip()
+
+    # 1. Reject UNC and network share paths (e.g., \\server\share) for security
+    if clean_path.startswith(("\\\\", "//")):
+        return {
+            "is_valid": False,
+            "is_git_repo": False,
+            "error_message": f"UNC network paths are forbidden for security reasons: {clean_path}"
+        }
+
     try:
-        canonical = os.path.realpath(os.path.abspath(local_path))
+        canonical = os.path.realpath(os.path.abspath(clean_path))
     except Exception as e:
         return {
             "is_valid": False,
@@ -167,6 +197,76 @@ def validate_host_path(local_path: str) -> Dict[str, Any]:
             "error_message": f"Invalid path syntax: {str(e)}"
         }
 
+    # 2. Drive root and Filesystem root protection
+    if sys.platform.startswith("win"):
+        drive, rest = os.path.splitdrive(canonical)
+        if rest in ("\\", "/", ""):
+            return {
+                "is_valid": False,
+                "is_git_repo": False,
+                "error_message": f"Drive root '{canonical}' cannot be used directly as a workspace."
+            }
+    else:
+        if canonical == "/":
+            return {
+                "is_valid": False,
+                "is_git_repo": False,
+                "error_message": "Filesystem root '/' cannot be used directly as a workspace."
+            }
+
+    # 3. Protected operating system directories check
+    canonical_lower = canonical.lower()
+    if sys.platform.startswith("win"):
+        sys_root = os.environ.get("SystemRoot", "C:\\Windows").lower()
+        prog_files = os.environ.get("ProgramFiles", "C:\\Program Files").lower()
+        prog_files_x86 = os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)").lower()
+        forbidden_win = [sys_root, "c:\\windows", prog_files + "\\common files", prog_files_x86 + "\\common files"]
+        for f_dir in forbidden_win:
+            if canonical_lower == f_dir or canonical_lower.startswith(f_dir + "\\") or canonical_lower.startswith(f_dir + "/"):
+                return {
+                    "is_valid": False,
+                    "is_git_repo": False,
+                    "error_message": f"Workspace cannot be located in protected operating system directory: {canonical}"
+                }
+    else:
+        forbidden_posix = ("/etc", "/bin", "/sbin", "/usr", "/var", "/proc", "/sys", "/dev", "/boot", "/root")
+        for f_dir in forbidden_posix:
+            if canonical == f_dir or canonical.startswith(f_dir + "/"):
+                return {
+                    "is_valid": False,
+                    "is_git_repo": False,
+                    "error_message": f"Workspace cannot be located in protected operating system directory: {canonical}"
+                }
+
+    # 4. Allowlist policy verification (if configured in runner config or environment)
+    roots_to_check = allowed_roots
+    if not roots_to_check:
+        env_roots = os.environ.get("AI_CHAN_ALLOWED_WORKSPACE_ROOTS")
+        if env_roots:
+            roots_to_check = [r.strip() for r in env_roots.split(os.pathsep) if r.strip()]
+        else:
+            cfg = load_config()
+            if cfg and cfg.get("allowed_roots"):
+                roots_to_check = cfg.get("allowed_roots")
+
+    if roots_to_check:
+        is_allowed = False
+        for ar in roots_to_check:
+            try:
+                canon_ar = os.path.realpath(os.path.abspath(ar))
+                if canonical == canon_ar or Path(canonical).is_relative_to(Path(canon_ar)):
+                    is_allowed = True
+                    break
+            except Exception:
+                pass
+        if not is_allowed:
+            return {
+                "is_valid": False,
+                "is_git_repo": False,
+                "error_message": f"Workspace '{canonical}' is outside the permitted workspace root allowlist."
+            }
+
+    # 5. Path existence and directory type
     if not os.path.exists(canonical):
         return {
             "is_valid": False,
@@ -181,7 +281,7 @@ def validate_host_path(local_path: str) -> Dict[str, Any]:
             "error_message": f"Đường dẫn không phải là một thư mục: {canonical}"
         }
 
-    # Check read/write permissions
+    # 6. Read / Write permissions check
     if not os.access(canonical, os.R_OK):
         return {
             "is_valid": False,
@@ -196,7 +296,7 @@ def validate_host_path(local_path: str) -> Dict[str, Any]:
             "error_message": f"Không có quyền ghi (Write) vào thư mục: {canonical}"
         }
 
-    # Check Git repository
+    # 7. Check Git repository status
     git_dir = Path(canonical) / ".git"
     is_git = git_dir.exists()
 
@@ -256,73 +356,22 @@ def validate_host_path(local_path: str) -> Dict[str, Any]:
     }
 
 
-def handle_task_dispatch(data_obj: Dict[str, Any], server: str, runner_id: str, secret: str):
-    """Executes a dispatched development task in a background thread."""
-    task_id = data_obj.get("task_id")
-    attempt_id = data_obj.get("attempt_id")
-    attempt_number = data_obj.get("attempt_number", 1)
-    local_path = data_obj.get("local_path")
-    prompt = data_obj.get("prompt")
-    mode = data_obj.get("mode", "plan")
-    title = data_obj.get("title", "")
-    verif_policy_data = data_obj.get("verification_policy")
-
-    print(f"\n[->] Dispatched Task received: {task_id}")
-    print(f"     Attempt: {attempt_id} (#{attempt_number}) | Mode: {mode}")
-    print(f"     Title: {title}")
-    print(f"     Workspace: {local_path}")
-
-    # Validate workspace path on host first
-    val = validate_host_path(local_path)
-    if not val["is_valid"]:
-        print(f"[!] Workspace path validation failed: {val['error_message']}")
-        try:
-            http_json_post(
-                f"{server}/api/v1/orchestrator/runners/tasks/complete",
-                {
-                    "attempt_id": attempt_id,
-                    "status": "FAILED",
-                    "exit_code": -1,
-                    "error_message": val["error_message"]
-                },
-                headers={"Authorization": f"Bearer {secret}"}
-            )
-        except Exception as e:
-            print(f"[!] Error reporting task failure: {e}")
-        return
-
-    canonical_ws = val.get("canonical_path", local_path)
-    target_workspace = canonical_ws
-    git_mgr = None
-    is_isolated = False
-    worktree_path = None
-    base_commit = "HEAD"
-    diff_stat = None
-
-    # Check Git repository & setup Worktree isolation
-    if val.get("is_git_repo"):
-        try:
-            git_mgr = GitIsolationManager(canonical_ws)
-            wt_status = git_mgr.check_working_tree_status()
-            if wt_status.get("has_uncommitted_changes"):
-                print(f"[*] Main working tree has {wt_status.get('uncommitted_file_count')} uncommitted modifications.")
-                print("    Creating clean isolated worktree off HEAD to protect user working directory...")
-
-            wt_info = git_mgr.create_worktree(
-                task_id=task_id,
-                attempt_id=attempt_id,
-                attempt_number=attempt_number,
-                base_commit="HEAD"
-            )
-            target_workspace = wt_info["worktree_path"]
-            worktree_path = wt_info["worktree_path"]
-            is_isolated = True
-            base_commit = wt_info.get("base_commit", "HEAD")
-            print(f"[+] Isolated Git worktree prepared at: {target_workspace} (branch: {wt_info['branch_name']})")
-        except Exception as e:
-            print(f"[!] Warning: Git worktree isolation could not be established ({e}). Falling back to workspace root.")
-            target_workspace = canonical_ws
-            is_isolated = False
+def run_attempt_execution(
+    ctx: Dict[str, Any],
+    mode: str,
+    server: str,
+    secret: str
+):
+    """Executes an attempt (initial plan or resumed accept-edits) with reliable event delivery."""
+    task_id = ctx["task_id"]
+    attempt_id = ctx["attempt_id"]
+    target_workspace = ctx["target_workspace"]
+    prompt = ctx["prompt"]
+    title = ctx["title"]
+    verif_policy_data = ctx.get("verif_policy_data")
+    is_isolated = ctx.get("is_isolated", False)
+    git_mgr = ctx.get("git_mgr")
+    base_commit = ctx.get("base_commit", "HEAD")
 
     adapter = AntigravityCLIAdapter()
     spec = ExecutionSpec(
@@ -338,6 +387,9 @@ def handle_task_dispatch(data_obj: Dict[str, Any], server: str, runner_id: str, 
     event_batch: List[Dict[str, Any]] = []
     last_batch_time = time.time()
     batch_lock = threading.Lock()
+    is_running = True
+
+    PRIORITY_EVENTS = {"STATUS_TRANSITION", "TASK_TERMINATED", "PROCESS_STARTED", "ERROR"}
 
     def flush_events():
         nonlocal event_batch, last_batch_time
@@ -345,29 +397,50 @@ def handle_task_dispatch(data_obj: Dict[str, Any], server: str, runner_id: str, 
             if not event_batch:
                 return
             to_send = list(event_batch)
-            event_batch = []
+            event_batch.clear()
             last_batch_time = time.time()
 
-        try:
-            http_json_post(
-                f"{server}/api/v1/orchestrator/runners/tasks/events",
-                {"attempt_id": attempt_id, "events": to_send},
-                headers={"Authorization": f"Bearer {secret}"}
-            )
-        except Exception as e:
-            print(f"[!] Warning: failed to send event batch: {e}")
+        max_retries = 3
+        for retry in range(max_retries):
+            try:
+                http_json_post(
+                    f"{server}/api/v1/orchestrator/runners/tasks/events",
+                    {"attempt_id": attempt_id, "events": to_send},
+                    headers={"Authorization": f"Bearer {secret}"}
+                )
+                return
+            except Exception as e:
+                print(f"[!] Warning: failed to send event batch (attempt {retry+1}/{max_retries}): {e}")
+                if retry < max_retries - 1:
+                    time.sleep(0.3 * (2 ** retry))
+                else:
+                    with batch_lock:
+                        event_batch = to_send + event_batch
 
     def event_cb(evt: NormalizedEvent):
         nonlocal last_batch_time
+        is_priority = evt.event_type in PRIORITY_EVENTS
         with batch_lock:
             event_batch.append(evt.to_dict())
             count = len(event_batch)
 
-        if count >= 5 or (time.time() - last_batch_time) > 1.0:
+        if is_priority or count >= 5 or (time.time() - last_batch_time) > 0.5:
             flush_events()
 
-    # Track active adapter for cancellation signals
+    def flush_worker():
+        while is_running:
+            time.sleep(0.35)
+            with batch_lock:
+                has_items = bool(event_batch)
+                elapsed = time.time() - last_batch_time
+            if has_items and elapsed >= 0.4:
+                flush_events()
+
+    worker_thread = threading.Thread(target=flush_worker, daemon=True)
+    worker_thread.start()
+
     active_adapters[attempt_id] = adapter
+    diff_stat = None
 
     try:
         result = adapter.execute(spec, policy, event_cb)
@@ -376,7 +449,6 @@ def handle_task_dispatch(data_obj: Dict[str, Any], server: str, runner_id: str, 
         # If execution succeeded in accept-edits mode, run Verification Pipeline and collect diff
         if result.status == "COMPLETED" and mode == "accept-edits":
             print(f"[*] Running Verification Pipeline for task {task_id}...")
-            # Transition status to VERIFYING
             event_cb(NormalizedEvent(
                 sequence_number=9990,
                 task_id=task_id,
@@ -396,7 +468,6 @@ def handle_task_dispatch(data_obj: Dict[str, Any], server: str, runner_id: str, 
             for step in v_res["steps"]:
                 print(f"    - Step '{step['step_name']}': {step['status']} ({step['command']}) in {step['duration_seconds']}s")
 
-            # Ingest verification reports to backend
             try:
                 http_json_post(
                     f"{server}/api/v1/orchestrator/runners/tasks/verification-reports",
@@ -410,16 +481,20 @@ def handle_task_dispatch(data_obj: Dict[str, Any], server: str, runner_id: str, 
             except Exception as e:
                 print(f"[!] Warning: failed to send verification reports: {e}")
 
-            # Collect Diff from worktree if isolated
             if is_isolated and git_mgr:
                 try:
                     diff_res = git_mgr.collect_diff(target_workspace, base_commit=base_commit)
                     diff_stat = diff_res.get("stat")
+                    diff_content = diff_res["diff"]
+                    diff_bytes = diff_content.encode("utf-8")
                     result.artifacts.append({
                         "artifact_type": "diff",
+                        "display_name": "Unified Git Diff",
                         "file_path": "worktree.diff",
-                        "content": diff_res["diff"],
-                        "byte_size": diff_res["byte_size"]
+                        "content": diff_content,
+                        "byte_size": len(diff_bytes),
+                        "mime_type": "text/x-diff",
+                        "checksum_sha256": hashlib.sha256(diff_bytes).hexdigest()
                     })
                     print(f"[+] Unified Git diff collected: {diff_res['byte_size']} bytes (capped={diff_res['is_truncated']})")
                 except Exception as e:
@@ -445,7 +520,7 @@ def handle_task_dispatch(data_obj: Dict[str, Any], server: str, runner_id: str, 
             },
             headers={"Authorization": f"Bearer {secret}"}
         )
-        print(f"[<-] Task {task_id} completed: status={result.status} (exit={result.exit_code}, duration={result.duration_seconds}s)")
+        print(f"[<-] Task {task_id} attempt {attempt_id} completed: status={result.status} (exit={result.exit_code}, duration={result.duration_seconds}s)")
     except Exception as e:
         print(f"[!] Error during task execution: {e}")
         try:
@@ -462,7 +537,155 @@ def handle_task_dispatch(data_obj: Dict[str, Any], server: str, runner_id: str, 
         except Exception:
             pass
     finally:
+        is_running = False
+        flush_events()
         active_adapters.pop(attempt_id, None)
+        active_attempts.discard(attempt_id)
+
+
+def handle_task_dispatch(data_obj: Dict[str, Any], server: str, runner_id: str, secret: str):
+    """Handles an incoming TASK_DISPATCH message from orchestrator."""
+    task_id = data_obj.get("task_id")
+    attempt_id = data_obj.get("attempt_id")
+    attempt_number = data_obj.get("attempt_number", 1)
+    local_path = data_obj.get("local_path") or (data_obj.get("workspace", {}).get("local_path") if isinstance(data_obj.get("workspace"), dict) else None)
+    prompt = data_obj.get("prompt") or (data_obj.get("spec", {}).get("prompt") if isinstance(data_obj.get("spec"), dict) else None)
+    mode = data_obj.get("mode") or (data_obj.get("spec", {}).get("mode") if isinstance(data_obj.get("spec"), dict) else None) or "plan"
+    title = data_obj.get("title", "")
+    verif_policy_data = data_obj.get("verification_policy")
+
+    # Idempotency guard: prevent duplicate concurrent execution of same attempt
+    if attempt_id in active_attempts:
+        print(f"[!] Attempt {attempt_id} is already active. Ignoring duplicate dispatch.")
+        return
+    active_attempts.add(attempt_id)
+
+    print(f"\n[->] Dispatched Task received: {task_id}")
+    print(f"     Attempt: {attempt_id} (#{attempt_number}) | Mode: {mode}")
+    print(f"     Title: {title}")
+    print(f"     Workspace: {local_path}")
+
+    # Explicit ACK/Claim to backend
+    try:
+        http_json_post(
+            f"{server}/api/v1/orchestrator/runners/tasks/claim",
+            {"attempt_id": attempt_id},
+            headers={"Authorization": f"Bearer {secret}"}
+        )
+        print(f"[+] Task attempt {attempt_id} claimed successfully.")
+    except Exception as e:
+        print(f"[!] Warning: Claim failed for attempt {attempt_id}: {e}")
+
+    # Validate workspace path on host first
+    val = validate_host_path(local_path)
+    if not val["is_valid"]:
+        print(f"[!] Workspace path validation failed: {val['error_message']}")
+        try:
+            http_json_post(
+                f"{server}/api/v1/orchestrator/runners/tasks/complete",
+                {
+                    "attempt_id": attempt_id,
+                    "status": "FAILED",
+                    "exit_code": -1,
+                    "error_message": val["error_message"]
+                },
+                headers={"Authorization": f"Bearer {secret}"}
+            )
+        except Exception as e:
+            print(f"[!] Error reporting task failure: {e}")
+        finally:
+            active_attempts.discard(attempt_id)
+        return
+
+    canonical_ws = val.get("canonical_path", local_path)
+    target_workspace = canonical_ws
+    git_mgr = None
+    is_isolated = False
+    worktree_path = None
+    base_commit = "HEAD"
+
+    # Check Git repository & setup Worktree isolation
+    if val.get("is_git_repo"):
+        try:
+            git_mgr = GitIsolationManager(canonical_ws)
+            wt_status = git_mgr.check_working_tree_status()
+            if wt_status.get("has_uncommitted_changes"):
+                print(f"[*] Main working tree has {wt_status.get('uncommitted_file_count')} uncommitted modifications.")
+                print("    Creating clean isolated worktree off HEAD to protect user working directory...")
+
+            wt_info = git_mgr.create_worktree(
+                task_id=task_id,
+                attempt_id=attempt_id,
+                attempt_number=attempt_number,
+                base_commit="HEAD"
+            )
+            target_workspace = wt_info["worktree_path"]
+            worktree_path = wt_info["worktree_path"]
+            is_isolated = True
+            base_commit = wt_info.get("base_commit", "HEAD")
+            print(f"[+] Isolated Git worktree prepared at: {target_workspace} (branch: {wt_info['branch_name']})")
+        except Exception as e:
+            print(f"[!] Warning: Git worktree isolation failed ({e}). Falling back to main working tree.")
+            target_workspace = canonical_ws
+            is_isolated = False
+
+    # Safety Invariant: Before Implement / accept-edits:
+    # If working tree has uncommitted modifications and worktree isolation is NOT available,
+    # refuse destructive execution to preserve user uncommitted work.
+    if mode == "accept-edits" and not is_isolated and val.get("has_uncommitted_changes"):
+        err_msg = (
+            "Không thể thực thi accept-edits trực tiếp: Workspace đang có thay đổi chưa commit "
+            "(uncommitted changes) và không thể thiết lập Git worktree isolation. "
+            "Vui lòng commit hoặc dọn dẹp các thay đổi trước để bảo vệ mã nguồn."
+        )
+        print(f"[!] Safety check failed: {err_msg}")
+        try:
+            http_json_post(
+                f"{server}/api/v1/orchestrator/runners/tasks/complete",
+                {
+                    "attempt_id": attempt_id,
+                    "status": "FAILED",
+                    "exit_code": -1,
+                    "error_message": err_msg
+                },
+                headers={"Authorization": f"Bearer {secret}"}
+            )
+        except Exception as e:
+            print(f"[!] Error reporting safety rejection: {e}")
+        finally:
+            active_attempts.discard(attempt_id)
+        return
+
+    # Save context for resumption when plan is approved
+    ctx = {
+        "task_id": task_id,
+        "attempt_id": attempt_id,
+        "attempt_number": attempt_number,
+        "canonical_ws": canonical_ws,
+        "target_workspace": target_workspace,
+        "git_mgr": git_mgr,
+        "is_isolated": is_isolated,
+        "worktree_path": worktree_path,
+        "base_commit": base_commit,
+        "prompt": prompt,
+        "title": title,
+        "verif_policy_data": verif_policy_data
+    }
+    saved_task_contexts[attempt_id] = ctx
+
+    run_attempt_execution(ctx, mode, server, secret)
+
+
+def handle_task_resume(ctx: Dict[str, Any], server: str, runner_id: str, secret: str):
+    """Resumes execution of an approved task in accept-edits mode."""
+    attempt_id = ctx["attempt_id"]
+    if attempt_id in active_attempts:
+        print(f"[!] Attempt {attempt_id} is already executing. Ignoring duplicate resume.")
+        return
+    active_attempts.add(attempt_id)
+
+    print(f"\n[->] Resuming execution for approved task: {ctx['task_id']} (attempt: {attempt_id})")
+    run_attempt_execution(ctx, "accept-edits", server, secret)
 
 # ==============================================================================
 # RUNNER COMMAND HANDLERS
@@ -628,7 +851,17 @@ def cmd_start(args):
                                 active_adapters[att_id].cancel(att_id)
 
                         elif current_event == "TASK_RESUME_APPROVED":
-                            print(f"[->] Plan approved for attempt: {data_obj.get('attempt_id')}")
+                            att_id = data_obj.get("attempt_id")
+                            print(f"[->] Plan approved for attempt: {att_id}. Resuming execution in accept-edits mode...")
+                            saved_ctx = saved_task_contexts.get(att_id)
+                            if saved_ctx:
+                                threading.Thread(
+                                    target=handle_task_resume,
+                                    args=(saved_ctx, server, runner_id, runner_secret),
+                                    daemon=True
+                                ).start()
+                            else:
+                                print(f"[!] Warning: No saved context for attempt {att_id} to resume.")
 
                         elif current_event == "ping":
                             pass  # Keepalive ping received

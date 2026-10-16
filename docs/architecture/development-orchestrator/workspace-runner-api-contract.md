@@ -33,6 +33,13 @@
 | **Runner** | `POST` | `/runners/{id}/rotate-secret` | User (Bearer) | Rotate runner secret key |
 | **Runner Channel** | `GET` | `/runners/{id}/channel` | Runner (Secret) | SSE long-lived channel for task/challenge dispatch |
 | **Runner Result** | `POST` | `/runners/{id}/validation-result`| Runner (Secret) | Runner reports workspace validation outcome |
+| **Task Claim** | `POST` | `/runners/tasks/claim` | Runner (Secret) | Runner confirms task attempt claim (ACK) |
+| **Task Events** | `POST` | `/runners/tasks/events` | Runner (Secret) | Runner flushes normalized domain events batch |
+| **Task Complete** | `POST` | `/runners/tasks/complete` | Runner (Secret) | Runner finalizes task run with artifacts |
+| **Artifacts** | `GET` | `/tasks/{id}/artifacts` | User (Bearer) | List metadata of all artifacts for a Task |
+| **Artifact Detail**| `GET` | `/tasks/{id}/artifacts/{artifact_id}` | User (Bearer) | Retrieve artifact content and metadata |
+| **Artifact Download**| `GET` | `/tasks/{id}/artifacts/{artifact_id}/download` | User (Bearer/Token) | Download raw artifact file with Content-Disposition |
+| **Artifact Retry** | `POST` | `/tasks/{id}/artifacts/retry` | User (Bearer) | Recover and persist artifact from event stream |
 
 ---
 
@@ -265,13 +272,34 @@ data: {"timestamp": "2026-10-15T09:51:40Z"}
 event: validate_workspace
 data: {"challenge_id": "vch_01", "workspace_id": "e4b6c31a", "local_path": "C:\\Users\\PC\\Project\\ai-chan"}
 
-event: task_dispatched
-data: {"task_id": "tsk_01", "workspace_id": "e4b6c31a", "runtime": "antigravity", "prompt": "..."}
+event: TASK_DISPATCH
+data: {"task_id": "tsk_01", "attempt_id": "att_01", "attempt_number": 1, "workspace_id": "e4b6c31a", "local_path": "C:\\Users\\PC\\Project\\ai-chan", "runtime": "antigravity", "mode": "plan", "title": "...", "prompt": "..."}
 ```
 
 ---
 
-### 4.5 Runner Validation Result
+### 4.5 Runner Task Claim (ACK)
+- **Route:** `POST /api/v1/orchestrator/runners/tasks/claim`
+- **Headers:** `Authorization: Bearer rsk_...`
+- **Request Body:**
+```json
+{
+  "attempt_id": "att_4920fc0298a14b51"
+}
+```
+- **Response `200 OK`:**
+```json
+{
+  "claimed": true,
+  "attempt_id": "att_4920fc0298a14b51",
+  "runner_id": "run_9b1deb4d3b7d4bad",
+  "claimed_at": "2026-10-16T18:20:00Z"
+}
+```
+
+---
+
+### 4.6 Runner Validation Result
 - **Route:** `POST /api/v1/orchestrator/runners/{id}/validation-result`
 - **Headers:** `Authorization: Bearer rsk_...`
 - **Request Body:**
@@ -307,3 +335,49 @@ data: {"task_id": "tsk_01", "workspace_id": "e4b6c31a", "runtime": "antigravity"
   "message": "Runner access has been permanently revoked."
 }
 ```
+
+---
+
+## 5. Task Deliverables & Artifact Endpoints
+
+### 5.1 List Task Artifacts
+- **Route:** `GET /api/v1/orchestrator/tasks/{id}/artifacts`
+- **Auth:** User Bearer JWT
+- **Query Parameters:** `attempt_id` (optional filter)
+- **Response `200 OK`:**
+```json
+[
+  {
+    "id": "art_9fa281b3c94d0192",
+    "task_id": "tsk_01",
+    "attempt_id": "att_01",
+    "artifact_type": "review",
+    "display_name": "Báo cáo Phân tích Codebase",
+    "file_path": "codebase_review.md",
+    "mime_type": "text/markdown",
+    "byte_size": 4096,
+    "checksum_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "created_at": "2026-10-16T18:30:00Z"
+  }
+]
+```
+
+### 5.2 Get Artifact Detail
+- **Route:** `GET /api/v1/orchestrator/tasks/{id}/artifacts/{artifact_id}`
+- **Auth:** User Bearer JWT
+- **Response `200 OK`:** Returns metadata and full `content`.
+
+### 5.3 Download Artifact
+- **Route:** `GET /api/v1/orchestrator/tasks/{id}/artifacts/{artifact_id}/download`
+- **Auth:** User Bearer JWT or `?token=` query parameter for direct browser download.
+- **Headers:**
+  - `Content-Disposition: attachment; filename="<safe_filename>"`
+  - `Content-Type: text/markdown` or `text/x-diff`
+  - `X-Artifact-Checksum: <sha256>`
+- **Security:** Filename is sanitized to basename; path traversal (`../`) is blocked.
+
+### 5.4 Retry Artifact Persistence
+- **Route:** `POST /api/v1/orchestrator/tasks/{id}/artifacts/retry`
+- **Auth:** User Bearer JWT
+- **Behavior:** Recovers artifact from recorded event stream (`PLAN_CREATED`, `TEXT_DELTA`) without re-running the coding task turn. Clears `ARTIFACT_STORAGE_ERROR`.
+

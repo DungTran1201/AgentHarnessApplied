@@ -213,6 +213,10 @@ def run_migration():
                 cur.execute("ALTER TABLE task_attempts ADD COLUMN review_feedback TEXT")
             if "parent_attempt_id" not in att_cols:
                 cur.execute("ALTER TABLE task_attempts ADD COLUMN parent_attempt_id VARCHAR(36)")
+            if "claimed_at" not in att_cols:
+                cur.execute("ALTER TABLE task_attempts ADD COLUMN claimed_at DATETIME")
+            if "first_event_at" not in att_cols:
+                cur.execute("ALTER TABLE task_attempts ADD COLUMN first_event_at DATETIME")
             conn.commit()
 
         # Add columns to development_tasks if missing
@@ -220,6 +224,31 @@ def run_migration():
             tsk_cols = [c[1] for c in cur.execute("PRAGMA table_info(development_tasks)").fetchall()]
             if "review_status" not in tsk_cols:
                 cur.execute("ALTER TABLE development_tasks ADD COLUMN review_status VARCHAR(30) DEFAULT 'PENDING'")
+            if "dispatch_state" not in tsk_cols:
+                cur.execute("ALTER TABLE development_tasks ADD COLUMN dispatch_state VARCHAR(50) DEFAULT 'IDLE'")
+            if "failure_code" not in tsk_cols:
+                cur.execute("ALTER TABLE development_tasks ADD COLUMN failure_code VARCHAR(50)")
+            conn.commit()
+
+        # Add columns to task_artifacts if missing
+        if "task_artifacts" in [r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]:
+            art_cols = [c[1] for c in cur.execute("PRAGMA table_info(task_artifacts)").fetchall()]
+            if "task_id" not in art_cols:
+                cur.execute("ALTER TABLE task_artifacts ADD COLUMN task_id VARCHAR(36)")
+            if "display_name" not in art_cols:
+                cur.execute("ALTER TABLE task_artifacts ADD COLUMN display_name VARCHAR(255)")
+            if "mime_type" not in art_cols:
+                cur.execute("ALTER TABLE task_artifacts ADD COLUMN mime_type VARCHAR(100) DEFAULT 'text/plain'")
+            if "checksum_sha256" not in art_cols:
+                cur.execute("ALTER TABLE task_artifacts ADD COLUMN checksum_sha256 VARCHAR(64)")
+            if "storage_path" not in art_cols:
+                cur.execute("ALTER TABLE task_artifacts ADD COLUMN storage_path VARCHAR(512)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_task_artifacts_task_id ON task_artifacts(task_id)")
+            cur.execute("""
+                UPDATE task_artifacts 
+                SET task_id = (SELECT task_id FROM task_attempts WHERE task_attempts.id = task_artifacts.attempt_id)
+                WHERE task_id IS NULL
+            """)
             conn.commit()
 
         # Verify tables

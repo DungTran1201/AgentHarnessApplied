@@ -214,33 +214,48 @@ agy --output-format stream-json --print --mode plan "List top-level files"
 
 ## 5. Running the Demo via `run-demo.bat`
 
-AI-Chan provides an enterprise-grade unified launcher with preflight checks and clean process tree management.
+AI-Chan provides an enterprise-grade unified launcher with preflight diagnostics, bounded health checks, process tree lifecycle management, and workspace safety guarantees.
 
 ### 5.1 Basic Launch (Standard Mode)
 
-Open the integrated terminal in Antigravity IDE (or PowerShell) at the project root and execute:
+Open the integrated terminal in Antigravity IDE (or PowerShell) at any working directory and execute:
 
 ```cmd
 run-demo.bat
 ```
 
-What `run-demo.bat` does automatically:
-1. **Preflight Checks:** Validates Python, Node.js, Git, `agy.exe`, and configuration files.
-2. **Port Conflict Detection:** Checks if port 8000 (Backend) or 3000 (Frontend) are in use.
-3. **Database Migration:** Ensures all SQLite tables (`development_tasks`, `development_workspaces`, `agent_runners`) are migrated.
-4. **Starts Services in Background:**
-   - FastAPI Backend (`http://127.0.0.1:8000`)
-   - Next.js Frontend (`http://localhost:3000`)
-   - Local Agent Runner Daemon (auto-starts if enrolled)
-5. **Readiness Polling:** Waits for `http://127.0.0.1:8000/api/health` and `http://localhost:3000` to respond.
-6. **Browser Auto-Launch:** Opens `http://localhost:3000/workspaces` when ready.
+What `run-demo.bat` executes automatically:
+1. **Directory Discovery:** Resolves project root using script location `%~dp0` (safe when invoked from any terminal or subfolder).
+2. **Preflight Diagnostics:**
+   - Python 3.10+ interpreter discovery (`ai-backend\.venv` or system `PATH`).
+   - Python core dependencies verification (`fastapi`, `uvicorn`, `pydantic`, `httpx`).
+   - Node.js (18+) and `npm` availability.
+   - Git binary availability.
+   - Antigravity CLI (`agy.exe`) presence and safe live authentication verification (`agy models`).
+   - Configuration check: verifies `ai-backend\.env` presence without exposing secret values.
+   - Port conflict pre-check on ports `8000` (Backend API) and `3000` (Frontend UI).
+   - Agent Runner enrollment detection (`~/.ai-chan/runner.json`).
+3. **Starts Configured Services with Individual PID/Log Tracking:**
+   - **FastAPI Backend:** `http://127.0.0.1:8000` (Logs: `logs/backend.log`)
+   - **Next.js Frontend:** `http://localhost:3000` (Logs: `logs/frontend.log`)
+   - **Agent Runner Daemon:** Outbound SSE worker (Logs: `logs/runner.log`)
+   - **Discord Bot (Optional):** Only started if `DISCORD_BOT_TOKEN` is configured and not placeholder (Logs: `logs/discord.log`).
+4. **Bounded Health & Readiness Evidence (No Fake Timers):**
+   - Backend polled against `http://127.0.0.1:8000/api/v1/orchestrator/health` (HTTP 200 required).
+   - Frontend polled against `http://localhost:3000` (HTTP 200/304/307).
+   - Agent Runner verifies SSE dispatch subscription (`READY`) or reports `STARTED, NOT CONNECTED` if process is active but dispatch channel is not yet established.
+   - Unconfigured optional services (e.g. Discord bot) are marked `[SKIPPED]` with actionable reasons and do not fail the core application.
+5. **Accurate Status Banner:**
+   - Displays real component states: `READY`, `DEGRADED`, `STARTED, NOT CONNECTED`, `SKIPPED`, or `FAILED`.
+   - If any core service fails, the launcher suppresses "Demo is Live" and prints diagnostic failure reports with exact remediation steps.
+6. **Browser Auto-Launch:** Opens `http://localhost:3000` once core services are verified healthy.
 
 ### 5.2 Supported Command-Line Flags
 
-| Flag | Description | Example |
+| Flag / Command | Description | Example |
 | :--- | :--- | :--- |
-| `--check` | Runs preflight diagnostics and exits without starting servers | `run-demo.bat --check` |
-| `--stop` | Terminates all running demo background processes cleanly | `run-demo.bat --stop` |
+| `--check` / `check` | Runs preflight diagnostics, port checks, and auth verification, then exits | `run-demo.bat --check` |
+| `--stop` / `stop` | Terminates all running demo background processes cleanly via `taskkill /T /F` | `run-demo.bat --stop` |
 | `--no-browser` | Starts all services without opening the default browser | `run-demo.bat --no-browser` |
 | `--no-runner` | Starts Backend and Frontend only (omits Agent Runner) | `run-demo.bat --no-runner` |
 | `--no-discord` | Suppresses Discord bot startup | `run-demo.bat --no-discord` |
@@ -249,17 +264,21 @@ What `run-demo.bat` does automatically:
 | `--help` / `-h` | Shows usage documentation | `run-demo.bat --help` |
 
 ### 5.3 Stopping Services
-To stop the demo cleanly at any time, run:
+To stop the demo cleanly at any time, press `Ctrl+C` in the running terminal, or run:
 
-```cmd
-stop-demo.bat
-```
-or:
 ```cmd
 run-demo.bat --stop
 ```
+(or `run-demo.bat stop`).
 
-All child PIDs tracked in `.demo_pids.json` are terminated via recursive process-tree termination (`Stop-Process -Id ... -Recurse`).
+All child PIDs tracked in `.demo_pids.json` are terminated using Windows process-tree termination (`taskkill /T /F /PID`), ensuring no orphaned uvicorn workers or Node subprocesses remain. Dangling port listeners on 8000 and 3000 are also verified and swept.
+
+### 5.4 Workspace Safety & Invariants
+- **Host Path Validation:** Runner resolves canonical real paths, rejecting UNC network shares, filesystem root directories (`C:\`, `/`), protected operating system directories (`C:\Windows`, `/etc`), and paths outside permitted workspace roots.
+- **Dirty Git Working Tree Protection:** If the target repository has uncommitted changes (`has_uncommitted_changes = True`), execution in `accept-edits` mode requires isolated Git worktree branching. If worktree isolation cannot be established, execution fails-safe and aborts immediately without modifying or overwriting local changes. Never runs destructive commands like `git reset --hard` or `git clean`.
+- **Secret Redaction:** Redacts API keys (`sk-`, `ghp_`, `AIza`), bearer tokens, cookies, passwords, and `.env` variable assignments in stdout/stderr and tool diagnostics before broadcasting or saving events.
+- **Subprocess Environment Isolation:** Passes a strict minimal environment allowlist to agent subprocesses, scrubbing internal tokens, passwords, and secrets.
+
 
 ---
 

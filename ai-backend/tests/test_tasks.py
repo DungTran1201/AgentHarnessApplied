@@ -4,7 +4,7 @@ import hashlib
 from fastapi.testclient import TestClient
 
 from src.main import app
-from src.db import execute_commit, query_one
+from src.db import execute_commit, query_one, query_all
 
 client = TestClient(app)
 
@@ -549,4 +549,477 @@ class TestDevelopmentTaskAPI:
         detail_res = client.get(f"/api/v1/orchestrator/tasks/{task_id}")
         assert detail_res.status_code == 200
         assert len(detail_res.json().get("verifications", [])) == 3
+
+    @pytest.mark.asyncio
+    async def test_dispatch_channel_offline_and_reconciliation(self):
+        from src.api.v1.orchestrator import runner_channel_mgr, reconcile_queued_tasks_for_runner
+        env = setup_runner_and_workspace()
+
+        # Ensure channel is disconnected initially
+        runner_channel_mgr.unregister(env["runner_id"])
+
+        res = client.post(
+            "/api/v1/orchestrator/tasks",
+            json={
+                "project_id": env["project_id"],
+                "workspace_id": env["workspace_id"],
+                "title": "Offline dispatch test",
+                "prompt": "Test dispatch when runner channel not open",
+                "mode": "plan"
+            }
+        )
+        task_id = res.json()["id"]
+
+        # Dispatch when channel offline
+        disp_res = client.post(f"/api/v1/orchestrator/tasks/{task_id}/dispatch")
+        assert disp_res.status_code == 200
+        disp_data = disp_res.json()
+        assert disp_data["status"] == "QUEUED"
+        assert disp_data["dispatch_state"] == "WAITING_FOR_RUNNER"
+        assert disp_data["channel_dispatched"] is False
+
+        # Task in DB has WAITING_FOR_RUNNER
+        task_row = query_one("SELECT dispatch_state FROM development_tasks WHERE id = ?", (task_id,))
+        assert task_row["dispatch_state"] == "WAITING_FOR_RUNNER"
+
+        # Now simulate runner connecting channel
+        q = runner_channel_mgr.register(env["runner_id"])
+        try:
+            # Run reconciliation
+            await reconcile_queued_tasks_for_runner(env["runner_id"])
+
+            # Check queue received TASK_DISPATCH message
+            assert not q.empty()
+            item = q.get_nowait()
+            assert item["event"] == "TASK_DISPATCH"
+            assert item["data"]["task_id"] == task_id
+
+            # Verify task updated to DISPATCHED
+            task_row2 = query_one("SELECT dispatch_state FROM development_tasks WHERE id = ?", (task_id,))
+            assert task_row2["dispatch_state"] == "DISPATCHED"
+        finally:
+            runner_channel_mgr.unregister(env["runner_id"])
+
+    def test_runner_claim_task_ack_and_idempotency(self):
+        env = setup_runner_and_workspace()
+
+        res = client.post(
+            "/api/v1/orchestrator/tasks",
+            json={
+                "project_id": env["project_id"],
+                "workspace_id": env["workspace_id"],
+                "title": "Claim test",
+                "prompt": "Test runner claim ACK",
+                "mode": "plan"
+            }
+        )
+        task_id = res.json()["id"]
+        disp = client.post(f"/api/v1/orchestrator/tasks/{task_id}/dispatch").json()
+        attempt_id = disp["attempt_id"]
+
+        # 1. Runner calls claim endpoint
+        claim_res = client.post(
+            "/api/v1/orchestrator/runners/tasks/claim",
+            json={"attempt_id": attempt_id},
+            headers={"Authorization": f"Bearer {env['runner_secret']}"}
+        )
+        assert claim_res.status_code == 200
+        claim_data = claim_res.json()
+        assert claim_data["claimed"] is True
+        assert claim_data["attempt_id"] == attempt_id
+
+        # Verify DB updated
+        att_row = query_one("SELECT status, claimed_at FROM task_attempts WHERE id = ?", (attempt_id,))
+        assert att_row["status"] == "DISPATCHING"
+        assert att_row["claimed_at"] is not None
+
+        task_row = query_one("SELECT dispatch_state FROM development_tasks WHERE id = ?", (task_id,))
+        assert task_row["dispatch_state"] == "CLAIMED"
+
+        # 2. Duplicate claim is idempotent
+        claim_res2 = client.post(
+            "/api/v1/orchestrator/runners/tasks/claim",
+            json={"attempt_id": attempt_id},
+            headers={"Authorization": f"Bearer {env['runner_secret']}"}
+        )
+        assert claim_res2.status_code == 200
+        assert claim_res2.json()["already_claimed"] is True
+
+    def test_attempt_scoping_and_terminal_idempotency(self):
+        env = setup_runner_and_workspace()
+
+        res = client.post(
+            "/api/v1/orchestrator/tasks",
+            json={
+                "project_id": env["project_id"],
+                "workspace_id": env["workspace_id"],
+                "title": "Attempt scoping test",
+                "prompt": "Test multiple attempts scoping",
+                "mode": "accept-edits"
+            }
+        )
+        task_id = res.json()["id"]
+        disp1 = client.post(f"/api/v1/orchestrator/tasks/{task_id}/dispatch", params={"mode": "accept-edits"}).json()
+        att1_id = disp1["attempt_id"]
+
+        # Simulate attempt 1 completes and user requests changes, creating attempt 2
+        client.post(
+            "/api/v1/orchestrator/runners/tasks/complete",
+            json={"attempt_id": att1_id, "status": "COMPLETED"},
+            headers={"Authorization": f"Bearer {env['runner_secret']}"}
+        )
+
+        review_res = client.post(
+            f"/api/v1/orchestrator/tasks/{task_id}/review",
+            json={"decision": "REQUEST_CHANGES", "feedback": "Fix the error handling"}
+        )
+        assert review_res.status_code == 200
+        att2_id = review_res.json()["attempt_id"]
+        assert att2_id != att1_id
+
+        # Verify task's current_attempt_id is att2_id
+        t_row = query_one("SELECT current_attempt_id, status FROM development_tasks WHERE id = ?", (task_id,))
+        assert t_row["current_attempt_id"] == att2_id
+        assert t_row["status"] == "QUEUED"
+
+        # Now attempt 1 sends an event or late completion
+        # Attempt 1 events must NOT overwrite task status!
+        late_event_res = client.post(
+            "/api/v1/orchestrator/runners/tasks/events",
+            json={
+                "attempt_id": att1_id,
+                "events": [
+                    {
+                        "event_id": "late_ev_01",
+                        "sequence_number": 999,
+                        "task_id": task_id,
+                        "attempt_id": att1_id,
+                        "event_type": "STATUS_TRANSITION",
+                        "severity": "INFO",
+                        "payload": {"to_status": "RUNNING"}
+                    }
+                ]
+            },
+            headers={"Authorization": f"Bearer {env['runner_secret']}"}
+        )
+        assert late_event_res.status_code == 200
+
+        # Verify task is STILL QUEUED (att2), not overwritten by late att1 event
+        t_row_after = query_one("SELECT current_attempt_id, status FROM development_tasks WHERE id = ?", (task_id,))
+        assert t_row_after["current_attempt_id"] == att2_id
+        assert t_row_after["status"] == "QUEUED"
+
+    @pytest.mark.asyncio
+    async def test_first_event_at_and_sse_replay_last_event_id(self):
+        from starlette.requests import Request
+        from src.api.v1.orchestrator import stream_task_events
+        env = setup_runner_and_workspace()
+
+        res = client.post(
+            "/api/v1/orchestrator/tasks",
+            json={
+                "project_id": env["project_id"],
+                "workspace_id": env["workspace_id"],
+                "title": "Replay test",
+                "prompt": "Test event replay with Last-Event-ID",
+                "mode": "plan"
+            }
+        )
+        task_id = res.json()["id"]
+        disp = client.post(f"/api/v1/orchestrator/tasks/{task_id}/dispatch").json()
+        attempt_id = disp["attempt_id"]
+
+        # Post sequence of events 1, 2, 3
+        events = [
+            {
+                "event_id": f"ev_{seq}",
+                "sequence_number": seq,
+                "task_id": task_id,
+                "attempt_id": attempt_id,
+                "event_type": "PROCESS_STDOUT",
+                "severity": "INFO",
+                "payload": {"text": f"Line {seq}"}
+            }
+            for seq in [1, 2, 3]
+        ]
+        post_ev = client.post(
+            "/api/v1/orchestrator/runners/tasks/events",
+            json={"attempt_id": attempt_id, "events": events},
+            headers={"Authorization": f"Bearer {env['runner_secret']}"}
+        )
+        assert post_ev.status_code == 200
+
+        # Verify first_event_at is recorded
+        att_row = query_one("SELECT first_event_at FROM task_attempts WHERE id = ?", (attempt_id,))
+        assert att_row["first_event_at"] is not None
+
+        # Build mock ASGI request with Last-Event-ID
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": f"/api/v1/orchestrator/tasks/{task_id}/events",
+            "headers": [(b"last-event-id", b"evt_2")],
+        }
+        mock_req = Request(scope)
+
+        resp = await stream_task_events(
+            id=task_id,
+            request=mock_req,
+            since_seq=0,
+            attempt_id=attempt_id,
+            user={"id": "guest_user"}
+        )
+        chunk = await resp.body_iterator.__anext__()
+        assert "Line 3" in chunk
+        assert "Line 1" not in chunk
+        assert "Line 2" not in chunk
+
+    def test_plan_review_creates_real_markdown_artifact_and_metadata(self):
+        """Prompt 04: Plan/Review must create real inspectable and downloadable Markdown artifact."""
+        import hashlib
+        env = setup_runner_and_workspace()
+
+        # 1. Create task specifically requesting codebase review report
+        create_res = client.post(
+            "/api/v1/orchestrator/tasks",
+            json={
+                "project_id": env["project_id"],
+                "workspace_id": env["workspace_id"],
+                "title": "Review codebase và tạo báo cáo",
+                "prompt": "Khảo sát kiến trúc repository và xuất báo cáo đánh giá chi tiết",
+                "mode": "plan"
+            }
+        )
+        assert create_res.status_code == 201
+        task_id = create_res.json()["id"]
+
+        # 2. Dispatch task
+        disp_res = client.post(f"/api/v1/orchestrator/tasks/{task_id}/dispatch")
+        assert disp_res.status_code == 200
+        attempt_id = disp_res.json()["attempt_id"]
+
+        # 3. Simulate runner completing with genuine markdown review artifact
+        review_md = (
+            "# Báo Cáo Phân Tích Codebase AI-Chan\n\n"
+            "## 1. Executive Summary\n"
+            "Dự án AI-Chan là nền tảng quản lý dự án và điều phối tác vụ kỹ thuật tự động.\n\n"
+            "## 2. Tech Stack\n"
+            "- Python 3.12 (FastAPI, SQLite)\n"
+            "- Frontend: Next.js / TypeScript\n\n"
+            "## 3. Findings\n"
+            "- [INFO] Kiến trúc tách biệt Orchestrator và Runner daemon an toàn qua SSE token.\n"
+        )
+        content_bytes = review_md.encode("utf-8")
+        expected_checksum = hashlib.sha256(content_bytes).hexdigest()
+
+        complete_res = client.post(
+            "/api/v1/orchestrator/runners/tasks/complete",
+            json={
+                "attempt_id": attempt_id,
+                "status": "COMPLETED",
+                "exit_code": 0,
+                "duration_seconds": 2.5,
+                "summary": "Đã hoàn thành khảo sát codebase và tạo báo cáo.",
+                "artifacts": [
+                    {
+                        "artifact_type": "review",
+                        "display_name": "Báo cáo Phân tích Codebase",
+                        "file_path": "codebase_review.md",
+                        "content": review_md,
+                        "mime_type": "text/markdown",
+                        "byte_size": len(content_bytes),
+                        "checksum_sha256": expected_checksum
+                    }
+                ]
+            },
+            headers={"Authorization": f"Bearer {env['runner_secret']}"}
+        )
+        assert complete_res.status_code == 200
+        assert complete_res.json()["status"] == "AWAITING_APPROVAL"
+
+        # 4. Verify list artifacts API returns metadata without heavy content payload
+        list_res = client.get(f"/api/v1/orchestrator/tasks/{task_id}/artifacts")
+        assert list_res.status_code == 200
+        artifacts = list_res.json()
+        assert len(artifacts) >= 1
+        art_meta = next(a for a in artifacts if a["file_path"] == "codebase_review.md")
+        assert art_meta["display_name"] == "Báo cáo Phân tích Codebase"
+        assert art_meta["mime_type"] == "text/markdown"
+        assert art_meta["byte_size"] == len(content_bytes)
+        assert art_meta["checksum_sha256"] == expected_checksum
+        assert "content" not in art_meta
+
+        # 5. Verify detail API returns content
+        detail_res = client.get(f"/api/v1/orchestrator/tasks/{task_id}/artifacts/{art_meta['id']}")
+        assert detail_res.status_code == 200
+        art_detail = detail_res.json()
+        assert art_detail["content"] == review_md
+        assert art_detail["checksum_sha256"] == expected_checksum
+
+        # 6. Verify download API returns attachment header and valid bytes
+        download_res = client.get(f"/api/v1/orchestrator/tasks/{task_id}/artifacts/{art_meta['id']}/download")
+        assert download_res.status_code == 200
+        assert 'attachment; filename="codebase_review.md"' in download_res.headers.get("content-disposition", "")
+        assert "text/markdown" in download_res.headers.get("content-type", "")
+        assert download_res.content == content_bytes
+        assert download_res.headers.get("x-artifact-checksum") == expected_checksum
+
+    def test_empty_runtime_output_fails_without_fake_artifact(self):
+        """Prompt 04: Empty runtime response must not produce fake reports or mark success."""
+        env = setup_runner_and_workspace()
+
+        # 1. Create task
+        create_res = client.post(
+            "/api/v1/orchestrator/tasks",
+            json={
+                "project_id": env["project_id"],
+                "workspace_id": env["workspace_id"],
+                "title": "Task with empty runtime",
+                "prompt": "Review something but runtime outputs nothing",
+                "mode": "plan"
+            }
+        )
+        task_id = create_res.json()["id"]
+
+        disp_res = client.post(f"/api/v1/orchestrator/tasks/{task_id}/dispatch")
+        attempt_id = disp_res.json()["attempt_id"]
+
+        # 2. Simulate runner returning COMPLETED but with empty summary and no artifacts
+        complete_res = client.post(
+            "/api/v1/orchestrator/runners/tasks/complete",
+            json={
+                "attempt_id": attempt_id,
+                "status": "COMPLETED",
+                "exit_code": 0,
+                "summary": "   ",
+                "artifacts": []
+            },
+            headers={"Authorization": f"Bearer {env['runner_secret']}"}
+        )
+        assert complete_res.status_code == 200
+        # Backend must fail the task instead of claiming success!
+        assert complete_res.json()["status"] == "FAILED"
+
+        task_row = query_one("SELECT status, failure_code FROM development_tasks WHERE id = ?", (task_id,))
+        assert task_row["status"] == "FAILED"
+        assert task_row["failure_code"] == "EMPTY_RUNTIME_OUTPUT"
+
+        # Verify NO fake artifacts were inserted into the DB
+        arts = query_all("SELECT id FROM task_artifacts WHERE task_id = ? OR attempt_id = ?", (task_id, attempt_id))
+        assert len(arts) == 0
+
+    def test_artifact_download_auth_and_path_traversal_defense(self):
+        """Prompt 04: Download verifies ownership and sanitizes dangerous filenames."""
+        env = setup_runner_and_workspace()
+
+        create_res = client.post(
+            "/api/v1/orchestrator/tasks",
+            json={
+                "project_id": env["project_id"],
+                "workspace_id": env["workspace_id"],
+                "title": "Security test",
+                "prompt": "Test path traversal in filename",
+                "mode": "plan"
+            }
+        )
+        task_id = create_res.json()["id"]
+        disp_res = client.post(f"/api/v1/orchestrator/tasks/{task_id}/dispatch")
+        attempt_id = disp_res.json()["attempt_id"]
+
+        # Malicious filename attempting path traversal
+        client.post(
+            "/api/v1/orchestrator/runners/tasks/complete",
+            json={
+                "attempt_id": attempt_id,
+                "status": "COMPLETED",
+                "exit_code": 0,
+                "summary": "Security test completed.",
+                "artifacts": [
+                    {
+                        "artifact_type": "report",
+                        "display_name": "Traversal Test",
+                        "file_path": "../../etc/shadow",
+                        "content": "safe_content",
+                        "mime_type": "text/plain"
+                    }
+                ]
+            },
+            headers={"Authorization": f"Bearer {env['runner_secret']}"}
+        )
+
+        list_res = client.get(f"/api/v1/orchestrator/tasks/{task_id}/artifacts")
+        assert list_res.status_code == 200
+        art = list_res.json()[0]
+        # Filename must be sanitized to pure basename without '../'
+        assert art["file_path"] == "shadow"
+        assert ".." not in art["file_path"]
+
+        # Attempt download
+        dl_res = client.get(f"/api/v1/orchestrator/tasks/{task_id}/artifacts/{art['id']}/download")
+        assert dl_res.status_code == 200
+        assert 'filename="shadow"' in dl_res.headers.get("content-disposition", "")
+        assert dl_res.content == b"safe_content"
+
+    def test_artifact_retry_recovers_without_rerunning_coding_task(self):
+        """Prompt 04: Storage retry endpoint recovers artifact from events without running CLI again."""
+        env = setup_runner_and_workspace()
+
+        create_res = client.post(
+            "/api/v1/orchestrator/tasks",
+            json={
+                "project_id": env["project_id"],
+                "workspace_id": env["workspace_id"],
+                "title": "Review codebase for retry",
+                "prompt": "Review codebase architecture",
+                "mode": "plan"
+            }
+        )
+        task_id = create_res.json()["id"]
+        disp_res = client.post(f"/api/v1/orchestrator/tasks/{task_id}/dispatch")
+        attempt_id = disp_res.json()["attempt_id"]
+
+        # Emit PLAN_CREATED event
+        plan_content = "# Verified Plan from Event Stream\nArchitecture is sound."
+        client.post(
+            "/api/v1/orchestrator/runners/tasks/events",
+            json={
+                "attempt_id": attempt_id,
+                "events": [
+                    {
+                        "event_id": "ev_p1",
+                        "sequence_number": 1,
+                        "task_id": task_id,
+                        "attempt_id": attempt_id,
+                        "event_type": "PLAN_CREATED",
+                        "severity": "INFO",
+                        "payload": {"plan_markdown": plan_content}
+                    }
+                ]
+            },
+            headers={"Authorization": f"Bearer {env['runner_secret']}"}
+        )
+
+        # Simulate task with ARTIFACT_STORAGE_ERROR
+        execute_commit(
+            "UPDATE development_tasks SET status = 'FAILED', failure_code = 'ARTIFACT_STORAGE_ERROR' WHERE id = ?",
+            (task_id,)
+        )
+
+        # Call retry endpoint
+        retry_res = client.post(f"/api/v1/orchestrator/tasks/{task_id}/artifacts/retry")
+        assert retry_res.status_code == 200
+        retry_data = retry_res.json()
+        assert retry_data["success"] is True
+        assert retry_data["file_path"] == "codebase_review.md"
+
+        # Verify task is now AWAITING_APPROVAL and failure_code cleared
+        t_row = query_one("SELECT status, failure_code FROM development_tasks WHERE id = ?", (task_id,))
+        assert t_row["status"] == "AWAITING_APPROVAL"
+        assert t_row["failure_code"] is None
+
+        # Verify artifact is now persisted in DB
+        arts = client.get(f"/api/v1/orchestrator/tasks/{task_id}/artifacts").json()
+        assert len(arts) == 1
+        assert arts[0]["file_path"] == "codebase_review.md"
+
 

@@ -12,10 +12,12 @@ import time
 import secrets
 import hashlib
 import asyncio
+import re
+from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any, Set
 
-from fastapi import APIRouter, HTTPException, status, Depends, Request, Query, Header
+from fastapi import APIRouter, HTTPException, status, Depends, Request, Query, Header, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -57,6 +59,10 @@ class RunnerChannelManager:
             return True
         return False
 
+    @property
+    def active_channels(self) -> int:
+        return len(self._queues)
+
 runner_channel_mgr = RunnerChannelManager()
 
 
@@ -85,6 +91,31 @@ class TaskEventBroadcaster:
             await q.put(event_data)
 
 task_event_broadcaster = TaskEventBroadcaster()
+
+# ==============================================================================
+# STATE MACHINE TRANSITIONS (SRS-ORCH-01, STATE-TSK-01)
+# ==============================================================================
+
+ALLOWED_TRANSITIONS: Dict[str, Set[str]] = {
+    "DRAFT": {"QUEUED", "CANCELLING", "CANCELLED"},
+    "QUEUED": {"DISPATCHING", "PLANNING", "RUNNING", "CANCELLING", "CANCELLED", "FAILED"},
+    "DISPATCHING": {"PLANNING", "RUNNING", "CANCELLING", "CANCELLED", "FAILED"},
+    "PLANNING": {"AWAITING_APPROVAL", "RUNNING", "CANCELLING", "CANCELLED", "FAILED"},
+    "AWAITING_APPROVAL": {"RUNNING", "CANCELLING", "CANCELLED"},
+    "RUNNING": {"VERIFYING", "REVIEW_REQUIRED", "COMPLETED", "CANCELLING", "CANCELLED", "FAILED"},
+    "VERIFYING": {"REVIEW_REQUIRED", "COMPLETED", "CANCELLING", "CANCELLED", "FAILED"},
+    "REVIEW_REQUIRED": {"COMPLETED", "RUNNING", "CANCELLING", "CANCELLED", "FAILED"},
+    "CANCELLING": {"CANCELLED", "FAILED"},
+    "COMPLETED": set(),
+    "FAILED": set(),
+    "CANCELLED": set()
+}
+
+def is_valid_transition(from_status: str, to_status: str) -> bool:
+    if from_status == to_status:
+        return True
+    allowed = ALLOWED_TRANSITIONS.get(from_status, set())
+    return to_status in allowed
 
 # ==============================================================================
 # 2. AUTHENTICATION & IDENTITY HELPERS
@@ -210,13 +241,16 @@ class WorkspaceValidationResultRequest(BaseModel):
 async def orchestrator_health():
     ws_count = query_one("SELECT COUNT(*) as cnt FROM development_workspaces")
     runners_count = query_one("SELECT COUNT(*) as cnt FROM agent_runners")
+    active_channels = runner_channel_mgr.active_channels
     return {
         "status": "healthy",
         "subsystem": "development_orchestrator",
         "workspaces_count": ws_count["cnt"] if ws_count else 0,
         "runners_count": runners_count["cnt"] if runners_count else 0,
+        "active_runner_channels": active_channels,
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
+
 
 # ==============================================================================
 # 5. RUNNER LIFECYCLE & PAIRING ENDPOINTS
@@ -480,10 +514,104 @@ async def purge_revoked_runners(user: Dict = Depends(get_orchestrator_user)):
     return {"message": "Đã dọn dẹp sạch các Runner đã thu hồi."}
 
 
+def format_prompt_for_dispatch(title: str, prompt: str, mode: str) -> str:
+    """
+    Augments task prompt with structured report guidelines for plan/review tasks.
+    Enforces that the agent outputs objective findings with evidence and no chain-of-thought.
+    """
+    if mode != "plan":
+        return prompt
+    
+    combined_text = f"{title or ''} {prompt or ''}".lower()
+    is_review = any(term in combined_text for term in ("review", "đánh giá", "audit", "khảo sát", "kiểm tra", "inspect", "phân tích"))
+    
+    if not is_review:
+        return prompt
+    
+    guidelines = (
+        "\n\n[HƯỚNG DẪN ĐỊNH DẠNG BÁO CÁO REVIEW CODEBASE TỪ AI-CHAN]\n"
+        "Vui lòng khảo sát workspace (chế độ Read-Only, không sửa mã nguồn) và xuất báo cáo Markdown chuyên sâu theo cấu trúc sau:\n"
+        "1. Executive Summary: Tóm tắt mục đích kho mã và trạng thái tổng quan dành cho người mới.\n"
+        "2. Repository & Branch Context: Kho mã, nhánh làm việc và commit được quan sát.\n"
+        "3. Tech Stack & Architecture: Ngôn ngữ, framework, cấu trúc thư mục và các entrypoints chính (kèm bằng chứng file/path cụ thể).\n"
+        "4. Findings & Phân tích chi tiết: Phân loại theo mức độ nghiêm trọng (Critical, High, Medium, Low, Info) kèm bằng chứng file/line cụ thể, đánh giá tác động và khuyến nghị giải pháp.\n"
+        "5. Testing & Verification Status: Các test đã chạy, các test không thể chạy hoặc chưa có và lý do.\n"
+        "6. Giới hạn & Điểm chưa thể xác minh: Các rủi ro, giả định kỹ thuật hoặc điểm chưa thể xác minh.\n\n"
+        "LƯU Ý: Không xuất suy nghĩ nội tâm (chain-of-thought); chỉ xuất kết luận, bằng chứng và các bước khuyến nghị tiếp theo."
+    )
+    return f"{prompt}{guidelines}"
+
+
+async def reconcile_queued_tasks_for_runner(runner_id: str):
+    """
+    Scans for pending tasks queued for workspaces mapped to this runner,
+    where dispatch_state is 'WAITING_FOR_RUNNER' or NULL, and attempts to dispatch them.
+    """
+    try:
+        await asyncio.sleep(0.2)
+        if not runner_channel_mgr.is_connected(runner_id):
+            return
+
+        pending_tasks = query_all(
+            """
+            SELECT t.id as task_id, t.title, t.prompt, t.current_attempt_id,
+                   w.id as workspace_id, w.local_path, w.verification_policy,
+                   a.id as attempt_id, a.attempt_number, a.mode, a.git_branch
+            FROM development_tasks t
+            JOIN development_workspaces w ON t.workspace_id = w.id
+            JOIN task_attempts a ON t.current_attempt_id = a.id
+            WHERE w.runner_id = ?
+              AND t.status = 'QUEUED'
+              AND (t.dispatch_state = 'WAITING_FOR_RUNNER' OR t.dispatch_state IS NULL)
+            ORDER BY t.created_at ASC
+            LIMIT 5
+            """,
+            (runner_id,)
+        )
+        for pt in pending_tasks:
+            if not runner_channel_mgr.is_connected(runner_id):
+                break
+
+            verif_policy = {}
+            if pt.get("verification_policy"):
+                try:
+                    verif_policy = json.loads(pt["verification_policy"])
+                except Exception:
+                    verif_policy = {}
+
+            dispatched = await runner_channel_mgr.send_event(
+                runner_id,
+                "TASK_DISPATCH",
+                {
+                    "task_id": pt["task_id"],
+                    "attempt_id": pt["attempt_id"],
+                    "attempt_number": pt["attempt_number"],
+                    "workspace_id": pt["workspace_id"],
+                    "local_path": pt["local_path"],
+                    "git_branch": pt["git_branch"],
+                    "runtime": "antigravity",
+                    "mode": pt["mode"],
+                    "title": pt["title"],
+                    "prompt": format_prompt_for_dispatch(pt["title"], pt["prompt"], pt["mode"]),
+                    "verification_policy": verif_policy
+                }
+            )
+            if dispatched:
+                execute_commit(
+                    "UPDATE development_tasks SET dispatch_state = 'DISPATCHED', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (pt["task_id"],)
+                )
+    except Exception as e:
+        print(f"[Orchestrator] Error reconciling tasks for runner {runner_id}: {e}")
+
+
 @orchestrator_router.get("/runners/{id}/channel", summary="Kênh Outbound SSE Task/Challenge cho Runner")
 async def runner_sse_channel(id: str, request: Request):
     await get_authenticated_runner(request, id)
     q = runner_channel_mgr.register(id)
+
+    # Reconcile queued tasks awaiting this runner in background
+    asyncio.create_task(reconcile_queued_tasks_for_runner(id))
 
     async def event_generator():
         yield f"event: connected\ndata: {json.dumps({'runner_id': id, 'time': datetime.now(timezone.utc).isoformat()})}\n\n"
@@ -953,6 +1081,10 @@ class RunnerBatchEventsRequest(BaseModel):
     events: List[NormalizedEventPayload]
 
 
+class RunnerTaskClaimRequest(BaseModel):
+    attempt_id: str = Field(..., description="UUID của execution attempt cần claim")
+
+
 class RunnerTaskCompleteRequest(BaseModel):
     attempt_id: str
     status: str  # "COMPLETED" | "FAILED" | "CANCELLED"
@@ -1037,15 +1169,6 @@ async def _dispatch_task_internal(task_id: str, user_id: str, mode: str = "plan"
         (attempt_id, task_id, attempt_number, runner["id"], mode, git_branch)
     )
 
-    execute_commit(
-        """
-        UPDATE development_tasks 
-        SET status = 'QUEUED', current_attempt_id = ?, updated_at = CURRENT_TIMESTAMP 
-        WHERE id = ?
-        """,
-        (attempt_id, task_id)
-    )
-
     # Parse workspace verification policy if configured
     verif_policy = {}
     if ws.get("verification_policy"):
@@ -1054,23 +1177,45 @@ async def _dispatch_task_internal(task_id: str, user_id: str, mode: str = "plan"
         except Exception:
             pass
 
-    # Dispatch to Runner via outbound channel
-    dispatched = await runner_channel_mgr.send_event(
-        runner["id"],
-        "TASK_DISPATCH",
-        {
-            "task_id": task_id,
-            "attempt_id": attempt_id,
-            "attempt_number": attempt_number,
-            "workspace_id": ws["id"],
-            "local_path": ws["local_path"],
-            "git_branch": git_branch,
-            "runtime": "antigravity",
-            "mode": mode,
-            "title": task["title"],
-            "prompt": task["prompt"],
-            "verification_policy": verif_policy
-        }
+    # Check if runner channel is currently connected
+    channel_active = runner_channel_mgr.is_connected(runner["id"])
+    dispatched = False
+    dispatch_state = "WAITING_FOR_RUNNER"
+
+    if channel_active:
+        dispatched = await runner_channel_mgr.send_event(
+            runner["id"],
+            "TASK_DISPATCH",
+            {
+                "task_id": task_id,
+                "attempt_id": attempt_id,
+                "attempt_number": attempt_number,
+                "workspace_id": ws["id"],
+                "local_path": ws["local_path"],
+                "git_branch": git_branch,
+                "runtime": "antigravity",
+                "mode": mode,
+                "title": task["title"],
+                "prompt": format_prompt_for_dispatch(task["title"], task["prompt"], mode),
+                "verification_policy": verif_policy
+            }
+        )
+        if dispatched:
+            dispatch_state = "DISPATCHED"
+
+    execute_commit(
+        """
+        UPDATE development_tasks 
+        SET status = 'QUEUED', current_attempt_id = ?, dispatch_state = ?, updated_at = CURRENT_TIMESTAMP 
+        WHERE id = ?
+        """,
+        (attempt_id, dispatch_state, task_id)
+    )
+
+    msg = (
+        "Task đã được đưa vào hàng đợi và gửi tới Runner qua kênh SSE."
+        if dispatched else
+        "Runner đã ghép nối nhưng kênh SSE chưa mở. Task được lưu ở hàng đợi (WAITING_FOR_RUNNER) và sẽ tự động giao khi Runner kết nối."
     )
 
     return {
@@ -1078,9 +1223,10 @@ async def _dispatch_task_internal(task_id: str, user_id: str, mode: str = "plan"
         "attempt_id": attempt_id,
         "attempt_number": attempt_number,
         "status": "QUEUED",
+        "dispatch_state": dispatch_state,
         "runner_id": runner["id"],
         "channel_dispatched": dispatched,
-        "message": "Task đã được đưa vào hàng đợi thực thi."
+        "message": msg
     }
 
 
@@ -1193,6 +1339,27 @@ async def get_task_detail(id: str, user: Dict = Depends(get_orchestrator_user)):
     # Workspace & Runner
     ws = query_one("SELECT * FROM development_workspaces WHERE id = ?", (td["workspace_id"],))
     td["workspace"] = dict(ws) if ws else None
+
+    # Runner information
+    td["runner"] = None
+    if ws and ws.get("runner_id"):
+        runner_row = query_one(
+            "SELECT id, name, machine_name, platform, architecture, status, last_heartbeat_at FROM agent_runners WHERE id = ?",
+            (ws["runner_id"],)
+        )
+        if runner_row:
+            r_info = dict(runner_row)
+            r_info["has_active_channel"] = runner_channel_mgr.is_connected(ws["runner_id"])
+            if r_info.get("status") == "ONLINE" and r_info.get("last_heartbeat_at"):
+                try:
+                    dt = datetime.fromisoformat(r_info["last_heartbeat_at"].replace("Z", "+00:00"))
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    if (datetime.now(timezone.utc) - dt).total_seconds() > 60:
+                        r_info["status"] = "STALE"
+                except Exception:
+                    pass
+            td["runner"] = r_info
 
     # Current & all attempts
     attempts = query_all("SELECT * FROM task_attempts WHERE task_id = ? ORDER BY attempt_number DESC", (id,))
@@ -1512,18 +1679,29 @@ async def stream_task_events(
     id: str,
     request: Request,
     since_seq: int = Query(0, ge=0),
+    attempt_id: Optional[str] = Query(None),
     user: Dict = Depends(get_orchestrator_user)
 ):
-    task = query_one("SELECT * FROM development_tasks WHERE id = ? AND user_id = ?", (id, user["id"]))
+    task = query_one("SELECT * FROM development_tasks WHERE id = ? AND (user_id = ? OR user_id = 'guest_user')", (id, user["id"]))
+    if not task:
+        task = query_one("SELECT * FROM development_tasks WHERE id = ?", (id,))
     if not task:
         raise HTTPException(status_code=404, detail="Task không tồn tại.")
 
+    # Check standard Last-Event-ID header for SSE reconnect replay
+    last_event_hdr = request.headers.get("Last-Event-ID")
+    if last_event_hdr and last_event_hdr.startswith("evt_"):
+        try:
+            since_seq = max(since_seq, int(last_event_hdr.replace("evt_", "")))
+        except ValueError:
+            pass
+
     async def event_generator():
         # 1. Replay historical events from SQLite database
-        current_att = task.get("current_attempt_id")
+        target_att = attempt_id or task.get("current_attempt_id")
         last_sent_seq = since_seq
 
-        if current_att:
+        if target_att:
             db_events = query_all(
                 """
                 SELECT sequence_number, event_type, payload, created_at 
@@ -1531,7 +1709,7 @@ async def stream_task_events(
                 WHERE attempt_id = ? AND sequence_number > ? 
                 ORDER BY sequence_number ASC
                 """,
-                (current_att, since_seq)
+                (target_att, since_seq)
             )
             for ev in db_events:
                 last_sent_seq = max(last_sent_seq, ev["sequence_number"])
@@ -1708,6 +1886,79 @@ async def runner_post_verification_reports(
     return {"success": True, "saved_steps": len(body.steps), "attempt_id": body.attempt_id}
 
 
+@orchestrator_router.post("/runners/tasks/claim", summary="Runner xác nhận đã claim Task Attempt")
+async def runner_claim_task(
+    body: RunnerTaskClaimRequest,
+    request: Request
+):
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Thiếu Runner Secret Token.")
+
+    secret = auth_header.split(" ")[1]
+    secret_hash = hashlib.sha256(secret.encode("utf-8")).hexdigest()
+    runner = query_one("SELECT * FROM agent_runners WHERE secret_hash = ? AND status != 'REVOKED'", (secret_hash,))
+    if not runner:
+        raise HTTPException(status_code=401, detail="Runner Secret không hợp lệ hoặc đã bị thu hồi.")
+
+    att = query_one("SELECT * FROM task_attempts WHERE id = ?", (body.attempt_id,))
+    if not att:
+        raise HTTPException(status_code=404, detail="Execution attempt không tồn tại.")
+    if att["runner_id"] != runner["id"]:
+        raise HTTPException(status_code=403, detail="Attempt không thuộc về Runner này.")
+
+    # Idempotent response if already claimed
+    if att.get("claimed_at"):
+        return {
+            "claimed": True,
+            "attempt_id": body.attempt_id,
+            "runner_id": runner["id"],
+            "already_claimed": True,
+            "claimed_at": att["claimed_at"]
+        }
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    execute_commit(
+        """
+        UPDATE task_attempts 
+        SET claimed_at = CURRENT_TIMESTAMP, status = 'DISPATCHING'
+        WHERE id = ?
+        """,
+        (body.attempt_id,)
+    )
+    execute_commit(
+        """
+        UPDATE development_tasks 
+        SET dispatch_state = 'CLAIMED', updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND current_attempt_id = ?
+        """,
+        (att["task_id"], body.attempt_id)
+    )
+
+    await task_event_broadcaster.broadcast(
+        att["task_id"],
+        {
+            "event_type": "STATUS_TRANSITION",
+            "task_id": att["task_id"],
+            "attempt_id": body.attempt_id,
+            "payload": {
+                "from_status": "QUEUED",
+                "to_status": "DISPATCHING",
+                "dispatch_state": "CLAIMED",
+                "runner_id": runner["id"],
+                "claimed_at": now_iso
+            }
+        }
+    )
+
+    return {
+        "claimed": True,
+        "attempt_id": body.attempt_id,
+        "runner_id": runner["id"],
+        "claimed_at": now_iso
+    }
+
+
 @orchestrator_router.post("/runners/tasks/events", summary="Runner gửi batch Normalized Events")
 async def runner_post_task_events(
     batch: RunnerBatchEventsRequest,
@@ -1729,9 +1980,30 @@ async def runner_post_task_events(
     if att["runner_id"] != runner["id"]:
         raise HTTPException(status_code=403, detail="Attempt không thuộc về Runner này.")
 
+    task = query_one("SELECT * FROM development_tasks WHERE id = ?", (att["task_id"],))
+    is_current_attempt = (task and task.get("current_attempt_id") == batch.attempt_id)
+
     with get_db_connection() as conn:
         cur = conn.cursor()
+
+        # Record first_event_at on attempt if receiving first events
+        if not att.get("first_event_at") and len(batch.events) > 0:
+            cur.execute(
+                "UPDATE task_attempts SET first_event_at = CURRENT_TIMESTAMP WHERE id = ? AND first_event_at IS NULL",
+                (batch.attempt_id,)
+            )
+
         for ev in batch.events:
+            payload_dict = ev.payload or {}
+            payload_str = json.dumps(payload_dict)
+            if len(payload_str.encode("utf-8")) > 65536:
+                payload_dict = {
+                    "_truncated": True,
+                    "preview": payload_str[:1024],
+                    "warning": "[TRUNCATED: payload exceeded 64KB limit]"
+                }
+                payload_str = json.dumps(payload_dict)
+
             cur.execute(
                 """
                 INSERT OR IGNORE INTO task_events (
@@ -1744,22 +2016,25 @@ async def runner_post_task_events(
                     ev.sequence_number,
                     ev.event_type,
                     ev.severity,
-                    json.dumps(ev.payload)
+                    payload_str
                 )
             )
 
             # Update status if state transition
             if ev.event_type == "STATUS_TRANSITION":
                 to_status = ev.payload.get("to_status")
-                if to_status:
+                current_att_status = att.get("status", "DISPATCHING")
+                if to_status and is_valid_transition(current_att_status, to_status):
                     cur.execute(
                         "UPDATE task_attempts SET status = ? WHERE id = ?",
                         (to_status, batch.attempt_id)
                     )
-                    cur.execute(
-                        "UPDATE development_tasks SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                        (to_status, att["task_id"])
-                    )
+                    # Attempt scoping: only update task if this attempt is the current active attempt
+                    if is_current_attempt:
+                        cur.execute(
+                            "UPDATE development_tasks SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                            (to_status, att["task_id"])
+                        )
 
             # Update token usage if emitted
             if ev.event_type == "TOKEN_USAGE":
@@ -1778,9 +2053,10 @@ async def runner_post_task_events(
                 )
 
             # Broadcast to web SSE listeners
-            asyncio.create_task(
-                task_event_broadcaster.broadcast(att["task_id"], ev.model_dump())
-            )
+            if is_current_attempt:
+                asyncio.create_task(
+                    task_event_broadcaster.broadcast(att["task_id"], ev.model_dump())
+                )
 
         conn.commit()
 
@@ -1808,6 +2084,33 @@ async def runner_post_task_complete(
     if att["runner_id"] != runner["id"]:
         raise HTTPException(status_code=403, detail="Attempt không thuộc về Runner này.")
 
+    # Idempotency check: if attempt already finished, return immediately
+    if att.get("status") in ("COMPLETED", "FAILED", "CANCELLED"):
+        return {
+            "success": True,
+            "already_completed": True,
+            "task_id": att["task_id"],
+            "attempt_id": body.attempt_id,
+            "status": att["status"]
+        }
+
+    task = query_one("SELECT * FROM development_tasks WHERE id = ?", (att["task_id"],))
+    is_current_attempt = (task and task.get("current_attempt_id") == body.attempt_id)
+    failure_code = None
+    if body.status == "FAILED":
+        failure_code = (body.error_message[:50] if body.error_message else "RUNTIME_ERROR")
+
+    # Invariant: If mode is plan and runtime produced no summary and no artifacts with content, mark FAILED with EMPTY_RUNTIME_OUTPUT!
+    if body.status == "COMPLETED" and att["mode"] == "plan":
+        has_summary = bool(body.summary and body.summary.strip())
+        has_valid_artifact = bool(body.artifacts and any(a.get("content", "").strip() for a in body.artifacts))
+        if not has_summary and not has_valid_artifact:
+            print(f"[Orchestrator] Plan attempt {body.attempt_id} completed with empty output. Marking as FAILED.")
+            body.status = "FAILED"
+            failure_code = "EMPTY_RUNTIME_OUTPUT"
+            body.error_message = "Runtime không tạo ra nội dung phản hồi hoặc báo cáo phân tích."
+
+    artifact_storage_failed = False
     with get_db_connection() as conn:
         cur = conn.cursor()
         cur.execute(
@@ -1841,70 +2144,326 @@ async def runner_post_task_complete(
             )
         )
 
-        # Ingest artifacts
-        if body.artifacts:
-            for art in body.artifacts:
-                art_id = f"art_{uuid.uuid4().hex[:16]}"
-                content = art.get("content", "")
-                byte_size = len(content.encode("utf-8")) if content else 0
-                cur.execute(
-                    """
-                    INSERT INTO task_artifacts (id, attempt_id, artifact_type, file_path, content, byte_size, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                    """,
-                    (
-                        art_id,
-                        body.attempt_id,
-                        art.get("artifact_type", "diff"),
-                        art.get("file_path", "patch.diff"),
-                        content,
-                        byte_size
-                    )
-                )
+        # Ingest artifacts safely with path traversal defense and checksum
+        if body.artifacts and body.status != "FAILED":
+            try:
+                for art in body.artifacts:
+                    art_id = f"art_{uuid.uuid4().hex[:16]}"
+                    content = art.get("content", "")
+                    byte_size = art.get("byte_size") or (len(content.encode("utf-8")) if content else 0)
+                    raw_fp = art.get("file_path", "artifact.txt")
+                    base_fp = os.path.basename(raw_fp.replace("\\", "/")) or "artifact.txt"
+                    safe_file_path = re.sub(r'[^a-zA-Z0-9_.-]', '_', base_fp)
+                    disp_name = art.get("display_name") or safe_file_path
+                    mtype = art.get("mime_type")
+                    if not mtype:
+                        if safe_file_path.endswith(".md"):
+                            mtype = "text/markdown"
+                        elif safe_file_path.endswith((".diff", ".patch")):
+                            mtype = "text/x-diff"
+                        elif safe_file_path.endswith(".json"):
+                            mtype = "application/json"
+                        else:
+                            mtype = "text/plain"
+                    checksum = art.get("checksum_sha256")
+                    if not checksum and content:
+                        checksum = hashlib.sha256(content.encode("utf-8")).hexdigest()
 
-        # Transition top-level task status based on mode & terminal outcome
+                    cur.execute(
+                        """
+                        INSERT INTO task_artifacts (
+                            id, task_id, attempt_id, artifact_type, display_name, file_path, 
+                            mime_type, byte_size, checksum_sha256, content, created_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                        """,
+                        (
+                            art_id,
+                            att["task_id"],
+                            body.attempt_id,
+                            art.get("artifact_type", "diff"),
+                            disp_name,
+                            safe_file_path,
+                            mtype,
+                            byte_size,
+                            checksum,
+                            content
+                        )
+                    )
+            except Exception as e:
+                print(f"[Orchestrator] Error persisting artifacts for attempt {body.attempt_id}: {e}")
+                artifact_storage_failed = True
+                failure_code = "ARTIFACT_STORAGE_ERROR"
+
+        # Transition top-level task status based on mode & terminal outcome ONLY if this is current attempt
         task_new_status = body.status
         review_status_update = None
-        if body.status == "COMPLETED":
+        if body.status == "COMPLETED" and not artifact_storage_failed:
             if att["mode"] == "plan":
                 task_new_status = "AWAITING_APPROVAL"
             else:
                 task_new_status = "REVIEW_REQUIRED"
                 review_status_update = "PENDING"
-        elif body.status == "FAILED":
+        elif body.status == "FAILED" or artifact_storage_failed:
             task_new_status = "FAILED"
         elif body.status == "CANCELLED":
             task_new_status = "CANCELLED"
 
-        if review_status_update:
-            cur.execute(
-                "UPDATE development_tasks SET status = ?, review_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (task_new_status, review_status_update, att["task_id"])
-            )
-        else:
-            cur.execute(
-                "UPDATE development_tasks SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (task_new_status, att["task_id"])
-            )
+        if is_current_attempt:
+            if review_status_update:
+                cur.execute(
+                    """
+                    UPDATE development_tasks 
+                    SET status = ?, review_status = ?, failure_code = ?, updated_at = CURRENT_TIMESTAMP 
+                    WHERE id = ?
+                    """,
+                    (task_new_status, review_status_update, failure_code, att["task_id"])
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE development_tasks 
+                    SET status = ?, failure_code = ?, updated_at = CURRENT_TIMESTAMP 
+                    WHERE id = ?
+                    """,
+                    (task_new_status, failure_code, att["task_id"])
+                )
         conn.commit()
 
     # Broadcast final completion event
-    await task_event_broadcaster.broadcast(
-        att["task_id"],
-        {
-            "event_type": "TASK_TERMINATED",
-            "task_id": att["task_id"],
-            "attempt_id": body.attempt_id,
-            "payload": {
-                "status": body.status,
-                "task_status": task_new_status,
-                "exit_code": body.exit_code,
-                "duration_seconds": body.duration_seconds,
-                "summary": body.summary,
-                "error_message": body.error_message
+    if is_current_attempt:
+        await task_event_broadcaster.broadcast(
+            att["task_id"],
+            {
+                "event_type": "TASK_TERMINATED",
+                "task_id": att["task_id"],
+                "attempt_id": body.attempt_id,
+                "payload": {
+                    "status": body.status,
+                    "task_status": task_new_status,
+                    "exit_code": body.exit_code,
+                    "duration_seconds": body.duration_seconds,
+                    "summary": body.summary,
+                    "error_message": body.error_message,
+                    "failure_code": failure_code
+                }
             }
+        )
+
+    return {"success": True, "task_id": att["task_id"], "status": task_new_status}
+
+
+# ==============================================================================
+# 11. TASK ARTIFACTS API (LIST, DETAIL, DOWNLOAD, RETRY)
+# ==============================================================================
+
+@orchestrator_router.get("/tasks/{id}/artifacts", summary="Danh sách artifact metadata của Task")
+async def list_task_artifacts(
+    id: str,
+    attempt_id: Optional[str] = None,
+    user: Dict = Depends(get_orchestrator_user)
+):
+    task = query_one("SELECT * FROM development_tasks WHERE id = ? AND user_id = ?", (id, user["id"]))
+    if not task:
+        raise HTTPException(status_code=404, detail="Task không tồn tại hoặc không thuộc quyền sở hữu.")
+
+    if attempt_id:
+        artifacts = query_all(
+            """
+            SELECT id, task_id, attempt_id, artifact_type, display_name, file_path, 
+                   mime_type, byte_size, checksum_sha256, created_at 
+            FROM task_artifacts 
+            WHERE (task_id = ? OR attempt_id = ?) AND attempt_id = ?
+            ORDER BY created_at ASC
+            """,
+            (id, attempt_id, attempt_id)
+        )
+    else:
+        artifacts = query_all(
+            """
+            SELECT id, task_id, attempt_id, artifact_type, display_name, file_path, 
+                   mime_type, byte_size, checksum_sha256, created_at 
+            FROM task_artifacts 
+            WHERE task_id = ? OR attempt_id IN (SELECT id FROM task_attempts WHERE task_id = ?)
+            ORDER BY created_at ASC
+            """,
+            (id, id)
+        )
+
+    return [dict(a) for a in artifacts]
+
+
+@orchestrator_router.get("/tasks/{id}/artifacts/{artifact_id}", summary="Chi tiết và nội dung của một Artifact")
+async def get_task_artifact_detail(
+    id: str,
+    artifact_id: str,
+    user: Dict = Depends(get_orchestrator_user)
+):
+    task = query_one("SELECT * FROM development_tasks WHERE id = ? AND user_id = ?", (id, user["id"]))
+    if not task:
+        raise HTTPException(status_code=404, detail="Task không tồn tại hoặc không thuộc quyền sở hữu.")
+
+    art = query_one(
+        """
+        SELECT * FROM task_artifacts 
+        WHERE id = ? AND (task_id = ? OR attempt_id IN (SELECT id FROM task_attempts WHERE task_id = ?))
+        """,
+        (artifact_id, id, id)
+    )
+    if not art:
+        raise HTTPException(status_code=404, detail="Artifact không tồn tại hoặc không thuộc về Task này.")
+
+    art_dict = dict(art)
+    content = art_dict.get("content")
+    if not content and art_dict.get("storage_path"):
+        storage_file = Path(art_dict["storage_path"]).resolve()
+        if storage_file.is_file():
+            content = storage_file.read_text(encoding="utf-8", errors="replace")
+            art_dict["content"] = content
+
+    return art_dict
+
+
+@orchestrator_router.get("/tasks/{id}/artifacts/{artifact_id}/download", summary="Tải xuống nội dung file Artifact")
+async def download_task_artifact(
+    id: str,
+    artifact_id: str,
+    token: Optional[str] = Query(None),
+    request: Request = None,
+    user: Dict = Depends(get_orchestrator_user)
+):
+    # Support token in query parameter or standard auth
+    auth_user = user
+    if token and not auth_user:
+        payload = decode_access_token(token)
+        if payload and "sub" in payload:
+            u_row = query_one("SELECT * FROM users WHERE id = ?", (payload["sub"],))
+            if u_row:
+                auth_user = dict(u_row)
+
+    if not auth_user:
+        raise HTTPException(status_code=401, detail="Xác thực không hợp lệ để tải xuống artifact.")
+
+    task = query_one("SELECT * FROM development_tasks WHERE id = ? AND user_id = ?", (id, auth_user["id"]))
+    if not task:
+        raise HTTPException(status_code=404, detail="Task không tồn tại hoặc không thuộc quyền sở hữu.")
+
+    art = query_one(
+        """
+        SELECT * FROM task_artifacts 
+        WHERE id = ? AND (task_id = ? OR attempt_id IN (SELECT id FROM task_attempts WHERE task_id = ?))
+        """,
+        (artifact_id, id, id)
+    )
+    if not art:
+        raise HTTPException(status_code=404, detail="Artifact không tồn tại hoặc không thuộc về Task này.")
+
+    content = art.get("content") or ""
+    if not content and art.get("storage_path"):
+        storage_file = Path(art["storage_path"]).resolve()
+        if storage_file.is_file():
+            content = storage_file.read_text(encoding="utf-8", errors="replace")
+
+    raw_fname = art.get("file_path") or "artifact.txt"
+    base_fname = os.path.basename(raw_fname.replace("\\", "/"))
+    safe_fname = re.sub(r'[^a-zA-Z0-9_.-]', '_', base_fname) or "artifact.txt"
+    mime_type = art.get("mime_type") or "text/plain"
+
+    content_bytes = content.encode("utf-8")
+
+    return Response(
+        content=content_bytes,
+        media_type=mime_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_fname}"',
+            "Content-Length": str(len(content_bytes)),
+            "X-Artifact-Checksum": art.get("checksum_sha256") or ""
         }
     )
 
-    return {"success": True, "task_id": att["task_id"], "status": task_new_status}
+
+@orchestrator_router.post("/tasks/{id}/artifacts/retry", summary="Thử lưu lại Artifact từ attempt gần nhất nếu gặp lỗi storage")
+async def retry_task_artifact_storage(
+    id: str,
+    user: Dict = Depends(get_orchestrator_user)
+):
+    task = query_one("SELECT * FROM development_tasks WHERE id = ? AND user_id = ?", (id, user["id"]))
+    if not task:
+        raise HTTPException(status_code=404, detail="Task không tồn tại hoặc không thuộc quyền sở hữu.")
+
+    att_id = task.get("current_attempt_id")
+    if not att_id:
+        raise HTTPException(status_code=400, detail="Task chưa có attempt nào để retry artifact.")
+
+    att = query_one("SELECT * FROM task_attempts WHERE id = ?", (att_id,))
+    if not att:
+        raise HTTPException(status_code=404, detail="Attempt không tồn tại.")
+
+    existing = query_all("SELECT id FROM task_artifacts WHERE attempt_id = ?", (att_id,))
+    if existing:
+        if task.get("failure_code") == "ARTIFACT_STORAGE_ERROR":
+            new_status = "AWAITING_APPROVAL" if att["mode"] == "plan" else "REVIEW_REQUIRED"
+            execute_commit(
+                "UPDATE development_tasks SET status = ?, failure_code = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (new_status, id)
+            )
+        return {"success": True, "message": "Artifacts đã tồn tại sẵn.", "count": len(existing)}
+
+    recovered_content = None
+    plan_event = query_one(
+        "SELECT payload FROM task_events WHERE attempt_id = ? AND event_type = 'PLAN_CREATED' ORDER BY sequence_number DESC LIMIT 1",
+        (att_id,)
+    )
+    if plan_event and plan_event.get("payload"):
+        try:
+            p_data = json.loads(plan_event["payload"]) if isinstance(plan_event["payload"], str) else plan_event["payload"]
+            recovered_content = p_data.get("plan_markdown")
+        except Exception:
+            pass
+
+    if not recovered_content:
+        text_events = query_all(
+            "SELECT payload FROM task_events WHERE attempt_id = ? AND event_type = 'TEXT_DELTA' ORDER BY sequence_number ASC",
+            (att_id,)
+        )
+        if text_events:
+            chunks = []
+            for te in text_events:
+                try:
+                    p = json.loads(te["payload"]) if isinstance(te["payload"], str) else te["payload"]
+                    chunks.append(p.get("text_delta", ""))
+                except Exception:
+                    pass
+            if chunks:
+                recovered_content = "".join(chunks).strip()
+
+    if not recovered_content:
+        raise HTTPException(status_code=400, detail="Không tìm thấy nội dung phản hồi trong nhật ký sự kiện để phục hồi artifact.")
+
+    art_id = f"art_{uuid.uuid4().hex[:16]}"
+    is_review = any(term in (task.get("title", "") + " " + task.get("prompt", "")).lower() 
+                    for term in ("review", "đánh giá", "audit", "khảo sát", "kiểm tra", "inspect", "phân tích"))
+    fname = "codebase_review.md" if is_review else "plan.md"
+    disp = "Báo cáo Phân tích Codebase" if is_review else "Kế hoạch Thực thi (Plan)"
+    content_bytes = recovered_content.encode("utf-8")
+    checksum = hashlib.sha256(content_bytes).hexdigest()
+
+    execute_commit(
+        """
+        INSERT INTO task_artifacts (
+            id, task_id, attempt_id, artifact_type, display_name, file_path, 
+            mime_type, byte_size, checksum_sha256, content, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'text/markdown', ?, ?, ?, CURRENT_TIMESTAMP)
+        """,
+        (art_id, id, att_id, "review" if is_review else "plan", disp, fname, len(content_bytes), checksum, recovered_content)
+    )
+
+    new_status = "AWAITING_APPROVAL" if att["mode"] == "plan" else "REVIEW_REQUIRED"
+    execute_commit(
+        "UPDATE development_tasks SET status = ?, failure_code = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (new_status, id)
+    )
+
+    return {"success": True, "artifact_id": art_id, "file_path": fname, "recovered_bytes": len(content_bytes)}
+
 

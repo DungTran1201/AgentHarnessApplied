@@ -4,95 +4,24 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import Icon from '@/components/ui/Icon';
-
-interface NormalizedEvent {
-  event_id?: string;
-  sequence_number?: number;
-  event_type: string;
-  severity?: string;
-  payload: any;
-  created_at?: string;
-}
-
-interface VerificationStep {
-  id?: string;
-  step_name: string;
-  command: string;
-  status: 'PASSED' | 'FAILED' | 'ERROR' | 'SKIPPED_BY_POLICY' | 'NOT_RUN';
-  exit_code?: number;
-  duration_seconds?: number;
-  stdout_preview?: string;
-  stderr_preview?: string;
-  created_at?: string;
-}
-
-interface TaskAttempt {
-  id: string;
-  attempt_number: number;
-  status: string;
-  mode: string;
-  exit_code?: number;
-  duration_seconds?: number;
-  tokens_in?: number;
-  tokens_out?: number;
-  cost_estimate?: number;
-  git_branch?: string;
-  worktree_path?: string;
-  is_isolated?: number;
-  diff_stat?: string;
-  review_feedback?: string;
-  started_at: string;
-  finished_at?: string;
-}
-
-interface TaskDetail {
-  id: string;
-  project_id: string;
-  workspace_id: string;
-  title: string;
-  prompt: string;
-  status: string;
-  review_status?: string;
-  current_attempt_id?: string;
-  current_attempt?: TaskAttempt;
-  attempts: TaskAttempt[];
-  workspace?: {
-    id: string;
-    name: string;
-    local_path: string;
-    runner_id?: string;
-  };
-  artifacts: Array<{
-    id: string;
-    artifact_type: string;
-    file_path: string;
-    content?: string;
-    byte_size: number;
-  }>;
-  approvals: Array<{
-    id: string;
-    action_type: string;
-    decision: string;
-    description?: string;
-    decided_at: string;
-  }>;
-  verifications?: VerificationStep[];
-}
-
-const STATUS_CONFIG: Record<string, { label: string; bg: string; text: string; border: string }> = {
-  DRAFT: { label: 'Draft', bg: 'rgba(255,255,255,0.05)', text: '#94a3b8', border: 'rgba(255,255,255,0.1)' },
-  QUEUED: { label: 'Queued', bg: 'rgba(245,158,11,0.15)', text: '#fbbf24', border: 'rgba(245,158,11,0.3)' },
-  DISPATCHING: { label: 'Dispatching', bg: 'rgba(59,130,246,0.15)', text: '#60a5fa', border: 'rgba(59,130,246,0.3)' },
-  PLANNING: { label: 'Planning', bg: 'rgba(168,85,247,0.15)', text: '#c084fc', border: 'rgba(168,85,247,0.3)' },
-  AWAITING_APPROVAL: { label: 'Awaiting Approval', bg: 'rgba(245,158,11,0.2)', text: '#f59e0b', border: 'rgba(245,158,11,0.5)' },
-  RUNNING: { label: 'Running', bg: 'rgba(16,185,129,0.15)', text: '#34d399', border: 'rgba(16,185,129,0.3)' },
-  VERIFYING: { label: 'Verifying', bg: 'rgba(59,130,246,0.15)', text: '#60a5fa', border: 'rgba(59,130,246,0.3)' },
-  REVIEW_REQUIRED: { label: 'Review Required', bg: 'rgba(234,179,8,0.2)', text: '#eab308', border: 'rgba(234,179,8,0.5)' },
-  COMPLETED: { label: 'Completed', bg: 'rgba(16,185,129,0.2)', text: '#10b981', border: 'rgba(16,185,129,0.4)' },
-  FAILED: { label: 'Failed', bg: 'rgba(239,68,68,0.15)', text: '#f87171', border: 'rgba(239,68,68,0.3)' },
-  CANCELLING: { label: 'Cancelling...', bg: 'rgba(239,68,68,0.15)', text: '#f87171', border: 'rgba(239,68,68,0.3)' },
-  CANCELLED: { label: 'Cancelled', bg: 'rgba(148,163,184,0.15)', text: '#94a3b8', border: 'rgba(148,163,184,0.3)' },
-};
+import Toast, { ToastMessage } from '@/components/ui/Toast';
+import SafeMarkdown from '@/components/ui/SafeMarkdown';
+import {
+  TaskDetail,
+  TaskAttempt,
+  TaskArtifact,
+  NormalizedEvent,
+  VerificationStep,
+  formatBytes,
+  formatDuration,
+  formatDateTime,
+  getHumanTaskStatus,
+  getHumanRunnerStatus,
+  getHumanEventMeta,
+  isFirstOutputTimedOut,
+  getModeDescription,
+  buildRedactedDiagnostics
+} from '@/lib/taskObservability';
 
 function getAuthHeaders(): HeadersInit {
   const headers: Record<string, string> = {
@@ -117,17 +46,39 @@ export default function TaskDetailPage() {
   const [events, setEvents] = useState<NormalizedEvent[]>([]);
   const [diffContent, setDiffContent] = useState<string>('');
   const [actionLoading, setActionLoading] = useState(false);
+  const [retryArtifactLoading, setRetryArtifactLoading] = useState(false);
+
+  // Modals
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelReason, setCancelReason] = useState('Người dùng hủy từ web UI.');
   const [showRequestChangesModal, setShowRequestChangesModal] = useState(false);
   const [requestChangesFeedback, setRequestChangesFeedback] = useState('');
   const [selectedVerifStep, setSelectedVerifStep] = useState<VerificationStep | null>(null);
+  const [previewArtifact, setPreviewArtifact] = useState<TaskArtifact | null>(null);
 
+  // Artifacts list
+  const [artifactsList, setArtifactsList] = useState<TaskArtifact[]>([]);
+  const [artifactsLoading, setArtifactsLoading] = useState(false);
+
+  // Stream & Telemetry
   const streamTextRef = useRef<string>('');
   const [liveStreamText, setLiveStreamText] = useState<string>('');
+  const [showTechDetails, setShowTechDetails] = useState<boolean>(false);
+  const [eventFilter, setEventFilter] = useState<'ALL' | 'TOOLS' | 'LIFECYCLE'>('ALL');
+  const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
+  const [autoScroll, setAutoScroll] = useState<boolean>(true);
+  const [streamWaitingSeconds, setStreamWaitingSeconds] = useState<number>(0);
+  const [sseConnected, setSseConnected] = useState<boolean>(true);
+  const [toast, setToast] = useState<ToastMessage | null>(null);
+
   const seenSequences = useRef<Set<number>>(new Set());
   const terminalEndRef = useRef<HTMLDivElement>(null);
 
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    setToast({ message, type });
+  };
+
+  // Fetch task detail
   const fetchTaskDetail = useCallback(async () => {
     if (!id) return;
     try {
@@ -146,6 +97,7 @@ export default function TaskDetailPage() {
     }
   }, [id]);
 
+  // Fetch diff
   const fetchDiff = useCallback(async () => {
     if (!id) return;
     try {
@@ -162,10 +114,49 @@ export default function TaskDetailPage() {
     }
   }, [id]);
 
+  // Fetch real artifacts
+  const fetchArtifacts = useCallback(async () => {
+    if (!id) return;
+    setArtifactsLoading(true);
+    try {
+      const res = await fetch(`/api/v1/orchestrator/tasks/${id}/artifacts`, {
+        headers: getAuthHeaders(),
+        credentials: 'include'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setArtifactsList(Array.isArray(data) ? data : []);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setArtifactsLoading(false);
+    }
+  }, [id]);
+
   useEffect(() => {
     fetchTaskDetail();
     fetchDiff();
-  }, [fetchTaskDetail, fetchDiff]);
+    fetchArtifacts();
+  }, [fetchTaskDetail, fetchDiff, fetchArtifacts]);
+
+  // First output elapsed timer
+  useEffect(() => {
+    if (!task) return;
+    const isRunningWithoutOutput =
+      ['PLANNING', 'RUNNING', 'DISPATCHING'].includes(task.status) && !liveStreamText;
+
+    if (!isRunningWithoutOutput) {
+      setStreamWaitingSeconds(0);
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setStreamWaitingSeconds((prev) => prev + 1);
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [task?.status, liveStreamText]);
 
   // Setup Server-Sent Events (SSE) listener with replay
   useEffect(() => {
@@ -175,7 +166,6 @@ export default function TaskDetailPage() {
     let isMounted = true;
 
     const connectSSE = () => {
-      // Find maximum seen sequence number for replay offset
       let maxSeq = 0;
       seenSequences.current.forEach((seq) => {
         if (seq > maxSeq) maxSeq = seq;
@@ -183,6 +173,10 @@ export default function TaskDetailPage() {
 
       const sseUrl = `/api/v1/orchestrator/tasks/${id}/events?since_seq=${maxSeq}`;
       eventSource = new EventSource(sseUrl);
+
+      eventSource.onopen = () => {
+        if (isMounted) setSseConnected(true);
+      };
 
       eventSource.onmessage = (e) => {
         if (!isMounted) return;
@@ -196,12 +190,14 @@ export default function TaskDetailPage() {
 
       const eventNames = [
         'TASK_INITIALIZED',
+        'STEP_USER_INPUT',
         'TEXT_DELTA',
         'TOOL_CALL_START',
         'TOOL_CALL_END',
         'TOKEN_USAGE',
         'STATUS_TRANSITION',
         'DIAGNOSTIC_LOG',
+        'PLAN_CREATED',
         'VERIFICATION_REPORT',
         'TASK_COMPLETED',
         'TASK_FAILED',
@@ -222,8 +218,8 @@ export default function TaskDetailPage() {
       });
 
       eventSource.onerror = () => {
+        if (isMounted) setSseConnected(false);
         if (eventSource?.readyState === EventSource.CLOSED) {
-          // Reconnect after brief pause
           setTimeout(() => {
             if (isMounted) connectSSE();
           }, 3000);
@@ -244,28 +240,38 @@ export default function TaskDetailPage() {
       }
 
       const newEvt: NormalizedEvent = {
-        event_id: eventId || `evt_${Date.now()}`,
+        event_id: eventId || `evt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
         sequence_number: seqNum,
         event_type: evType,
-        payload
+        payload,
+        created_at: new Date().toISOString()
       };
 
       setEvents((prev) => [...prev, newEvt]);
 
-      // If text delta, append to streaming markdown output
+      // If text delta, append to streaming output
       if (evType === 'TEXT_DELTA' && payload?.text_delta) {
         streamTextRef.current += payload.text_delta;
         setLiveStreamText(streamTextRef.current);
       }
 
-      // If status transition, verification report or termination, refresh task details & diff
-      if (['STATUS_TRANSITION', 'TASK_COMPLETED', 'TASK_FAILED', 'TASK_TERMINATED', 'VERIFICATION_REPORT'].includes(evType)) {
+      // If status transition or terminal state, refresh details, diff and artifacts
+      if (
+        [
+          'STATUS_TRANSITION',
+          'TASK_COMPLETED',
+          'TASK_FAILED',
+          'TASK_TERMINATED',
+          'PLAN_CREATED',
+          'VERIFICATION_REPORT'
+        ].includes(evType)
+      ) {
         fetchTaskDetail();
         fetchDiff();
+        fetchArtifacts();
       }
 
-      // Auto-scroll to bottom of output
-      if (terminalEndRef.current) {
+      if (autoScroll && terminalEndRef.current) {
         terminalEndRef.current.scrollIntoView({ behavior: 'smooth' });
       }
     };
@@ -278,7 +284,7 @@ export default function TaskDetailPage() {
         eventSource.close();
       }
     };
-  }, [id, fetchTaskDetail, fetchDiff]);
+  }, [id, fetchTaskDetail, fetchDiff, fetchArtifacts, autoScroll]);
 
   // Actions
   const handleDispatch = async (mode: string = 'plan') => {
@@ -290,7 +296,11 @@ export default function TaskDetailPage() {
         credentials: 'include'
       });
       if (res.ok) {
+        showToast(`Tác vụ đã được chuyển giao thành công (${mode === 'plan' ? 'Read-Only Plan' : 'Accept-Edits'}).`, 'success');
         await fetchTaskDetail();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showToast(err.detail || 'Không thể điều phối tác vụ. Vui lòng kiểm tra Runner.', 'error');
       }
     } finally {
       setActionLoading(false);
@@ -312,7 +322,11 @@ export default function TaskDetailPage() {
       });
       if (res.ok) {
         setShowCancelModal(false);
+        showToast('Đã gửi lệnh hủy tác vụ tới Agent Runner.', 'info');
         await fetchTaskDetail();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showToast(err.detail || 'Không thể hủy tác vụ.', 'error');
       }
     } finally {
       setActionLoading(false);
@@ -336,6 +350,10 @@ export default function TaskDetailPage() {
         })
       });
       if (res.ok) {
+        showToast(
+          decision === 'APPROVED' ? 'Đã phê duyệt kế hoạch. Đang tiến hành thực thi mã nguồn...' : 'Đã từ chối kế hoạch.',
+          'success'
+        );
         await fetchTaskDetail();
       }
     } finally {
@@ -362,6 +380,14 @@ export default function TaskDetailPage() {
       if (res.ok) {
         setShowRequestChangesModal(false);
         setRequestChangesFeedback('');
+        showToast(
+          decision === 'APPROVE'
+            ? 'Đã nghiệm thu và chấp thuận các thay đổi!'
+            : decision === 'REQUEST_CHANGES'
+            ? 'Đã gửi yêu cầu chỉnh sửa và tạo attempt mới.'
+            : 'Đã từ chối thay đổi.',
+          'success'
+        );
         await fetchTaskDetail();
         await fetchDiff();
       }
@@ -370,39 +396,139 @@ export default function TaskDetailPage() {
     }
   };
 
+  const handleRetryArtifacts = async () => {
+    setRetryArtifactLoading(true);
+    try {
+      const res = await fetch(`/api/v1/orchestrator/tasks/${id}/artifacts/retry`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        credentials: 'include'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        showToast(data.message || 'Phục hồi Artifacts thành công!', 'success');
+        await fetchTaskDetail();
+        await fetchArtifacts();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showToast(err.detail || 'Không thể phục hồi artifacts.', 'error');
+      }
+    } finally {
+      setRetryArtifactLoading(false);
+    }
+  };
+
+  const handleCopyDiagnostics = () => {
+    if (!task) return;
+    const diag = buildRedactedDiagnostics(task, events);
+    navigator.clipboard.writeText(diag);
+    showToast('Đã sao chép báo cáo chẩn đoán (đã bảo mật / redact) vào clipboard!', 'success');
+  };
+
+  const handleCopyText = (text: string, label: string) => {
+    navigator.clipboard.writeText(text);
+    showToast(`Đã sao chép ${label}!`, 'success');
+  };
+
+  const handleOpenArtifactPreview = async (art: TaskArtifact) => {
+    if (art.content) {
+      setPreviewArtifact(art);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/v1/orchestrator/tasks/${id}/artifacts/${art.id}`, {
+        headers: getAuthHeaders(),
+        credentials: 'include'
+      });
+      if (res.ok) {
+        const detail = await res.json();
+        setPreviewArtifact(detail);
+      } else {
+        setPreviewArtifact(art);
+      }
+    } catch {
+      setPreviewArtifact(art);
+    }
+  };
+
+  const handleDownloadArtifact = (art: TaskArtifact) => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('ai_chan_token') : null;
+    const downloadUrl = `/api/v1/orchestrator/tasks/${id}/artifacts/${art.id}/download${
+      token ? `?token=${encodeURIComponent(token)}` : ''
+    }`;
+    window.open(downloadUrl, '_blank');
+  };
+
   if (loading) {
     return (
-      <div style={{ padding: '60px', textAlign: 'center', color: '#94a3b8' }}>
-        Đang tải thông tin chi tiết tác vụ...
+      <div style={{ padding: '80px', textAlign: 'center', color: '#94a3b8' }}>
+        <div style={{ marginBottom: '12px' }}>
+          <Icon name="terminal" size={28} style={{ color: '#3b82f6' }} />
+        </div>
+        <div style={{ fontSize: '14px', fontWeight: 500 }}>Đang tải thông tin chi tiết tác vụ...</div>
       </div>
     );
   }
 
   if (!task) {
     return (
-      <div style={{ padding: '60px', textAlign: 'center', color: '#f87171' }}>
-        Không tìm thấy tác vụ hoặc bạn không có quyền truy cập.
+      <div style={{ padding: '80px', textAlign: 'center', color: '#f87171' }}>
+        <Icon name="alert" size={32} style={{ marginBottom: '12px' }} />
+        <h2 style={{ fontSize: '18px', fontWeight: 600, margin: '0 0 8px' }}>Không tìm thấy tác vụ</h2>
+        <p style={{ color: '#94a3b8', fontSize: '13px', margin: 0 }}>
+          Tác vụ không tồn tại hoặc bạn không có quyền truy cập vào workspace này.
+        </p>
       </div>
     );
   }
 
-  const st = STATUS_CONFIG[task.status] || STATUS_CONFIG.DRAFT;
   const currentAtt = task.current_attempt;
+  const statusMeta = getHumanTaskStatus(task);
+  const runnerMeta = getHumanRunnerStatus(task.runner);
+  const modeInfo = getModeDescription(currentAtt?.mode, !!diffContent);
+  const isTimedOut = isFirstOutputTimedOut(streamWaitingSeconds, 30);
+
+  // Filter events
+  const filteredEvents = events.filter((ev) => {
+    if (!showTechDetails && ['DIAGNOSTIC_LOG', 'TOKEN_USAGE'].includes(ev.event_type)) {
+      return false;
+    }
+    if (eventFilter === 'TOOLS') {
+      return ev.event_type.startsWith('TOOL_');
+    }
+    if (eventFilter === 'LIFECYCLE') {
+      return !ev.event_type.startsWith('TOOL_') && ev.event_type !== 'TEXT_DELTA';
+    }
+    return true;
+  });
+
+  const toolEventsCount = events.filter((e) => e.event_type.startsWith('TOOL_')).length;
+  const lifecycleEventsCount = events.filter((e) => !e.event_type.startsWith('TOOL_') && e.event_type !== 'TEXT_DELTA').length;
 
   return (
     <div style={{ padding: '24px 32px', maxWidth: '1440px', margin: '0 auto', color: '#f1f5f9' }}>
-      {/* Top Breadcrumb & Status Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+      <Toast toast={toast} onClose={() => setToast(null)} />
+
+      {/* Top Breadcrumb & Actions Bar */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#94a3b8' }}>
           <Link href="/tasks" style={{ color: '#94a3b8', textDecoration: 'none' }}>Tasks</Link>
           <span>/</span>
-          <span style={{ color: '#f8fafc', fontWeight: 500 }}>{task.id}</span>
+          <span style={{ color: '#f8fafc', fontWeight: 600, fontFamily: 'monospace' }}>{task.id}</span>
+          <button
+            onClick={() => handleCopyText(task.id, 'Task ID')}
+            title="Sao chép Task ID"
+            style={{ background: 'transparent', border: 'none', color: '#64748b', cursor: 'pointer', padding: '2px' }}
+          >
+            <Icon name="copy" size={13} />
+          </button>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          {/* Retry / Dispatch Button */}
           {['DRAFT', 'FAILED', 'CANCELLED'].includes(task.status) && (
             <button
-              onClick={() => handleDispatch('plan')}
+              onClick={() => handleDispatch(currentAtt?.mode || 'plan')}
               disabled={actionLoading}
               style={{
                 display: 'flex',
@@ -414,15 +540,16 @@ export default function TaskDetailPage() {
                 border: 'none',
                 borderRadius: '6px',
                 fontSize: '13px',
-                fontWeight: 500,
+                fontWeight: 600,
                 cursor: 'pointer'
               }}
             >
               <Icon name="play" size={14} />
-              <span>{task.status === 'DRAFT' ? 'Dispatch Turn' : 'Retry Task'}</span>
+              <span>{task.status === 'DRAFT' ? 'Bắt đầu (Dispatch Turn)' : 'Thử lại (Retry Task)'}</span>
             </button>
           )}
 
+          {/* Cancel Button */}
           {['RUNNING', 'PLANNING', 'QUEUED', 'AWAITING_APPROVAL', 'DISPATCHING'].includes(task.status) && (
             <button
               onClick={() => setShowCancelModal(true)}
@@ -437,14 +564,75 @@ export default function TaskDetailPage() {
                 border: '1px solid rgba(239,68,68,0.3)',
                 borderRadius: '6px',
                 fontSize: '13px',
-                fontWeight: 500,
+                fontWeight: 600,
                 cursor: 'pointer'
               }}
             >
               <Icon name="stop" size={14} />
-              <span>Cancel Task</span>
+              <span>Hủy Tác Vụ</span>
             </button>
           )}
+
+          {/* View Diff Shortcut */}
+          <button
+            onClick={() => setActiveTab('diff')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '8px 14px',
+              background: '#1e293b',
+              color: '#94a3b8',
+              border: '1px solid #334155',
+              borderRadius: '6px',
+              fontSize: '13px',
+              cursor: 'pointer'
+            }}
+          >
+            <Icon name="git" size={14} />
+            <span>Xem Diff {diffContent ? '(Active)' : ''}</span>
+          </button>
+
+          {/* View Artifacts Shortcut */}
+          <button
+            onClick={() => setActiveTab('artifacts')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '8px 14px',
+              background: '#1e293b',
+              color: '#94a3b8',
+              border: '1px solid #334155',
+              borderRadius: '6px',
+              fontSize: '13px',
+              cursor: 'pointer'
+            }}
+          >
+            <Icon name="doc" size={14} />
+            <span>Artifacts ({artifactsList.length || task.artifacts?.length || 0})</span>
+          </button>
+
+          {/* Redacted Diagnostics Button */}
+          <button
+            onClick={handleCopyDiagnostics}
+            title="Sao chép toàn bộ thông tin chẩn đoán kỹ thuật (đã bảo mật)"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '8px 12px',
+              background: 'rgba(255,255,255,0.05)',
+              color: '#cbd5e1',
+              border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: '6px',
+              fontSize: '12px',
+              cursor: 'pointer'
+            }}
+          >
+            <Icon name="shield" size={14} />
+            <span>Copy Diagnostics</span>
+          </button>
         </div>
       </div>
 
@@ -458,94 +646,196 @@ export default function TaskDetailPage() {
           marginBottom: '20px'
         }}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px' }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.8fr) minmax(280px, 1fr)', gap: '24px' }}>
+          <div>
+            {/* Status & Mode badges */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px', flexWrap: 'wrap' }}>
+              <span
+                style={{
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  textTransform: 'uppercase',
+                  padding: '4px 12px',
+                  borderRadius: '6px',
+                  background: statusMeta.bg,
+                  color: statusMeta.color,
+                  border: `1px solid ${statusMeta.border}`,
+                  letterSpacing: '0.02em'
+                }}
+              >
+                {statusMeta.label}
+              </span>
+
               <span
                 style={{
                   fontSize: '11px',
-                  fontWeight: 600,
-                  textTransform: 'uppercase',
-                  padding: '3px 10px',
-                  borderRadius: '4px',
-                  background: st.bg,
-                  color: st.text,
-                  border: `1px solid ${st.border}`
+                  color: '#94a3b8',
+                  fontFamily: 'monospace',
+                  background: 'rgba(0,0,0,0.3)',
+                  padding: '4px 8px',
+                  borderRadius: '4px'
                 }}
               >
-                {st.label}
+                Status: {statusMeta.technical}
               </span>
 
-              {currentAtt?.mode && (
-                <span
-                  style={{
-                    fontSize: '12px',
-                    color: '#94a3b8',
-                    background: 'rgba(255,255,255,0.06)',
-                    padding: '3px 8px',
-                    borderRadius: '4px'
-                  }}
-                >
-                  Mode: {currentAtt.mode === 'plan' ? 'Read-Only Plan' : 'Accept-Edits'}
-                </span>
-              )}
+              <span
+                style={{
+                  fontSize: '12px',
+                  color: modeInfo.isReadOnly ? '#a855f7' : '#38bdf8',
+                  background: modeInfo.isReadOnly ? 'rgba(168,85,247,0.12)' : 'rgba(56,189,248,0.12)',
+                  border: `1px solid ${modeInfo.isReadOnly ? 'rgba(168,85,247,0.3)' : 'rgba(56,189,248,0.3)'}`,
+                  padding: '4px 10px',
+                  borderRadius: '4px',
+                  fontWeight: 600
+                }}
+              >
+                {modeInfo.modeLabel}
+              </span>
 
               <span style={{ fontSize: '13px', color: '#64748b' }}>
-                Attempt #{currentAtt?.attempt_number || 1}
+                Lượt chạy #{currentAtt?.attempt_number || 1}
               </span>
             </div>
 
-            <h1 style={{ fontSize: '20px', fontWeight: 600, margin: '0 0 8px', color: '#f8fafc' }}>
+            <h1 style={{ fontSize: '20px', fontWeight: 600, margin: '0 0 10px', color: '#f8fafc', lineHeight: 1.4 }}>
               {task.title}
             </h1>
 
-            <div style={{ fontSize: '13px', color: '#cbd5e1', background: 'rgba(0,0,0,0.2)', padding: '10px 14px', borderRadius: '6px', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
-              {task.prompt}
+            {/* Prompt Preview */}
+            <div
+              style={{
+                fontSize: '13px',
+                color: '#cbd5e1',
+                background: 'rgba(15,23,42,0.8)',
+                border: '1px solid #334155',
+                padding: '12px 16px',
+                borderRadius: '8px',
+                position: 'relative'
+              }}
+            >
+              <div style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', marginBottom: '6px', textTransform: 'uppercase' }}>
+                Yêu cầu của bạn:
+              </div>
+              <div style={{ fontFamily: 'monospace', whiteSpace: 'pre-wrap', lineHeight: 1.5, maxHeight: '120px', overflowY: 'auto' }}>
+                {task.prompt}
+              </div>
             </div>
           </div>
 
-          {/* Quick Metrics */}
+          {/* Quick Context & Runtime Telemetry Card */}
           <div
             style={{
               display: 'flex',
               flexDirection: 'column',
-              gap: '8px',
-              minWidth: '220px',
-              background: 'rgba(15,23,42,0.6)',
-              padding: '12px 16px',
+              gap: '10px',
+              background: 'rgba(15,23,42,0.7)',
+              padding: '16px',
               borderRadius: '8px',
               border: '1px solid #334155',
               fontSize: '12px'
             }}
           >
-            <div>
-              <span style={{ color: '#64748b' }}>Workspace: </span>
-              <span style={{ color: '#f8fafc', fontWeight: 500 }}>{task.workspace?.name || 'N/A'}</span>
+            {/* Runner Health */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingBottom: '8px', borderBottom: '1px solid #1e293b' }}>
+              <span style={{ color: '#64748b', fontWeight: 500 }}>Runner Status:</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span
+                  style={{
+                    width: '8px',
+                    height: '8px',
+                    borderRadius: '50%',
+                    background: runnerMeta.dotColor,
+                    display: 'inline-block'
+                  }}
+                />
+                <span style={{ color: runnerMeta.color, fontWeight: 600 }}>{runnerMeta.label}</span>
+              </div>
             </div>
+
+            {/* Workspace & Path */}
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ color: '#64748b' }}>Workspace:</span>
+                <span style={{ color: '#f8fafc', fontWeight: 600 }}>{task.workspace?.name || 'Chưa liên kết'}</span>
+              </div>
+              {task.workspace?.local_path && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px' }}>
+                  <span
+                    style={{
+                      fontFamily: 'monospace',
+                      fontSize: '11px',
+                      color: '#94a3b8',
+                      background: 'rgba(0,0,0,0.3)',
+                      padding: '2px 6px',
+                      borderRadius: '4px',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      maxWidth: '220px'
+                    }}
+                    title={task.workspace.local_path}
+                  >
+                    {task.workspace.local_path}
+                  </span>
+                  <button
+                    onClick={() => handleCopyText(task.workspace!.local_path, 'Đường dẫn Workspace')}
+                    title="Sao chép đường dẫn thư mục"
+                    style={{ background: 'transparent', border: 'none', color: '#60a5fa', cursor: 'pointer', padding: '2px' }}
+                  >
+                    <Icon name="copy" size={12} />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Branch */}
             {currentAtt?.git_branch && (
-              <div>
-                <span style={{ color: '#64748b' }}>Branch: </span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ color: '#64748b' }}>Branch:</span>
                 <span style={{ color: '#60a5fa', fontFamily: 'monospace' }}>{currentAtt.git_branch}</span>
               </div>
             )}
-            <div>
-              <span style={{ color: '#64748b' }}>Runtime: </span>
+
+            {/* Runtime */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ color: '#64748b' }}>Runtime Adapter:</span>
               <span style={{ color: '#f8fafc' }}>Antigravity CLI (agy)</span>
             </div>
-            {currentAtt?.duration_seconds && (
-              <div>
-                <span style={{ color: '#64748b' }}>Thời gian: </span>
-                <span style={{ color: '#f8fafc' }}>{currentAtt.duration_seconds}s</span>
+
+            {/* Timestamps */}
+            <div style={{ paddingTop: '8px', borderTop: '1px solid #1e293b', display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '11px', color: '#64748b' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Tạo lúc:</span>
+                <span style={{ color: '#cbd5e1' }}>{formatDateTime(task.created_at)}</span>
               </div>
-            )}
-            {currentAtt?.tokens_in !== undefined && currentAtt?.tokens_in !== null && (
-              <div>
-                <span style={{ color: '#64748b' }}>Token Usage: </span>
-                <span style={{ color: '#34d399' }}>
-                  {(currentAtt.tokens_in || 0) + (currentAtt.tokens_out || 0)} tokens
-                </span>
-              </div>
-            )}
+              {currentAtt?.started_at && (
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Bắt đầu:</span>
+                  <span style={{ color: '#cbd5e1' }}>{formatDateTime(currentAtt.started_at)}</span>
+                </div>
+              )}
+              {currentAtt?.first_event_at && (
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Output đầu tiên:</span>
+                  <span style={{ color: '#34d399' }}>{formatDateTime(currentAtt.first_event_at)}</span>
+                </div>
+              )}
+              {currentAtt?.duration_seconds !== undefined && currentAtt?.duration_seconds !== null && (
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Thời lượng:</span>
+                  <span style={{ color: '#f8fafc', fontWeight: 600 }}>{formatDuration(currentAtt.duration_seconds)}</span>
+                </div>
+              )}
+              {currentAtt?.tokens_in !== undefined && (
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Tokens:</span>
+                  <span style={{ color: '#38bdf8' }}>
+                    {(currentAtt.tokens_in || 0) + (currentAtt.tokens_out || 0)} tokens
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -561,15 +851,16 @@ export default function TaskDetailPage() {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
-              gap: '16px'
+              gap: '16px',
+              flexWrap: 'wrap'
             }}
           >
             <div>
               <div style={{ fontWeight: 600, color: '#fbbf24', fontSize: '14px' }}>
-                Kế hoạch thực thi đã sẵn sàng (Human-in-the-Loop)
+                Kế hoạch thực thi đã sẵn sàng (Human-in-the-Loop Gate)
               </div>
               <div style={{ fontSize: '12px', color: '#94a3b8', marginTop: '2px' }}>
-                Agent đã đọc cấu trúc code và xuất kế hoạch. Vui lòng xem xét trước khi cho phép ghi đè file.
+                Agent đã phân tích codebase và xuất bản kế hoạch. Bạn có thể xem xét kế hoạch trong tab Artifacts trước khi phê duyệt.
               </div>
             </div>
 
@@ -588,7 +879,7 @@ export default function TaskDetailPage() {
                   cursor: 'pointer'
                 }}
               >
-                Reject Plan
+                Từ chối kế hoạch
               </button>
 
               <button
@@ -601,11 +892,11 @@ export default function TaskDetailPage() {
                   border: 'none',
                   borderRadius: '6px',
                   fontSize: '13px',
-                  fontWeight: 500,
+                  fontWeight: 600,
                   cursor: 'pointer'
                 }}
               >
-                Approve & Execute Edits &rarr;
+                Phê duyệt & Cho phép sửa code &rarr;
               </button>
             </div>
           </div>
@@ -622,15 +913,16 @@ export default function TaskDetailPage() {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
-              gap: '16px'
+              gap: '16px',
+              flexWrap: 'wrap'
             }}
           >
             <div>
               <div style={{ fontWeight: 600, color: '#60a5fa', fontSize: '14px' }}>
-                Thay đổi hoàn thành — Cần kiểm tra Unified Diff
+                Thay đổi hoàn thành — Cần nghiệm thu Unified Diff
               </div>
               <div style={{ fontSize: '12px', color: '#94a3b8', marginTop: '2px' }}>
-                Các file đã được cập nhật thành công. Vui lòng xem xét các thay đổi bên dưới trước khi nghiệm thu.
+                Các file đã được cập nhật trên git worktree. Vui lòng kiểm tra tab Unified Diff trước khi chấp thuận.
               </div>
             </div>
 
@@ -648,7 +940,7 @@ export default function TaskDetailPage() {
                   cursor: 'pointer'
                 }}
               >
-                Reject
+                Từ chối
               </button>
 
               <button
@@ -665,7 +957,7 @@ export default function TaskDetailPage() {
                   cursor: 'pointer'
                 }}
               >
-                Request Changes...
+                Yêu cầu chỉnh sửa...
               </button>
 
               <button
@@ -678,29 +970,129 @@ export default function TaskDetailPage() {
                   border: 'none',
                   borderRadius: '6px',
                   fontSize: '13px',
-                  fontWeight: 500,
+                  fontWeight: 600,
                   cursor: 'pointer'
                 }}
               >
-                Approve & Accept Changes &rarr;
+                Chấp thuận & Merge Changes &rarr;
               </button>
             </div>
           </div>
         )}
       </div>
 
-      {/* Tabs */}
+      {/* Error & Guidance Banner (Section E) */}
+      {(task.status === 'FAILED' ||
+        task.dispatch_state === 'QUEUED_WAITING_FOR_RUNNER' ||
+        task.failure_code) && (
+        <div
+          style={{
+            background: 'rgba(239,68,68,0.1)',
+            border: '1px solid rgba(239,68,68,0.3)',
+            borderRadius: '10px',
+            padding: '16px 20px',
+            marginBottom: '20px',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: '14px'
+          }}
+        >
+          <div style={{ color: '#f87171', marginTop: '2px' }}>
+            <Icon name="alert" size={20} />
+          </div>
+
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 600, color: '#f87171', fontSize: '14px', marginBottom: '4px' }}>
+              {task.dispatch_state === 'QUEUED_WAITING_FOR_RUNNER'
+                ? 'Agent Runner chưa kết nối kênh điều phối'
+                : task.failure_code === 'EMPTY_RUNTIME_OUTPUT'
+                ? 'Runtime CLI kết thúc mà không phát sinh phản hồi (Empty Output)'
+                : task.failure_code === 'ARTIFACT_STORAGE_ERROR'
+                ? 'Sự cố lưu trữ Artifact kết quả'
+                : `Sự cố thực thi tác vụ: ${task.failure_code || 'FAILED'}`}
+            </div>
+
+            <div style={{ fontSize: '13px', color: '#cbd5e1', lineHeight: 1.5 }}>
+              {task.dispatch_state === 'QUEUED_WAITING_FOR_RUNNER' ? (
+                <span>
+                  Tác vụ đã được tạo nhưng Runner chưa mở kênh nhận task. Vui lòng kiểm tra và bật Agent Runner trên máy của bạn (chạy <code>python -m runner start</code>) hoặc đảm bảo kết nối mạng giữa Runner và Orchestrator không bị chặn.
+                </span>
+              ) : task.failure_code === 'EMPTY_RUNTIME_OUTPUT' ? (
+                <span>
+                  Tiến trình Antigravity CLI đã kết thúc nhưng không có output nào được ghi nhận. Điều này thường xảy ra khi CLI bị lỗi cấu hình, chưa đăng nhập GCP/ADC, hoặc workspace không cấp quyền đọc cho tiến trình.
+                </span>
+              ) : task.failure_code === 'ARTIFACT_STORAGE_ERROR' ? (
+                <span>
+                  Tác vụ đã hoàn tất nhưng gặp lỗi khi lưu file artifact vào cơ sở dữ liệu. Bạn có thể nhấn nút <strong>Thử lưu lại Artifact</strong> để hệ thống tự động trích xuất lại từ event stream mà không cần chạy lại tác vụ.
+                </span>
+              ) : (
+                <span>
+                  Tác vụ gặp lỗi trong quá trình thực thi. Bạn có thể sao chép thông tin chẩn đoán kỹ thuật để gửi cho đội hỗ trợ hoặc nhấn &quot;Thử lại tác vụ&quot;.
+                </span>
+              )}
+            </div>
+
+            {/* Actions for recovery */}
+            <div style={{ display: 'flex', gap: '10px', marginTop: '12px', alignItems: 'center' }}>
+              {task.failure_code === 'ARTIFACT_STORAGE_ERROR' && (
+                <button
+                  onClick={handleRetryArtifacts}
+                  disabled={retryArtifactLoading}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '6px 14px',
+                    background: '#2563eb',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '6px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}
+                >
+                  <Icon name="refresh" size={13} />
+                  <span>{retryArtifactLoading ? 'Đang thử lại...' : 'Thử lưu lại Artifact'}</span>
+                </button>
+              )}
+
+              <button
+                onClick={handleCopyDiagnostics}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '6px 14px',
+                  background: 'rgba(239,68,68,0.15)',
+                  color: '#f87171',
+                  border: '1px solid rgba(239,68,68,0.3)',
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                  fontWeight: 500,
+                  cursor: 'pointer'
+                }}
+              >
+                <Icon name="copy" size={13} />
+                <span>Sao chép chẩn đoán (Redacted)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tabs Navigation */}
       <div style={{ display: 'flex', borderBottom: '1px solid #334155', marginBottom: '20px' }}>
         <button
           onClick={() => setActiveTab('timeline')}
           style={{
-            padding: '10px 20px',
+            padding: '12px 20px',
             background: 'transparent',
             border: 'none',
             borderBottom: activeTab === 'timeline' ? '2px solid #3b82f6' : '2px solid transparent',
             color: activeTab === 'timeline' ? '#60a5fa' : '#94a3b8',
             fontSize: '14px',
-            fontWeight: 500,
+            fontWeight: 600,
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
@@ -714,13 +1106,13 @@ export default function TaskDetailPage() {
         <button
           onClick={() => setActiveTab('diff')}
           style={{
-            padding: '10px 20px',
+            padding: '12px 20px',
             background: 'transparent',
             border: 'none',
             borderBottom: activeTab === 'diff' ? '2px solid #3b82f6' : '2px solid transparent',
             color: activeTab === 'diff' ? '#60a5fa' : '#94a3b8',
             fontSize: '14px',
-            fontWeight: 500,
+            fontWeight: 600,
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
@@ -734,13 +1126,13 @@ export default function TaskDetailPage() {
         <button
           onClick={() => setActiveTab('verifications')}
           style={{
-            padding: '10px 20px',
+            padding: '12px 20px',
             background: 'transparent',
             border: 'none',
             borderBottom: activeTab === 'verifications' ? '2px solid #3b82f6' : '2px solid transparent',
             color: activeTab === 'verifications' ? '#60a5fa' : '#94a3b8',
             fontSize: '14px',
-            fontWeight: 500,
+            fontWeight: 600,
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
@@ -754,13 +1146,13 @@ export default function TaskDetailPage() {
         <button
           onClick={() => setActiveTab('artifacts')}
           style={{
-            padding: '10px 20px',
+            padding: '12px 20px',
             background: 'transparent',
             border: 'none',
             borderBottom: activeTab === 'artifacts' ? '2px solid #3b82f6' : '2px solid transparent',
             color: activeTab === 'artifacts' ? '#60a5fa' : '#94a3b8',
             fontSize: '14px',
-            fontWeight: 500,
+            fontWeight: 600,
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
@@ -768,13 +1160,15 @@ export default function TaskDetailPage() {
           }}
         >
           <Icon name="doc" size={16} />
-          <span>Artifacts ({task.artifacts?.length || 0})</span>
+          <span>Artifacts ({artifactsList.length || task.artifacts?.length || 0})</span>
         </button>
       </div>
 
-      {/* Tab 1: Live Output & Timeline */}
+      {/* ========================================================================= */}
+      {/* TAB 1: OUTPUT & TIMELINE (Section B & C) */}
+      {/* ========================================================================= */}
       {activeTab === 'timeline' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '20px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.25fr) minmax(360px, 1fr)', gap: '20px' }}>
           {/* Left Column: Markdown / Agent Text Output */}
           <div
             style={{
@@ -784,33 +1178,123 @@ export default function TaskDetailPage() {
               padding: '16px',
               display: 'flex',
               flexDirection: 'column',
-              minHeight: '480px'
+              minHeight: '520px'
             }}
           >
-            <div style={{ fontSize: '13px', fontWeight: 600, color: '#94a3b8', marginBottom: '12px', borderBottom: '1px solid #1e293b', paddingBottom: '8px' }}>
-              Agent Text Stream (Antigravity Output)
+            {/* Output header bar */}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                paddingBottom: '10px',
+                borderBottom: '1px solid #1e293b',
+                marginBottom: '12px'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '13px', fontWeight: 600, color: '#f8fafc' }}>
+                  Agent Response Stream (Antigravity Output)
+                </span>
+                {!sseConnected && (
+                  <span style={{ fontSize: '11px', color: '#f87171', background: 'rgba(239,68,68,0.15)', padding: '2px 6px', borderRadius: '4px' }}>
+                    Mất kết nối SSE
+                  </span>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#94a3b8', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={autoScroll}
+                    onChange={(e) => setAutoScroll(e.target.checked)}
+                  />
+                  <span>Tự cuộn</span>
+                </label>
+
+                {liveStreamText && (
+                  <button
+                    onClick={() => handleCopyText(liveStreamText, 'nội dung phản hồi')}
+                    title="Sao chép toàn bộ nội dung stream"
+                    style={{
+                      background: '#1e293b',
+                      border: '1px solid #334155',
+                      color: '#cbd5e1',
+                      padding: '4px 8px',
+                      borderRadius: '4px',
+                      fontSize: '11px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}
+                  >
+                    <Icon name="copy" size={12} />
+                    <span>Copy</span>
+                  </button>
+                )}
+              </div>
             </div>
 
+            {/* Output content area */}
             <div
               style={{
                 flex: 1,
                 overflowY: 'auto',
-                fontFamily: 'monospace',
-                fontSize: '13px',
-                lineHeight: 1.6,
-                color: '#e2e8f0',
-                whiteSpace: 'pre-wrap',
-                maxHeight: '600px'
+                maxHeight: '620px',
+                paddingRight: '6px'
               }}
             >
               {liveStreamText ? (
-                liveStreamText
+                <SafeMarkdown content={liveStreamText} />
+              ) : ['RUNNING', 'PLANNING', 'DISPATCHING'].includes(task.status) ? (
+                <div style={{ padding: '40px 20px', textAlign: 'center' }}>
+                  {!isTimedOut ? (
+                    <div>
+                      <div style={{ color: '#60a5fa', fontSize: '14px', fontWeight: 600, marginBottom: '6px' }}>
+                        Đang chờ phản hồi đầu tiên từ Antigravity CLI... ({streamWaitingSeconds}s)
+                      </div>
+                      <div style={{ color: '#64748b', fontSize: '12px' }}>
+                        Agent Runner đã nhận task và đang khởi động tiến trình headless...
+                      </div>
+                    </div>
+                  ) : (
+                    <div
+                      style={{
+                        background: 'rgba(245,158,11,0.1)',
+                        border: '1px solid rgba(245,158,11,0.3)',
+                        borderRadius: '8px',
+                        padding: '16px',
+                        textAlign: 'left'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#fbbf24', fontWeight: 600, marginBottom: '6px' }}>
+                        <Icon name="alert" size={16} />
+                        <span>Thời gian chờ phản hồi đầu tiên vượt quá 30 giây ({streamWaitingSeconds}s)</span>
+                      </div>
+                      <p style={{ margin: '0 0 10px', fontSize: '12px', color: '#cbd5e1', lineHeight: 1.5 }}>
+                        Tiến trình CLI đang mất nhiều thời gian hơn dự kiến để sinh token đầu tiên. Điều này thường do CLI đang phân tích một repository lớn hoặc Runner đang tải thêm công cụ.
+                      </p>
+                      <div style={{ fontSize: '12px', color: '#94a3b8' }}>
+                        • Nếu Runner bị treo, bạn có thể kiểm tra terminal trên máy host hoặc nhấn <strong>Hủy Tác Vụ</strong>.<br />
+                        • Bạn cũng có thể bật <strong>Thông tin kỹ thuật</strong> bên phải để xem log tiến trình.
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : task.failure_code === 'EMPTY_RUNTIME_OUTPUT' ? (
+                <div style={{ padding: '40px 20px', textAlign: 'center', color: '#f87171' }}>
+                  <Icon name="alert" size={24} style={{ marginBottom: '8px' }} />
+                  <div style={{ fontSize: '14px', fontWeight: 600 }}>Tác vụ kết thúc không có phản hồi văn bản</div>
+                  <div style={{ fontSize: '12px', color: '#94a3b8', marginTop: '4px' }}>
+                    Runtime Antigravity CLI đã thoát nhưng không trả về bất kỳ text stream nào.
+                  </div>
+                </div>
               ) : (
-                <span style={{ color: '#475569' }}>
-                  {['RUNNING', 'PLANNING'].includes(task.status)
-                    ? 'Đang chờ luồng đầu ra từ Agent Runner...'
-                    : 'Chưa có dữ liệu stream.'}
-                </span>
+                <div style={{ padding: '60px 20px', textAlign: 'center', color: '#64748b' }}>
+                  Chưa có dữ liệu stream nào được ghi nhận.
+                </div>
               )}
               <div ref={terminalEndRef} />
             </div>
@@ -823,26 +1307,81 @@ export default function TaskDetailPage() {
               border: '1px solid #334155',
               borderRadius: '8px',
               padding: '16px',
-              maxHeight: '660px',
-              overflowY: 'auto'
+              display: 'flex',
+              flexDirection: 'column',
+              maxHeight: '700px'
             }}
           >
-            <div style={{ fontSize: '13px', fontWeight: 600, color: '#94a3b8', marginBottom: '12px', borderBottom: '1px solid #334155', paddingBottom: '8px' }}>
-              Normalized Domain Events ({events.length})
+            {/* Timeline Filter and Controls */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px', borderBottom: '1px solid #334155', paddingBottom: '10px' }}>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <button
+                  onClick={() => setEventFilter('ALL')}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: '4px',
+                    border: 'none',
+                    background: eventFilter === 'ALL' ? '#2563eb' : '#334155',
+                    color: eventFilter === 'ALL' ? '#fff' : '#94a3b8',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}
+                >
+                  Tất cả ({events.length})
+                </button>
+                <button
+                  onClick={() => setEventFilter('TOOLS')}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: '4px',
+                    border: 'none',
+                    background: eventFilter === 'TOOLS' ? '#2563eb' : '#334155',
+                    color: eventFilter === 'TOOLS' ? '#fff' : '#94a3b8',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}
+                >
+                  Công cụ ({toolEventsCount})
+                </button>
+                <button
+                  onClick={() => setEventFilter('LIFECYCLE')}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: '4px',
+                    border: 'none',
+                    background: eventFilter === 'LIFECYCLE' ? '#2563eb' : '#334155',
+                    color: eventFilter === 'LIFECYCLE' ? '#fff' : '#94a3b8',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}
+                >
+                  Trạng thái ({lifecycleEventsCount})
+                </button>
+              </div>
+
+              <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#94a3b8', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={showTechDetails}
+                  onChange={(e) => setShowTechDetails(e.target.checked)}
+                />
+                <span>Thông tin kỹ thuật</span>
+              </label>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {events.length === 0 ? (
-                <div style={{ color: '#64748b', fontSize: '13px', textAlign: 'center', padding: '20px' }}>
-                  Chưa có sự kiện nào được ghi nhận.
+            {/* Events list */}
+            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {filteredEvents.length === 0 ? (
+                <div style={{ color: '#64748b', fontSize: '13px', textAlign: 'center', padding: '40px' }}>
+                  Chưa có sự kiện nào trong bộ lọc này.
                 </div>
               ) : (
-                events.map((ev, idx) => {
-                  let badgeColor = '#94a3b8';
-                  if (ev.event_type.includes('COMPLETED')) badgeColor = '#34d399';
-                  if (ev.event_type.includes('FAILED')) badgeColor = '#f87171';
-                  if (ev.event_type.includes('TOOL')) badgeColor = '#60a5fa';
-                  if (ev.event_type.includes('APPROVAL')) badgeColor = '#fbbf24';
+                filteredEvents.map((ev, idx) => {
+                  const meta = getHumanEventMeta(ev);
+                  const isExpanded = ev.event_id ? expandedEvents.has(ev.event_id) : false;
 
                   return (
                     <div
@@ -856,27 +1395,82 @@ export default function TaskDetailPage() {
                       }}
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                        <span style={{ fontWeight: 600, color: badgeColor }}>
-                          {ev.event_type}
-                        </span>
-                        {ev.sequence_number && (
-                          <span style={{ color: '#64748b' }}>#{ev.sequence_number}</span>
-                        )}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span
+                            style={{
+                              fontSize: '10px',
+                              fontWeight: 700,
+                              textTransform: 'uppercase',
+                              padding: '2px 6px',
+                              borderRadius: '4px',
+                              background: 'rgba(255,255,255,0.06)',
+                              color: meta.badgeColor,
+                              border: `1px solid ${meta.badgeColor}40`
+                            }}
+                          >
+                            {meta.badge}
+                          </span>
+                          <span style={{ fontWeight: 600, color: '#f8fafc' }}>
+                            {meta.title}
+                          </span>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: '#64748b' }}>
+                          {ev.sequence_number && <span>#{ev.sequence_number}</span>}
+                          {ev.created_at && (
+                            <span>{new Date(ev.created_at).toLocaleTimeString('vi-VN')}</span>
+                          )}
+                        </div>
                       </div>
 
+                      <div style={{ color: '#cbd5e1', fontSize: '12px', lineHeight: 1.4, margin: '4px 0' }}>
+                        {meta.detail}
+                      </div>
+
+                      {/* Expandable Technical Details Button */}
                       {ev.payload && (
-                        <div style={{ fontFamily: 'monospace', color: '#cbd5e1', fontSize: '11px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                          {ev.event_type === 'TOOL_CALL_START' && (
-                            <div>Tool: <span style={{ color: '#60a5fa' }}>{ev.payload.tool_name}</span></div>
-                          )}
-                          {ev.event_type === 'TOOL_CALL_END' && (
-                            <div>Duration: {ev.payload.duration_seconds}s | Status: {ev.payload.state}</div>
-                          )}
-                          {ev.event_type === 'TOKEN_USAGE' && (
-                            <div>Tokens: {ev.payload.total_tokens} (In: {ev.payload.input_tokens}, Out: {ev.payload.output_tokens})</div>
-                          )}
-                          {['DIAGNOSTIC_LOG', 'STATUS_TRANSITION'].includes(ev.event_type) && (
-                            <div>{JSON.stringify(ev.payload)}</div>
+                        <div style={{ marginTop: '6px' }}>
+                          <button
+                            onClick={() => {
+                              if (!ev.event_id) return;
+                              const next = new Set(expandedEvents);
+                              if (next.has(ev.event_id)) next.delete(ev.event_id);
+                              else next.add(ev.event_id);
+                              setExpandedEvents(next);
+                            }}
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              color: '#60a5fa',
+                              fontSize: '11px',
+                              cursor: 'pointer',
+                              padding: 0,
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                          >
+                            <Icon name={isExpanded ? 'chevronUp' : 'chevronDown'} size={12} />
+                            <span>{isExpanded ? 'Ẩn chi tiết kỹ thuật' : 'Xem payload kỹ thuật'}</span>
+                          </button>
+
+                          {isExpanded && (
+                            <pre
+                              style={{
+                                margin: '6px 0 0',
+                                padding: '8px',
+                                background: '#020617',
+                                border: '1px solid #1e293b',
+                                borderRadius: '4px',
+                                fontSize: '11px',
+                                color: '#94a3b8',
+                                overflowX: 'auto',
+                                maxHeight: '160px',
+                                whiteSpace: 'pre-wrap'
+                              }}
+                            >
+                              {JSON.stringify(ev.payload, null, 2)}
+                            </pre>
                           )}
                         </div>
                       )}
@@ -889,7 +1483,9 @@ export default function TaskDetailPage() {
         </div>
       )}
 
-      {/* Tab 2: Unified Diff Viewer */}
+      {/* ========================================================================= */}
+      {/* TAB 2: UNIFIED DIFF VIEWER (Section D) */}
+      {/* ========================================================================= */}
       {activeTab === 'diff' && (
         <div
           style={{
@@ -940,6 +1536,7 @@ export default function TaskDetailPage() {
             </div>
           )}
 
+          {/* Diff Content vs Empty Mode Explanation */}
           {diffContent ? (
             <div style={{ fontFamily: 'monospace', fontSize: '13px', overflowX: 'auto' }}>
               {diffContent.split('\n').map((line, idx) => {
@@ -974,14 +1571,47 @@ export default function TaskDetailPage() {
               })}
             </div>
           ) : (
-            <div style={{ color: '#64748b', textAlign: 'center', padding: '40px' }}>
-              Chưa có thay đổi nào được ghi nhận cho attempt này.
+            <div
+              style={{
+                textAlign: 'center',
+                padding: '60px 20px',
+                background: 'rgba(15,23,42,0.4)',
+                borderRadius: '8px',
+                border: '1px dashed #334155'
+              }}
+            >
+              <Icon name={modeInfo.isReadOnly ? 'doc' : 'git'} size={32} style={{ color: '#64748b', marginBottom: '12px' }} />
+              <div style={{ fontSize: '15px', fontWeight: 600, color: '#f8fafc', marginBottom: '6px' }}>
+                {modeInfo.isReadOnly ? 'Chế độ Read-Only Plan' : 'Không có thay đổi mã nguồn'}
+              </div>
+              <p style={{ color: '#94a3b8', fontSize: '13px', maxWidth: '540px', margin: '0 auto 16px', lineHeight: 1.5 }}>
+                {modeInfo.emptyDiffMessage}
+              </p>
+              {modeInfo.isReadOnly && (
+                <button
+                  onClick={() => setActiveTab('artifacts')}
+                  style={{
+                    padding: '8px 16px',
+                    background: '#2563eb',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '6px',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}
+                >
+                  Mở Báo Cáo Kế Hoạch trong tab Artifacts &rarr;
+                </button>
+              )}
             </div>
           )}
         </div>
       )}
 
-      {/* Tab: Verification Pipeline */}
+      {/* ========================================================================= */}
+      {/* TAB 3: VERIFICATION PIPELINE (Section D) */}
+      {/* ========================================================================= */}
       {activeTab === 'verifications' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           <div
@@ -995,7 +1625,7 @@ export default function TaskDetailPage() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
               <div>
                 <h3 style={{ margin: 0, fontSize: '16px', color: '#f8fafc', fontWeight: 600 }}>
-                  Verification Pipeline (Automated Quality & Policy Gates)
+                  Verification Pipeline (Quality & Policy Gates)
                 </h3>
                 <p style={{ margin: '4px 0 0', fontSize: '13px', color: '#94a3b8' }}>
                   Các bước kiểm thử tự động (Lint, Type-Check, Test Suite, Build) thực thi trong môi trường cô lập trước khi review.
@@ -1022,7 +1652,7 @@ export default function TaskDetailPage() {
             </div>
 
             {/* Grid of Steps */}
-            {(!task.verifications || task.verifications.length === 0) ? (
+            {!task.verifications || task.verifications.length === 0 ? (
               <div style={{ color: '#64748b', textAlign: 'center', padding: '40px' }}>
                 {task.status === 'VERIFYING'
                   ? 'Đang thực thi các bước kiểm thử trong Runner...'
@@ -1100,7 +1730,7 @@ export default function TaskDetailPage() {
             )}
           </div>
 
-          {/* Selected step details modal / preview */}
+          {/* Selected step details inspector */}
           {selectedVerifStep && (
             <div
               style={{
@@ -1144,62 +1774,290 @@ export default function TaskDetailPage() {
         </div>
       )}
 
-      {/* Tab 3: Artifacts */}
+      {/* ========================================================================= */}
+      {/* TAB 4: ARTIFACTS (Section D) */}
+      {/* ========================================================================= */}
       {activeTab === 'artifacts' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {task.artifacts && task.artifacts.length > 0 ? (
-            task.artifacts.map((art) => (
-              <div
-                key={art.id}
-                style={{
-                  background: '#1e293b',
-                  border: '1px solid #334155',
-                  borderRadius: '8px',
-                  padding: '16px',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center'
-                }}
-              >
-                <div>
-                  <div style={{ fontWeight: 600, color: '#f8fafc', fontSize: '14px' }}>
-                    {art.file_path}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: '16px', color: '#f8fafc', fontWeight: 600 }}>
+                Deliverables & Artifacts ({artifactsList.length})
+              </h3>
+              <p style={{ margin: '4px 0 0', fontSize: '13px', color: '#94a3b8' }}>
+                Các báo cáo, kế hoạch phân tích và tệp đầu ra được lưu trữ chính thức từ các lượt chạy của tác vụ.
+              </p>
+            </div>
+
+            <button
+              onClick={fetchArtifacts}
+              disabled={artifactsLoading}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '6px 14px',
+                background: '#1e293b',
+                color: '#cbd5e1',
+                border: '1px solid #334155',
+                borderRadius: '6px',
+                fontSize: '12px',
+                cursor: 'pointer'
+              }}
+            >
+              <Icon name="refresh" size={13} />
+              <span>{artifactsLoading ? 'Đang tải...' : 'Làm mới'}</span>
+            </button>
+          </div>
+
+          {artifactsList.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {artifactsList.map((art) => (
+                <div
+                  key={art.id}
+                  style={{
+                    background: '#1e293b',
+                    border: '1px solid #334155',
+                    borderRadius: '8px',
+                    padding: '16px 20px',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: '16px',
+                    flexWrap: 'wrap'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                    <div
+                      style={{
+                        width: '36px',
+                        height: '36px',
+                        borderRadius: '8px',
+                        background: 'rgba(59,130,246,0.15)',
+                        color: '#60a5fa',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                      }}
+                    >
+                      <Icon name="doc" size={18} />
+                    </div>
+
+                    <div>
+                      <div style={{ fontWeight: 600, color: '#f8fafc', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span>{art.display_name || art.file_path}</span>
+                        <span
+                          style={{
+                            fontSize: '11px',
+                            fontWeight: 500,
+                            padding: '2px 8px',
+                            borderRadius: '4px',
+                            background: 'rgba(255,255,255,0.06)',
+                            color: '#94a3b8'
+                          }}
+                        >
+                          {art.artifact_type}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#94a3b8', marginTop: '4px', display: 'flex', gap: '12px' }}>
+                        <span>Kích cỡ: {formatBytes(art.byte_size)}</span>
+                        <span>Ngày tạo: {formatDateTime(art.created_at)}</span>
+                        {art.checksum_sha256 && (
+                          <span style={{ fontFamily: 'monospace' }}>SHA: {art.checksum_sha256.slice(0, 8)}...</span>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  <div style={{ fontSize: '12px', color: '#94a3b8', marginTop: '4px' }}>
-                    Type: {art.artifact_type} | Size: {art.byte_size} bytes
+
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <button
+                      onClick={() => handleOpenArtifactPreview(art)}
+                      style={{
+                        padding: '6px 14px',
+                        background: '#334155',
+                        color: '#f8fafc',
+                        border: 'none',
+                        borderRadius: '6px',
+                        fontSize: '12px',
+                        fontWeight: 500,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px'
+                      }}
+                    >
+                      <Icon name="terminal" size={13} />
+                      <span>Xem trực tiếp</span>
+                    </button>
+
+                    <button
+                      onClick={() => handleDownloadArtifact(art)}
+                      style={{
+                        padding: '6px 14px',
+                        background: '#2563eb',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '6px',
+                        fontSize: '12px',
+                        fontWeight: 500,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px'
+                      }}
+                    >
+                      <Icon name="external" size={13} />
+                      <span>Tải xuống</span>
+                    </button>
                   </div>
                 </div>
-
-                {art.content && (
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(art.content || '');
-                      alert('Đã sao chép nội dung artifact!');
-                    }}
-                    style={{
-                      padding: '6px 14px',
-                      background: '#334155',
-                      color: '#f8fafc',
-                      border: 'none',
-                      borderRadius: '6px',
-                      fontSize: '12px',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    Copy Content
-                  </button>
-                )}
-              </div>
-            ))
+              ))}
+            </div>
           ) : (
-            <div style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>
-              Không có artifacts nào cho task này.
+            <div
+              style={{
+                textAlign: 'center',
+                padding: '60px 20px',
+                background: 'rgba(15,23,42,0.4)',
+                borderRadius: '8px',
+                border: '1px dashed #334155',
+                color: '#64748b'
+              }}
+            >
+              <Icon name="doc" size={32} style={{ marginBottom: '12px' }} />
+              <div style={{ fontSize: '14px', fontWeight: 600, color: '#94a3b8', marginBottom: '4px' }}>
+                Chưa có artifact nào cho task này
+              </div>
+              <p style={{ fontSize: '13px', margin: 0 }}>
+                Khi Agent tạo báo cáo kế hoạch hoặc review, các tệp phân tích sẽ tự động xuất hiện tại đây.
+              </p>
             </div>
           )}
         </div>
       )}
 
-      {/* Cancel Confirmation Modal */}
+      {/* ========================================================================= */}
+      {/* ARTIFACT PREVIEW MODAL */}
+      {/* ========================================================================= */}
+      {previewArtifact && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.75)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 100,
+            padding: '24px'
+          }}
+        >
+          <div
+            style={{
+              background: '#0f172a',
+              border: '1px solid #334155',
+              borderRadius: '12px',
+              maxWidth: '860px',
+              width: '100%',
+              maxHeight: '85vh',
+              display: 'flex',
+              flexDirection: 'column',
+              boxShadow: '0 20px 25px -5px rgba(0,0,0,0.5)'
+            }}
+          >
+            {/* Modal Header */}
+            <div
+              style={{
+                padding: '16px 20px',
+                borderBottom: '1px solid #334155',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <Icon name="doc" size={18} style={{ color: '#3b82f6' }} />
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 600, color: '#f8fafc' }}>
+                    {previewArtifact.display_name || previewArtifact.file_path}
+                  </h3>
+                  <div style={{ fontSize: '11px', color: '#94a3b8' }}>
+                    {previewArtifact.artifact_type} • {formatBytes(previewArtifact.byte_size)}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                {previewArtifact.content && (
+                  <button
+                    onClick={() => handleCopyText(previewArtifact.content!, 'nội dung artifact')}
+                    style={{
+                      padding: '6px 12px',
+                      background: '#1e293b',
+                      border: '1px solid #334155',
+                      color: '#cbd5e1',
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}
+                  >
+                    <Icon name="copy" size={12} />
+                    <span>Copy</span>
+                  </button>
+                )}
+
+                <button
+                  onClick={() => handleDownloadArtifact(previewArtifact)}
+                  style={{
+                    padding: '6px 12px',
+                    background: '#2563eb',
+                    border: 'none',
+                    color: '#fff',
+                    borderRadius: '6px',
+                    fontSize: '12px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Tải xuống
+                </button>
+
+                <button
+                  onClick={() => setPreviewArtifact(null)}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#94a3b8',
+                    cursor: 'pointer',
+                    fontSize: '18px',
+                    padding: '4px 8px'
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body */}
+            <div style={{ padding: '20px', overflowY: 'auto', flex: 1 }}>
+              {previewArtifact.content ? (
+                <SafeMarkdown content={previewArtifact.content} />
+              ) : (
+                <div style={{ textAlign: 'center', padding: '40px', color: '#94a3b8' }}>
+                  Nội dung tệp nhị phân hoặc không thể hiển thị trực tiếp. Vui lòng tải xuống tệp để xem.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* CANCEL MODAL */}
+      {/* ========================================================================= */}
       {showCancelModal && (
         <div
           style={{
@@ -1229,7 +2087,7 @@ export default function TaskDetailPage() {
               Xác nhận hủy tác vụ
             </h3>
             <p style={{ fontSize: '13px', color: '#94a3b8', margin: '0 0 16px' }}>
-              Hệ thống sẽ gửi tín hiệu hủy (SIGTERM / process tree kill) tới Agent Runner để dọn dẹp tiến trình.
+              Hệ thống sẽ gửi tín hiệu hủy (SIGTERM / process tree kill) tới Agent Runner để dọn dẹp tiến trình Antigravity CLI.
             </p>
 
             <div style={{ marginBottom: '16px' }}>
@@ -1276,7 +2134,7 @@ export default function TaskDetailPage() {
                   border: 'none',
                   color: '#fff',
                   borderRadius: '6px',
-                  fontWeight: 500,
+                  fontWeight: 600,
                   cursor: 'pointer',
                   fontSize: '13px'
                 }}
@@ -1288,21 +2146,21 @@ export default function TaskDetailPage() {
         </div>
       )}
 
-      {/* Request Changes Modal */}
+      {/* ========================================================================= */}
+      {/* REQUEST CHANGES MODAL */}
+      {/* ========================================================================= */}
       {showRequestChangesModal && (
         <div
           style={{
             position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
+            inset: 0,
             background: 'rgba(0,0,0,0.7)',
+            backdropFilter: 'blur(4px)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            zIndex: 1000,
-            backdropFilter: 'blur(4px)'
+            zIndex: 100,
+            padding: '20px'
           }}
         >
           <div
@@ -1337,7 +2195,7 @@ export default function TaskDetailPage() {
             </div>
 
             <p style={{ fontSize: '13px', color: '#94a3b8', margin: '0 0 16px 0', lineHeight: 1.5 }}>
-              Cung cấp phản hồi chi tiết cho Agent. Phản hồi này sẽ được lưu vào lịch sử review và chuyển tiếp tới lượt chạy tiếp theo (follow-up attempt) để Agent tiếp tục chỉnh sửa trên worktree.
+              Cung cấp phản hồi chi tiết cho Agent. Phản hồi này sẽ được chuyển tiếp tới lượt chạy tiếp theo (follow-up attempt) để Agent tiếp tục chỉnh sửa trên worktree.
             </p>
 
             <div style={{ marginBottom: '20px' }}>
@@ -1388,7 +2246,7 @@ export default function TaskDetailPage() {
                   border: 'none',
                   color: '#fff',
                   borderRadius: '6px',
-                  fontWeight: 500,
+                  fontWeight: 600,
                   cursor: requestChangesFeedback.trim() ? 'pointer' : 'not-allowed',
                   fontSize: '13px'
                 }}

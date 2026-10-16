@@ -71,19 +71,39 @@ Every event emitted by a Runtime Adapter conforms to the following JSON structur
 
 ## 3. Normalized Event Type Catalog
 
-| Event Type | Severity | Description | Payload Key Properties |
-|---|---|---|---|
-| `TASK_INITIALIZED` | `INFO` | Subprocess spawned and session configured. | `cwd`, `model`, `tools_available`, `runtime_session_id`. |
-| `TEXT_DELTA` | `INFO` | Incremental fragment of agent explanation text. | `text_delta`, `accumulated_length`. |
-| `TOOL_CALL_START` | `INFO` | Agent begins executing a specific tool. | `tool_name`, `call_id`, `target_file`, `arguments_preview`. |
-| `TOOL_CALL_END` | `INFO` | Tool execution completed with result or error. | `tool_name`, `call_id`, `duration_seconds`, `status`, `diff_preview`. |
-| `APPROVAL_REQUIRED` | `WARN` | Execution paused awaiting user approval. | `action_type`, `description`, `diff`, `allowed_decisions`. |
-| `STATUS_TRANSITION`| `INFO` | Task state machine transitioned. | `from_status`, `to_status`, `reason`. |
-| `DIAGNOSTIC_LOG` | `DEBUG`/`WARN` | Raw diagnostic or stderr message. | `stream` (`stdout`/`stderr`), `message`. |
-| `TOKEN_USAGE` | `INFO` | Token metrics updated. | `input_tokens`, `output_tokens`, `total_tokens`, `cost_estimate`. |
-| `TASK_COMPLETED` | `INFO` | Task completed successfully. | `exit_code: 0`, `duration_seconds`, `summary`, `artifacts`. |
-| `TASK_FAILED` | `ERROR` | Task terminated due to error or crash. | `exit_code`, `error_category`, `error_message`, `traceback`. |
-| `TASK_CANCELLED` | `WARN` | Task aborted by user or timeout. | `reason`, `cancelled_by`, `cleanup_status`. |
+| Event Type | Severity | Storage Policy | Description | Payload Key Properties |
+|---|---|---|---|---|
+| `RUNNER_CONNECTED` | `INFO` | Ephemeral / Heartbeat | Runner established channel with Control Plane. | `runner_id`, `machine_name`, `platform`, `capabilities`. |
+| `DISPATCH_RECEIVED` | `INFO` | SQLite `task_events` | Runner acknowledged leased execution turn. | `task_id`, `attempt_id`, `attempt_number`, `mode`. |
+| `TASK_INITIALIZED` | `INFO` | SQLite `task_events` | Subprocess spawned and session configured. | `cwd`, `model`, `tools_available`, `conversation_id`. |
+| `STATUS_TRANSITION`| `INFO` | SQLite `task_events` | Task or attempt state machine transitioned. | `from_status`, `to_status`, `reason`, `attempt_id`. |
+| `TEXT_DELTA` | `INFO` | Ephemeral (SSE) / Aggregated | Incremental fragment of agent explanation text. | `text_delta`, `step_index`. |
+| `TOOL_CALL_START` | `INFO` | SQLite `task_events` | Agent begins executing a specific tool. | `tool_name`, `call_id`, `target_file`, `arguments_preview`. |
+| `TOOL_CALL_END` | `INFO` | SQLite `task_events` | Tool execution completed with result or error. | `tool_name`, `call_id`, `duration_seconds`, `status`. |
+| `APPROVAL_REQUIRED` | `WARN` | SQLite `task_events` | Execution paused awaiting user approval. | `action_type`, `description`, `diff`, `allowed_decisions`. |
+| `PLAN_CREATED` | `INFO` | SQLite `task_events` | Agent generated complete implementation plan. | `plan_markdown`, `step_count`, `artifact_id`. |
+| `VERIFICATION_STARTED` | `INFO` | SQLite `task_events` | Post-execution verification pipeline initiated. | `policy_name`, `step_count`, `target_path`. |
+| `VERIFICATION_STEP` | `INFO`/`WARN` | SQLite `task_verification_reports` | Single test/lint/typecheck verification step outcome. | `step_name`, `command`, `status`, `exit_code`, `duration_seconds`. |
+| `ARTIFACT_REGISTERED` | `INFO` | SQLite `task_events` | New artifact recorded (diff, plan report, logs). | `artifact_id`, `artifact_type`, `file_path`, `byte_size`. |
+| `DIAGNOSTIC_LOG` | `DEBUG`/`WARN` | Ring Buffer (1000 lines) | Stderr diagnostics or raw subprocess logs. | `stream` (`stdout`/`stderr`), `message`. |
+| `TOKEN_USAGE` | `INFO` | SQLite `task_events` | Token metrics updated. | `input_tokens`, `output_tokens`, `total_tokens`, `cost_estimate`. |
+| `TASK_TERMINATED` | `INFO`/`ERROR` | SQLite `task_events` | Final completion report from runner. | `status`, `task_status`, `exit_code`, `duration_seconds`, `summary`, `error_message`. |
+
+---
+
+## 3.1 Event Persistence, Ordering & Replay Semantics
+
+1. **Monotonic Sequence Ordering:**
+   - Every event within an attempt carries a strictly increasing integer `sequence_number` (starting at 1).
+   - Backend persists events in SQLite table `task_events` with constraint `UNIQUE(attempt_id, sequence_number)`.
+   - Idempotent ingestion uses `INSERT OR IGNORE` to guarantee duplicate suppression.
+2. **Persistence vs. Ephemeral Boundaries:**
+   - **Persisted:** High-value milestone events, status transitions, tool calls, verifications, token usage, and terminal results are committed to SQLite.
+   - **Ephemeral:** High-frequency character-level `TEXT_DELTA` chunks stream directly through SSE broadcasters to UI to avoid database write thrashing. The complete aggregated text is captured in `result.response` and saved as an artifact at turn completion.
+3. **Reconnection & Stream Resumption:**
+   - Client invokes `GET /api/v1/orchestrator/tasks/{id}/events?since_seq={last_seen_seq}`.
+   - Backend first queries historical events where `sequence_number > since_seq` from SQLite, replays them in order, then attaches the client to the live in-memory broadcaster.
+   - Client deduplicates incoming SSE events via an internal `Set<sequence_number>`.
 
 ---
 
