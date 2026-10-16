@@ -408,6 +408,7 @@ def run_attempt_execution(
                     {"attempt_id": attempt_id, "events": to_send},
                     headers={"Authorization": f"Bearer {secret}"}
                 )
+                print(f"[->] Posted event batch ({len(to_send)} events) to backend.")
                 return
             except Exception as e:
                 print(f"[!] Warning: failed to send event batch (attempt {retry+1}/{max_retries}): {e}")
@@ -419,6 +420,29 @@ def run_attempt_execution(
 
     def event_cb(evt: NormalizedEvent):
         nonlocal last_batch_time
+
+        # Structured milestone logging to Runner console
+        evt_type = evt.event_type
+        payload = evt.payload or {}
+        if evt_type == "STATUS_TRANSITION":
+            print(f"[STATUS] Task {evt.task_id}: {payload.get('from_status')} -> {payload.get('to_status')} (mode={payload.get('mode', mode)})")
+        elif evt_type == "TASK_INITIALIZED":
+            print(f"[INIT] Model: {payload.get('model')} | Mode: {payload.get('permission_mode')} | Cwd: {payload.get('cwd')}")
+        elif evt_type == "TOOL_CALL_START":
+            t_name = payload.get("tool_name", "unknown")
+            t_call_id = payload.get("tool_call_id", "")[:8]
+            print(f"[TOOL START] {t_name} (call_id: {t_call_id})")
+        elif evt_type == "TOOL_CALL_END":
+            t_name = payload.get("tool_name", "unknown")
+            t_stat = payload.get("status", "ok")
+            print(f"[TOOL END] {t_name} (status: {t_stat})")
+        elif evt_type == "DIAGNOSTIC_LOG":
+            msg = payload.get("message", "")
+            if msg:
+                print(f"[DIAG] ({evt.severity}): {msg}")
+        elif evt_type in ("TASK_COMPLETED", "TASK_FAILED", "TASK_TERMINATED"):
+            print(f"[{evt_type}] Task {evt.task_id}: status={payload.get('status', evt_type)}")
+
         is_priority = evt.event_type in PRIORITY_EVENTS
         with batch_lock:
             event_batch.append(evt.to_dict())

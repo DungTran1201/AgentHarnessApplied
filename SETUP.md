@@ -52,13 +52,31 @@ Trước khi bắt đầu, hãy đảm bảo máy tính của bạn đã cài đ
      ```
    - Hoặc nhấp đúp chuột trực tiếp vào file **`run-demo.bat`** trên File Explorer.
 
-3. **Hệ thống sẽ tự động mở 3 cửa sổ Terminal song song**:
-   - `[1/3] AI-Chan Backend (FastAPI)`: Lắng nghe tại `http://127.0.0.1:8000`
-   - `[2/3] AI-Chan Frontend (Next.js)`: Lắng nghe tại `http://localhost:3000`
-   - `[3/3] AI-Chan Discord Bot`: Kết nối Gateway Discord bằng Token trong `.env`
+3. **Hệ thống sẽ thực hiện kiểm tra tiền quyết (preflight) và khởi động các dịch vụ trong từng cửa sổ Command Prompt (`cmd.exe`) riêng biệt có tiêu đề dễ nhận biết**:
+   - `AI-Chan | Backend API`: FastAPI backend tại `http://127.0.0.1:8000` (API Docs tại `/docs`)
+   - `AI-Chan | Frontend`: Next.js web application tại `http://localhost:3000`
+   - `AI-Chan | Agent Runner`: Daemon nhận và thực thi task từ xa qua Antigravity CLI
+   - `AI-Chan | Discord Bot`: (Tùy chọn) Khởi động nếu đã cấu hình `DISCORD_BOT_TOKEN` hợp lệ trong `ai-backend/.env`
+
+Trong mỗi cửa sổ:
+- Tiêu đề cửa sổ phản ánh đúng tên dịch vụ.
+- Hiển thị thông tin khởi động, thư mục làm việc, lệnh thực thi (đã mask secret) và log cuộn liên tục.
+- Log được lưu đồng thời ra thư mục `logs/`:
+  - `logs/backend.log`
+  - `logs/frontend.log`
+  - `logs/runner.log`
+  - `logs/discord.log`
+  - `logs/demo-supervisor.log`
+- Nếu dịch vụ gặp lỗi, cửa sổ giữ nguyên màn hình để người dùng đọc mã lỗi (không tự đóng biến mất).
+
+### Các lệnh hữu ích:
+- **Chỉ chạy kiểm tra chẩn đoán môi trường**: `run-demo.bat --check`
+- **Dừng sạch toàn bộ dịch vụ**: `run-demo.bat --stop` (hoặc nhấp đúp `stop-demo.bat`)
+- **Chạy chế độ nền một cửa sổ**: `run-demo.bat --single-console`
+- **Tùy chọn bỏ qua**: `run-demo.bat --no-browser --no-runner --no-discord`
 
 > [!TIP]
-> Khi muốn tắt hệ thống, bạn chỉ cần đóng 3 cửa sổ Terminal này hoặc nhấn `Ctrl + C` tại cửa sổ chính.
+> Khi muốn tắt hệ thống một cách an toàn và sạch sẽ, hãy nhấn `Ctrl + C` tại cửa sổ supervisor chính, hoặc chạy `run-demo.bat --stop`. Trình quản lý vòng đời sẽ tự động kết thúc cây tiến trình và giải phóng các cổng 8000, 3000.
 
 ---
 

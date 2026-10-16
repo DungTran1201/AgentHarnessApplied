@@ -3,7 +3,8 @@
     AI-Chan Fullstack & Development Orchestrator Launcher
 .DESCRIPTION
     Starts FastAPI backend, Next.js frontend, Agent Runner daemon, and optional Discord bot
-    with dependency preflights, port conflict detection, readiness health checks, and graceful shutdown.
+    with dependency preflights, port conflict detection, readiness health checks,
+    dedicated visible Command Prompt (cmd.exe) windows with real-time logs, and graceful shutdown.
 .PARAMETER Command
     Positional action: start, stop, check, status, help.
 .PARAMETER NoBrowser
@@ -16,6 +17,8 @@
     Run preflight dependency, port, and configuration checks only without starting services.
 .PARAMETER Stop
     Stop all currently running AI-Chan demo background processes cleanly.
+.PARAMETER SingleConsole
+    Run services in background instead of opening visible CMD windows for each service.
 .PARAMETER BackendPort
     Port for FastAPI backend (default: 8000).
 .PARAMETER FrontendPort
@@ -40,6 +43,9 @@ param(
 
     [switch]$Stop,
 
+    [Alias("single-console", "logs-only")]
+    [switch]$SingleConsole,
+
     [Alias("h", "?")]
     [switch]$Help,
 
@@ -53,7 +59,59 @@ param(
 # Normalize positional argument if passed without leading dashes (e.g. 'run-demo.bat stop')
 if ($Command -match "^(--stop|-stop|stop)$") { $Stop = $true }
 if ($Command -match "^(--check|-check|check)$") { $Check = $true }
+if ($Command -match "^(--single-console|-single-console|single-console|--logs-only|logs-only)$") { $SingleConsole = $true }
 if ($Command -match "^(--help|-help|help|\?)$") { $Help = $true }
+
+# 1. Ensure working directory is repository root
+$RepoRoot = $PSScriptRoot
+Set-Location $RepoRoot
+
+$PidFile = Join-Path $RepoRoot ".demo_pids.json"
+$LogDir = Join-Path $RepoRoot "logs"
+if (-not (Test-Path $LogDir)) {
+    New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+}
+$SupervisorLog = Join-Path $LogDir "demo-supervisor.log"
+
+function Append-SupervisorLog {
+    param([string]$Text)
+    try {
+        $timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+        Add-Content -Path $SupervisorLog -Value "[$timestamp] $Text" -Encoding utf8 -ErrorAction SilentlyContinue
+    } catch {}
+}
+
+function Write-Header {
+    param([string]$Text)
+    Write-Host "`n========================================================" -ForegroundColor Cyan
+    Write-Host "  $Text" -ForegroundColor Cyan
+    Write-Host "========================================================" -ForegroundColor Cyan
+    Append-SupervisorLog "=== $Text ==="
+}
+
+function Write-Success {
+    param([string]$Text)
+    Write-Host "[+] $Text" -ForegroundColor Green
+    Append-SupervisorLog "[+] $Text"
+}
+
+function Write-Info {
+    param([string]$Text)
+    Write-Host "[i] $Text" -ForegroundColor Cyan
+    Append-SupervisorLog "[i] $Text"
+}
+
+function Write-Warn {
+    param([string]$Text)
+    Write-Host "[!] $Text" -ForegroundColor Yellow
+    Append-SupervisorLog "[!] $Text"
+}
+
+function Write-Fail {
+    param([string]$Text)
+    Write-Host "[-] $Text" -ForegroundColor Red
+    Append-SupervisorLog "[-] $Text"
+}
 
 if ($Help) {
     Write-Host @"
@@ -64,8 +122,9 @@ Usage:
   powershell -File run-demo.ps1 [options]
 
 Options:
-  --check, check          Run preflight checks (Python, Node, Git, agy, ports, env) and exit
+  --check, check          Run preflight diagnostics (Python, Node, Git, agy, ports, env) and exit
   --stop, stop            Stop all running AI-Chan demo processes cleanly
+  --single-console        Run services in background without separate visible CMD windows
   --no-browser            Do not automatically open the browser when ready
   --no-runner             Do not start the local Agent Runner daemon
   --no-discord            Do not start the Discord bot
@@ -74,47 +133,54 @@ Options:
   --help, -h              Show this help message
 
 Documentation:
-  docs/architecture/development-orchestrator/README.md
+  docs/development-orchestrator/README.md
 "@
     exit 0
 }
 
-# 1. Ensure working directory is repository root
-$RepoRoot = $PSScriptRoot
-Set-Location $RepoRoot
-
-$PidFile = Join-Path $RepoRoot ".demo_pids.json"
-$LogDir = Join-Path $RepoRoot "logs"
-
-function Write-Header {
-    param([string]$Text)
-    Write-Host "`n========================================================" -ForegroundColor Cyan
-    Write-Host "  $Text" -ForegroundColor Cyan
-    Write-Host "========================================================" -ForegroundColor Cyan
-}
-
-function Write-Success { param([string]$Text) Write-Host "[+] $Text" -ForegroundColor Green }
-function Write-Info    { param([string]$Text) Write-Host "[i] $Text" -ForegroundColor Cyan }
-function Write-Warn    { param([string]$Text) Write-Host "[!] $Text" -ForegroundColor Yellow }
-function Write-Fail    { param([string]$Text) Write-Host "[-] $Text" -ForegroundColor Red }
-
 # ── 2. STOP HANDLER ────────────────────────────────────────────────────────────
-if ($Stop) {
+function Stop-DemoServices {
     Write-Header "Stopping AI-Chan Demo Services"
     if (Test-Path $PidFile) {
         try {
             $pidsData = Get-Content $PidFile -Raw | ConvertFrom-Json
-            foreach ($prop in $pidsData.PSObject.Properties) {
-                $pName = $prop.Name
-                $procId = $prop.Value
-                if ($procId -and ($procId -is [int] -or $procId -is [string])) {
-                    $pidInt = [int]$procId
-                    $proc = Get-Process -Id $pidInt -ErrorAction SilentlyContinue
-                    if ($proc) {
-                        Write-Info "Terminating $pName process tree (PID: $pidInt)..."
-                        # Use taskkill /T /F for full child process tree cleanup on Windows
-                        & taskkill /T /F /PID $pidInt 2>$null | Out-Null
-                        Write-Success "Stopped $pName (PID: $pidInt)"
+            $serviceKeys = @("backend", "frontend", "runner", "discord")
+            foreach ($key in $serviceKeys) {
+                if ($pidsData.PSObject.Properties[$key]) {
+                    $item = $pidsData.$key
+                    $procId = $null
+                    $serviceLabel = $key
+
+                    if ($item -is [int] -or $item -is [string]) {
+                        $procId = [int]$item
+                    } elseif ($item -and $item.pid) {
+                        $procId = [int]$item.pid
+                        if ($item.service) { $serviceLabel = $item.service }
+                    }
+
+                    if ($procId -and $procId -gt 0) {
+                        $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
+                        if ($proc) {
+                            Write-Info "Terminating $serviceLabel process tree (PID: $procId)..."
+                            & taskkill /T /F /PID $procId 2>$null | Out-Null
+                            
+                            # Bounded wait for process termination confirmation
+                            $stopped = $false
+                            for ($w = 0; $w -lt 5; $w++) {
+                                Start-Sleep -Milliseconds 300
+                                if (-not (Get-Process -Id $procId -ErrorAction SilentlyContinue)) {
+                                    $stopped = $true
+                                    break
+                                }
+                            }
+                            if ($stopped) {
+                                Write-Success "Stopped $serviceLabel (PID: $procId)"
+                            } else {
+                                Write-Warn "Could not verify termination of $serviceLabel (PID: $procId)"
+                            }
+                        } else {
+                            Write-Info "$serviceLabel already exited (PID: $procId not running)."
+                        }
                     }
                 }
             }
@@ -126,7 +192,7 @@ if ($Stop) {
         Write-Info "No active .demo_pids.json file found."
     }
 
-    # Clean any dangling processes on demo ports
+    # Clean any dangling listener processes on demo ports
     Write-Info "Checking for dangling processes on ports $BackendPort and $FrontendPort..."
     foreach ($port in @($BackendPort, $FrontendPort)) {
         $conns = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
@@ -134,8 +200,8 @@ if ($Stop) {
             $owningPid = $c.OwningProcess
             if ($owningPid -and $owningPid -gt 4) {
                 $p = Get-Process -Id $owningPid -ErrorAction SilentlyContinue
-                if ($p -and ($p.ProcessName -match "python|node|uvicorn")) {
-                    Write-Warn "Killing dangling listener on port $port ($($p.ProcessName), PID: $owningPid)..."
+                if ($p -and ($p.ProcessName -match "python|node|uvicorn|cmd")) {
+                    Write-Warn "Terminating dangling listener on port $port ($($p.ProcessName), PID: $owningPid)..."
                     & taskkill /T /F /PID $owningPid 2>$null | Out-Null
                 }
             }
@@ -143,6 +209,10 @@ if ($Stop) {
     }
 
     Write-Success "All demo processes stopped cleanly."
+}
+
+if ($Stop) {
+    Stop-DemoServices
     exit 0
 }
 
@@ -272,7 +342,8 @@ function Test-PortAvailable {
     if ($conns) {
         $pidOwner = $conns[0].OwningProcess
         $p = Get-Process -Id $pidOwner -ErrorAction SilentlyContinue
-        Write-Warn "Port $Port ($ServiceName) is currently in use by process '$($p.ProcessName)' (PID: $pidOwner)."
+        $pName = if ($p) { $p.ProcessName } else { "Unknown" }
+        Write-Warn "Port $Port ($ServiceName) is currently in use by process '$pName' (PID: $pidOwner)."
         return $false
     }
     Write-Success "Port $Port ($ServiceName) is FREE."
@@ -308,8 +379,8 @@ if ($Check) {
 
 # Check if ports are blocked
 if (-not $backendPortFree -or -not $frontendPortFree) {
-    Write-Warn "One or more ports are already occupied."
-    Write-Info "Tip: Run `.\run-demo.ps1 -Stop` to terminate previous demo processes, or check running applications."
+    Write-Warn "One or more required ports are already occupied."
+    Write-Info "Tip: Run `.\run-demo.bat --stop` to terminate previous demo processes, or check running applications."
     $choice = Read-Host "Proceed anyway? (y/N)"
     if ($choice -ne "y" -and $choice -ne "Y") {
         Write-Info "Startup aborted by user."
@@ -318,10 +389,6 @@ if (-not $backendPortFree -or -not $frontendPortFree) {
 }
 
 # ── 4. PROCESS LAUNCHING ───────────────────────────────────────────────────────
-if (-not (Test-Path $LogDir)) {
-    New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
-}
-
 $pids = @{}
 $serviceStatus = [ordered]@{
     "backend"  = @{ Name = "FastAPI Backend"; Status = "PENDING"; Pid = $null; Log = "logs\backend.log"; Endpoint = "http://127.0.0.1:$BackendPort/api/v1/orchestrator/health" }
@@ -335,19 +402,28 @@ Write-Header "Launching AI-Chan Demo Services"
 # 4.1 FastAPI Backend
 Write-Info "[1/4] Starting FastAPI Backend on http://127.0.0.1:$BackendPort ..."
 $backendLog = Join-Path $LogDir "backend.log"
-$backendErr = Join-Path $LogDir "backend.err.log"
-$backendProc = Start-Process -FilePath $PythonExe `
-    -ArgumentList "-m", "uvicorn", "src.main:app", "--port", $BackendPort.ToString(), "--reload" `
-    -WorkingDirectory (Join-Path $RepoRoot "ai-backend") `
-    -RedirectStandardOutput $backendLog `
-    -RedirectStandardError $backendErr `
-    -PassThru
+
+if ($SingleConsole) {
+    $backendProc = Start-Process -FilePath $PythonExe `
+        -ArgumentList "-u", "-m", "uvicorn", "src.main:app", "--host", "127.0.0.1", "--port", $BackendPort.ToString(), "--reload" `
+        -WorkingDirectory (Join-Path $RepoRoot "ai-backend") `
+        -RedirectStandardOutput $backendLog `
+        -RedirectStandardError (Join-Path $LogDir "backend.err.log") `
+        -NoNewWindow `
+        -PassThru
+} else {
+    $backendCmdScript = Join-Path $RepoRoot "tools\run-backend.cmd"
+    $backendProc = Start-Process -FilePath "cmd.exe" `
+        -ArgumentList "/k `"`"$backendCmdScript`" $BackendPort `"$PythonExe`"`"" `
+        -WorkingDirectory $RepoRoot `
+        -PassThru
+}
 
 $pids["backend"] = $backendProc.Id
 $serviceStatus["backend"].Pid = $backendProc.Id
-Write-Success "FastAPI Backend process launched (PID: $($backendProc.Id), Log: logs\backend.log)"
+Write-Success "FastAPI Backend launched (PID: $($backendProc.Id), Title: 'AI-Chan | Backend API', Log: logs\backend.log)"
 
-# 4.2 Poll Backend Readiness via Orchestrator Health
+# 4.2 Poll Backend Readiness
 Write-Info "Awaiting Backend readiness on http://127.0.0.1:$BackendPort/api/v1/orchestrator/health ..."
 $maxRetries = 30
 for ($i = 0; $i -lt $maxRetries; $i++) {
@@ -376,23 +452,28 @@ if ($serviceStatus["backend"].Status -eq "READY") {
 # 4.3 Next.js Frontend
 Write-Info "[2/4] Starting Next.js Frontend on http://localhost:$FrontendPort ..."
 $frontendLog = Join-Path $LogDir "frontend.log"
-$frontendErr = Join-Path $LogDir "frontend.err.log"
 
-$npmExec = "npm.cmd"
-if (-not (Get-Command $npmExec -ErrorAction SilentlyContinue)) {
-    $npmExec = "npm"
+if ($SingleConsole) {
+    $npmExec = "npm.cmd"
+    if (-not (Get-Command $npmExec -ErrorAction SilentlyContinue)) { $npmExec = "npm" }
+    $frontendProc = Start-Process -FilePath $npmExec `
+        -ArgumentList "run", "dev", "--", "--port", $FrontendPort.ToString() `
+        -WorkingDirectory (Join-Path $RepoRoot "ai-frontend") `
+        -RedirectStandardOutput $frontendLog `
+        -RedirectStandardError (Join-Path $LogDir "frontend.err.log") `
+        -NoNewWindow `
+        -PassThru
+} else {
+    $frontendCmdScript = Join-Path $RepoRoot "tools\run-frontend.cmd"
+    $frontendProc = Start-Process -FilePath "cmd.exe" `
+        -ArgumentList "/k `"`"$frontendCmdScript`" $FrontendPort `"$PythonExe`"`"" `
+        -WorkingDirectory $RepoRoot `
+        -PassThru
 }
-
-$frontendProc = Start-Process -FilePath $npmExec `
-    -ArgumentList "run", "dev", "--", "--port", $FrontendPort.ToString() `
-    -WorkingDirectory (Join-Path $RepoRoot "ai-frontend") `
-    -RedirectStandardOutput $frontendLog `
-    -RedirectStandardError $frontendErr `
-    -PassThru
 
 $pids["frontend"] = $frontendProc.Id
 $serviceStatus["frontend"].Pid = $frontendProc.Id
-Write-Success "Next.js Frontend process launched (PID: $($frontendProc.Id), Log: logs\frontend.log)"
+Write-Success "Next.js Frontend launched (PID: $($frontendProc.Id), Title: 'AI-Chan | Frontend', Log: logs\frontend.log)"
 
 # 4.4 Poll Frontend Readiness
 Write-Info "Awaiting Frontend readiness on http://localhost:$FrontendPort ..."
@@ -425,17 +506,26 @@ if (-not $NoRunner) {
     if ($RunnerPaired) {
         Write-Info "[3/4] Starting Local Agent Runner Daemon..."
         $runnerLog = Join-Path $LogDir "runner.log"
-        $runnerErr = Join-Path $LogDir "runner.err.log"
-        $runnerProc = Start-Process -FilePath $PythonExe `
-            -ArgumentList "runner.py", "start", "--server", "http://localhost:$BackendPort" `
-            -WorkingDirectory (Join-Path $RepoRoot "ai-runner") `
-            -RedirectStandardOutput $runnerLog `
-            -RedirectStandardError $runnerErr `
-            -PassThru
+
+        if ($SingleConsole) {
+            $runnerProc = Start-Process -FilePath $PythonExe `
+                -ArgumentList "-u", "runner.py", "start", "--server", "http://localhost:$BackendPort" `
+                -WorkingDirectory (Join-Path $RepoRoot "ai-runner") `
+                -RedirectStandardOutput $runnerLog `
+                -RedirectStandardError (Join-Path $LogDir "runner.err.log") `
+                -NoNewWindow `
+                -PassThru
+        } else {
+            $runnerCmdScript = Join-Path $RepoRoot "tools\run-runner.cmd"
+            $runnerProc = Start-Process -FilePath "cmd.exe" `
+                -ArgumentList "/k `"`"$runnerCmdScript`" http://localhost:$BackendPort `"$PythonExe`"`"" `
+                -WorkingDirectory $RepoRoot `
+                -PassThru
+        }
 
         $pids["runner"] = $runnerProc.Id
         $serviceStatus["runner"].Pid = $runnerProc.Id
-        Write-Success "Agent Runner daemon process launched (PID: $($runnerProc.Id), Log: logs\runner.log)"
+        Write-Success "Agent Runner daemon launched (PID: $($runnerProc.Id), Title: 'AI-Chan | Agent Runner', Log: logs\runner.log)"
 
         # Check Runner Connection State bounded
         Write-Info "Verifying Runner SSE dispatch connection..."
@@ -444,10 +534,9 @@ if (-not $NoRunner) {
             Start-Sleep -Seconds 1
             if ($runnerProc.HasExited) {
                 $serviceStatus["runner"].Status = "FAILED"
-                Write-Fail "Agent Runner exited with code $($runnerProc.ExitCode). Check logs\runner.log."
+                Write-Fail "Agent Runner exited unexpectedly. Check logs\runner.log."
                 break
             }
-            # Check backend orchestrator health active_runner_channels or runner log
             try {
                 $hRes = Invoke-RestMethod -Uri "http://127.0.0.1:$BackendPort/api/v1/orchestrator/health" -TimeoutSec 2 -ErrorAction SilentlyContinue
                 if ($hRes -and $hRes.active_runner_channels -gt 0) {
@@ -457,8 +546,8 @@ if (-not $NoRunner) {
             } catch {}
 
             if (Test-Path $runnerLog) {
-                $rLogContent = Get-Content $runnerLog -Tail 10 -ErrorAction SilentlyContinue
-                if ($rLogContent -match "Subscribed to SSE channel") {
+                $rLogContent = Get-Content $runnerLog -Tail 15 -ErrorAction SilentlyContinue
+                if ($rLogContent -match "(Subscribed to SSE channel|Outbound SSE Channel connected)") {
                     $serviceStatus["runner"].Status = "READY"
                     break
                 }
@@ -469,7 +558,7 @@ if (-not $NoRunner) {
             Write-Success "Agent Runner: READY (Connected to SSE dispatch channel)"
         } elseif ($serviceStatus["runner"].Status -ne "FAILED") {
             $serviceStatus["runner"].Status = "STARTED, NOT CONNECTED"
-            Write-Warn "Agent Runner: STARTED, NOT CONNECTED (Process PID $($runnerProc.Id) alive, awaiting SSE dispatch channel. Check logs\runner.log)"
+            Write-Warn "Agent Runner: STARTED, NOT CONNECTED (Process alive, awaiting SSE dispatch channel. Check logs\runner.log)"
         }
     } else {
         $serviceStatus["runner"].Status = "SKIPPED"
@@ -498,13 +587,22 @@ if (-not $NoDiscord) {
     if ($hasDiscordToken) {
         Write-Info "[4/4] Starting AI-Chan Discord Bot..."
         $discordLog = Join-Path $LogDir "discord.log"
-        $discordErr = Join-Path $LogDir "discord.err.log"
-        $discordProc = Start-Process -FilePath $PythonExe `
-            -ArgumentList "-m", "src.discord_bot.main" `
-            -WorkingDirectory (Join-Path $RepoRoot "ai-backend") `
-            -RedirectStandardOutput $discordLog `
-            -RedirectStandardError $discordErr `
-            -PassThru
+
+        if ($SingleConsole) {
+            $discordProc = Start-Process -FilePath $PythonExe `
+                -ArgumentList "-u", "-m", "src.discord_bot.main" `
+                -WorkingDirectory (Join-Path $RepoRoot "ai-backend") `
+                -RedirectStandardOutput $discordLog `
+                -RedirectStandardError (Join-Path $LogDir "discord.err.log") `
+                -NoNewWindow `
+                -PassThru
+        } else {
+            $discordCmdScript = Join-Path $RepoRoot "tools\run-discord.cmd"
+            $discordProc = Start-Process -FilePath "cmd.exe" `
+                -ArgumentList "/k `"`"$discordCmdScript`" `"$PythonExe`"`"" `
+                -WorkingDirectory $RepoRoot `
+                -PassThru
+        }
 
         $pids["discord"] = $discordProc.Id
         $serviceStatus["discord"].Pid = $discordProc.Id
@@ -514,7 +612,7 @@ if (-not $NoDiscord) {
             Write-Warn "Discord Bot exited unexpectedly (Exit code: $($discordProc.ExitCode)). Check logs\discord.log"
         } else {
             $serviceStatus["discord"].Status = "READY"
-            Write-Success "Discord Bot: READY (PID: $($discordProc.Id), Log: logs\discord.log)"
+            Write-Success "Discord Bot: READY (PID: $($discordProc.Id), Title: 'AI-Chan | Discord Bot', Log: logs\discord.log)"
         }
     } else {
         $serviceStatus["discord"].Status = "SKIPPED"
@@ -525,15 +623,17 @@ if (-not $NoDiscord) {
     Write-Info "[4/4] Discord Bot: SKIPPED (-NoDiscord flag specified)"
 }
 
-# 4.7 Record PIDs to .demo_pids.json
-$pidsData = @{
+# 4.7 Record Structured Session State to .demo_pids.json
+$pidsData = [ordered]@{
+    session_id = "demo_$([Guid]::NewGuid().ToString('N').Substring(0, 8))"
     started_at = (Get-Date -Format "o")
-    backend = $pids["backend"]
-    frontend = $pids["frontend"]
-    runner = $pids["runner"]
-    discord = $pids["discord"]
+    mode       = if ($SingleConsole) { "single_console" } else { "visible_windows" }
+    backend    = @{ pid = $pids["backend"]; service = "FastAPI Backend"; port = $BackendPort }
+    frontend   = @{ pid = $pids["frontend"]; service = "Next.js Frontend"; port = $FrontendPort }
+    runner     = @{ pid = $pids["runner"]; service = "Agent Runner" }
+    discord    = @{ pid = $pids["discord"]; service = "Discord Bot" }
 }
-$pidsData | ConvertTo-Json | Set-Content -Path $PidFile -Force
+$pidsData | ConvertTo-Json -Depth 3 | Set-Content -Path $PidFile -Force
 
 # ── 5. RUNTIME MONITORING & CLEAN SHUTDOWN ─────────────────────────────────────
 $hasCriticalFailure = ($serviceStatus["backend"].Status -eq "FAILED" -or $serviceStatus["frontend"].Status -eq "FAILED")
@@ -581,10 +681,10 @@ if ($hasCriticalFailure) {
     Write-Host "  Tasks Workbench:  http://localhost:$FrontendPort/tasks" -ForegroundColor Cyan
     Write-Host "  Runtime Logs:     $LogDir" -ForegroundColor Cyan
     Write-Host "`n  To stop all services cleanly: Press Ctrl+C in this terminal," -ForegroundColor Yellow
-    Write-Host "  or run: .\run-demo.ps1 -Stop (or run-demo.bat --stop)" -ForegroundColor Yellow
+    Write-Host "  or run: .\run-demo.bat --stop (or stop-demo.bat)" -ForegroundColor Yellow
     Write-Host "========================================================`n" -ForegroundColor Cyan
 
-    if (-not $NoBrowser) {
+    if (-not $NoBrowser -and $serviceStatus["frontend"].Status -eq "READY") {
         Start-Process "http://localhost:$FrontendPort"
     }
 }
@@ -592,19 +692,17 @@ if ($hasCriticalFailure) {
 try {
     while ($true) {
         Start-Sleep -Seconds 2
-        # Check if backend or frontend died unexpectedly
+        # Runtime health check for critical services
         if ($backendProc -and $backendProc.HasExited) {
-            Write-Warn "FastAPI Backend exited unexpectedly (Exit code: $($backendProc.ExitCode)). Check logs\backend.log."
+            Write-Warn "FastAPI Backend process exited unexpectedly. Check logs\backend.log."
             break
         }
         if ($frontendProc -and $frontendProc.HasExited) {
-            Write-Warn "Next.js Frontend exited unexpectedly (Exit code: $($frontendProc.ExitCode)). Check logs\frontend.log."
+            Write-Warn "Next.js Frontend process exited unexpectedly. Check logs\frontend.log."
             break
         }
     }
 } finally {
-    Write-Info "Shutting down AI-Chan demo processes..."
-    if (Test-Path $PidFile) {
-        & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "run-demo.ps1") -Stop
-    }
+    Write-Info "Supervisor terminating; shutting down all demo service processes..."
+    Stop-DemoServices
 }

@@ -453,8 +453,15 @@ All test suites were executed on Windows 11 x64 and verified with 100% pass rate
    ```
    - **Result:** **0 errors**.
 
-5. **Preflight Diagnostics:**
+5. **Launcher & Automation Suite:**
+   ```powershell
+   ai-backend\.venv\Scripts\python.exe -m unittest tests/test_launcher.py
+   ```
+   - **Result:** **8 passed in 10.68s** (Disparate cwd resolution, tools/tee.py unbuffered UTF-8 streaming, visible CMD window titles, structured PID state file, process tree termination, and secret masking).
+
+6. **Preflight Diagnostics:**
    ```cmd
    run-demo.bat --check
    ```
    - **Result:** **Exit Code 0** (All dependencies and configurations confirmed).
+

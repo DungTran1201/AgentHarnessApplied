@@ -17,6 +17,19 @@ def setup_logging(log_level: str = "INFO") -> None:
 
     formatter = logging.Formatter(fmt=log_format, datefmt=date_format)
 
+    # Ensure UTF-8 console output on Windows to prevent UnicodeEncodeError with emojis/symbols
+    if sys.platform == "win32":
+        if hasattr(sys.stdout, "reconfigure"):
+            try:
+                sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+        if hasattr(sys.stderr, "reconfigure"):
+            try:
+                sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
     console_handler.setLevel(numeric_level)
