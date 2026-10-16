@@ -256,4 +256,52 @@ BEGIN
 END;
 
 
+-- ==============================================================================
+-- 8. BẢNG QUẢN LÝ TỆP ĐÍNH KÈM & TÀI NGUYÊN (ATTACHMENTS & LIBRARY ASSETS)
+-- ==============================================================================
+
+CREATE TABLE IF NOT EXISTS attachments (
+    id VARCHAR(36) PRIMARY KEY,
+    user_id VARCHAR(36) NOT NULL,
+    conversation_id VARCHAR(36),
+    message_id VARCHAR(36),
+    project_id VARCHAR(36),
+    skill_id VARCHAR(36),
+    prompt_id VARCHAR(36),
+    filename VARCHAR(255) NOT NULL,
+    file_size INTEGER NOT NULL,
+    mime_type VARCHAR(100) NOT NULL,
+    category VARCHAR(20) NOT NULL CHECK(category IN ('image', 'document', 'code', 'archive', 'audio', 'video', 'other')),
+    storage_path VARCHAR(500) NOT NULL,
+    checksum_sha256 VARCHAR(64) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'READY' CHECK(status IN ('UPLOADING', 'READY', 'ATTACHED', 'FAILED', 'DELETED')),
+    extracted_text TEXT,
+    image_width INTEGER,
+    image_height INTEGER,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE SET NULL,
+    FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL,
+    FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE,
+    FOREIGN KEY (prompt_id) REFERENCES system_prompts(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_attachments_user_id ON attachments(user_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_conv_id ON attachments(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_message_id ON attachments(message_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_project_id ON attachments(project_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_skill_id ON attachments(skill_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_prompt_id ON attachments(prompt_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_status ON attachments(status);
+
+CREATE TRIGGER IF NOT EXISTS trg_attachments_updated_at
+AFTER UPDATE ON attachments
+FOR EACH ROW
+BEGIN
+    UPDATE attachments SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
+END;
+
+
 

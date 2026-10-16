@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     # Project Management Settings
     MAX_ACTIVE_PROJECTS: int = 3
 
+    # File Upload & Asset Settings (Unified File Upload System)
+    MAX_FILE_SIZE_MB: int = 20
+    MAX_FILES_PER_REQUEST: int = 5
+    UPLOAD_DIR: str = ""
+
     model_config = SettingsConfigDict(
         env_file=_env_path,
         env_file_encoding="utf-8",

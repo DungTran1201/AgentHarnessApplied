@@ -46,3 +46,5 @@ logs/
 .demo_pids.json
 .ai-chan/
 
+ai-backend/database/uploads/
+

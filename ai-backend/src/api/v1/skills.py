@@ -75,9 +75,11 @@ class SkillDetailResponse(BaseModel):
     storage_path: str
     is_valid: bool
     file_tree: List[FileTreeItem] = Field(default_factory=list)
+    attachments: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
     validation_report: SkillValidationReport
     created_at: str
     updated_at: str
+
 
 class SkillCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=64, description="Tên kỹ năng (chữ thường, số, dấu gạch nối)")
@@ -354,6 +356,17 @@ async def get_skill_detail(
         except Exception:
             pass
 
+    atts = query_all(
+        """
+        SELECT id, filename, mime_type, file_size, status, created_at
+        FROM attachments
+        WHERE skill_id = ?
+        ORDER BY created_at DESC
+        """,
+        (id,)
+    )
+
+
     return SkillDetailResponse(
         id=row["id"],
         user_id=row["user_id"],
@@ -369,10 +382,44 @@ async def get_skill_detail(
         storage_path=storage_path,
         is_valid=bool(row["is_valid"]),
         file_tree=[FileTreeItem(**f) for f in files],
+        attachments=atts,
         validation_report=report,
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"])
     )
+
+
+@skills_router.get("/{id}/attachments", summary="Lấy danh sách tệp tài nguyên đính kèm của Skill")
+async def get_skill_attachments(
+    id: str,
+    current_user: dict = Depends(get_optional_current_user)
+):
+    """
+    Truy vấn danh sách các tài nguyên thư viện đã đính kèm vào Skill (Anti-IDOR).
+    """
+    user_id = current_user.get("id", "guest_user")
+    row = query_one(
+        "SELECT id FROM skills WHERE id = ? AND user_id = ?",
+        (id, user_id)
+    )
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Không tìm thấy kỹ năng hoặc bạn không có quyền truy cập."
+        )
+
+    atts = query_all(
+        """
+        SELECT id, filename, mime_type, file_size, status, created_at, updated_at
+        FROM attachments
+        WHERE skill_id = ?
+        ORDER BY created_at DESC
+        """,
+        (id,)
+    )
+
+    return {"items": atts, "total": len(atts)}
+
 
 
 @skills_router.put("/{id}", response_model=SkillDetailResponse)

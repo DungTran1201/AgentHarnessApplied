@@ -14,6 +14,7 @@ import {
 import Icon from '@/components/ui/Icon';
 import PageHeader from '@/components/ui/PageHeader';
 import { getErrorMessage } from '@/lib/errors';
+import { LibraryAssetManager } from '@/components/ui/AttachmentUploader';
 
 export default function SkillDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter();
@@ -888,6 +889,16 @@ export default function SkillDetailPage({ params }: { params: Promise<{ id: stri
                       {isAddingFile ? 'Saving file...' : 'Save Resource'}
                     </button>
                   </form>
+                </div>
+
+                {/* Unified File Upload Library Assets */}
+                <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border-subtle)', paddingTop: '1.25rem' }}>
+                  <LibraryAssetManager
+                    contextType="skill"
+                    contextId={skill.id}
+                    initialAttachments={skill.attachments}
+                    onAttachmentChanged={loadSkill}
+                  />
                 </div>
               </div>
             )}

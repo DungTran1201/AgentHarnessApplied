@@ -2,11 +2,17 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { AgentModel, Project } from '@/types';
+import {
+  AttachmentButton,
+  ComposerAttachmentChips,
+  StagedFile
+} from '@/components/ui/AttachmentUploader';
+import { AttachmentService } from '@/services/attachmentService';
 
 interface MessageComposerProps {
   inputPrompt: string;
   onInputChange: (val: string) => void;
-  onSend: (customPrompt?: string) => void;
+  onSend: (customPrompt?: string, attachmentIds?: string[]) => void;
   onStop?: () => void;
   isStreaming?: boolean;
   activeModels?: AgentModel[];
@@ -35,8 +41,11 @@ export default function MessageComposer({
   const [isFocused, setIsFocused] = useState(false);
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [showProjectDropdown, setShowProjectDropdown] = useState(false);
+  const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
+  const [isDragOver, setIsDragOver] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
 
   // Auto resize textarea
   useEffect(() => {
@@ -59,10 +68,108 @@ export default function MessageComposer({
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  const handleUploadFiles = async (files: File[]) => {
+    const BLOCKED_EXTS = ['.exe', '.bat', '.ps1', '.sh', '.cmd', '.dll', '.com'];
+    const MAX_SIZE_BYTES = 20 * 1024 * 1024; // 20 MB
+
+    for (const f of files) {
+      const lowerName = f.name.toLowerCase();
+      const isBlocked = BLOCKED_EXTS.some(ext => lowerName.endsWith(ext));
+      if (isBlocked) {
+        alert(`Tệp '${f.name}' bị chặn vì lý do bảo mật an toàn.`);
+        continue;
+      }
+      if (f.size > MAX_SIZE_BYTES) {
+        alert(`Tệp '${f.name}' vượt quá dung lượng tối đa cho phép (20 MB).`);
+        continue;
+      }
+      if (f.size === 0) {
+        alert(`Tệp '${f.name}' rỗng (0 bytes).`);
+        continue;
+      }
+
+      const tempId = `temp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const newStaged: StagedFile = {
+        id: tempId,
+        file: f,
+        name: f.name,
+        size: f.size,
+        mime: f.type || 'application/octet-stream',
+        status: 'UPLOADING',
+        progress: 0,
+      };
+
+      setStagedFiles(prev => [...prev, newStaged]);
+
+      try {
+        const att = await AttachmentService.uploadAttachment(
+          f,
+          selectedProjectId ? 'project_chat' : 'chat',
+          selectedProjectId || undefined,
+          (percent) => {
+            setStagedFiles(prev =>
+              prev.map(item => (item.id === tempId ? { ...item, progress: percent } : item))
+            );
+          }
+        );
+        setStagedFiles(prev =>
+          prev.map(item =>
+            item.id === tempId
+              ? {
+                  ...item,
+                  id: att.id,
+                  status: 'READY',
+                  progress: 100,
+                }
+              : item
+          )
+        );
+      } catch (err: any) {
+        setStagedFiles(prev =>
+          prev.map(item =>
+            item.id === tempId
+              ? {
+                  ...item,
+                  status: 'FAILED',
+                  error: err.message || 'Lỗi tải tệp',
+                }
+              : item
+          )
+        );
+      }
+    }
+  };
+
+  const handleRemoveStagedFile = (idx: number) => {
+    setStagedFiles(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const handleRetryStagedFile = (idx: number) => {
+    const item = stagedFiles[idx];
+    if (item.file) {
+      handleRemoveStagedFile(idx);
+      handleUploadFiles([item.file]);
+    }
+  };
+
+  const handleSendMessageWithAttachments = () => {
+    const isUploadingAny = stagedFiles.some(f => f.status === 'UPLOADING');
+    if (isUploadingAny) {
+      alert('Vui lòng đợi tệp hoàn tất tải lên.');
+      return;
+    }
+    const readyIds = stagedFiles.filter(f => f.status === 'READY' && f.id).map(f => f.id!);
+    onSend(undefined, readyIds.length > 0 ? readyIds : undefined);
+    setStagedFiles([]);
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (!isStreaming && inputPrompt.trim()) onSend();
+      const hasReady = stagedFiles.some(f => f.status === 'READY');
+      if (!isStreaming && (inputPrompt.trim() || hasReady)) {
+        handleSendMessageWithAttachments();
+      }
     }
   };
 
@@ -72,7 +179,7 @@ export default function MessageComposer({
   };
 
   const currentProject = activeProjects.find(p => p.id === selectedProjectId);
-  const hasInput = inputPrompt.trim().length > 0;
+  const hasInput = inputPrompt.trim().length > 0 || stagedFiles.some(f => f.status === 'READY');
 
   return (
     <div
@@ -87,9 +194,22 @@ export default function MessageComposer({
     >
       <div
         ref={dropdownRef}
+        onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+        onDragLeave={() => setIsDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setIsDragOver(false);
+          if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            handleUploadFiles(Array.from(e.dataTransfer.files));
+          }
+        }}
         style={{
           backgroundColor: 'var(--bg-surface)',
-          border: isFocused ? '1px solid var(--border-strong)' : '1px solid var(--border-default)',
+          border: isDragOver
+            ? '1px dashed var(--accent)'
+            : isFocused
+            ? '1px solid var(--border-strong)'
+            : '1px solid var(--border-default)',
           borderRadius: 'var(--radius-xl)',
           padding: '10px 14px 8px',
           display: 'flex',
@@ -136,6 +256,14 @@ export default function MessageComposer({
           </div>
         )}
 
+        {/* Attached files preview chips */}
+        <ComposerAttachmentChips
+          files={stagedFiles}
+          onRemove={handleRemoveStagedFile}
+          onRetry={handleRetryStagedFile}
+        />
+
+
         {/* Textarea */}
         <textarea
           ref={textareaRef}
@@ -173,8 +301,9 @@ export default function MessageComposer({
             borderTop: '1px solid var(--border-subtle)',
           }}
         >
-          {/* Left: project selector */}
+          {/* Left: project selector & attachments */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <AttachmentButton onFilesSelected={handleUploadFiles} disabled={isStreaming} />
             {activeProjects.length > 0 && (
               <div style={{ position: 'relative' }}>
                 <button
@@ -307,7 +436,7 @@ export default function MessageComposer({
             ) : (
               <button
                 type="button"
-                onClick={() => onSend()}
+                onClick={handleSendMessageWithAttachments}
                 disabled={!hasInput}
                 aria-label="Send message"
                 style={{

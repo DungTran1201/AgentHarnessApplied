@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { AgentModel, Project } from '@/types';
 import { ProjectService } from '@/services/projectService';
+import { AttachmentService, AttachmentItem } from '@/services/attachmentService';
 import { useApp } from '@/context/AppContext';
 import ChatWorkspace, { Message } from '@/components/chat/ChatWorkspace';
 import MessageComposer from '@/components/chat/MessageComposer';
@@ -95,9 +96,10 @@ export default function ChatPage() {
   };
 
   // ── Send ──────────────────────────────────────────────────────────
-  const handleSendMessage = async (customPrompt?: string) => {
-    const textToSend = customPrompt || inputPrompt;
-    if (!textToSend.trim() || isStreaming) return;
+  const handleSendMessage = async (customPrompt?: string, attachmentIds?: string[]) => {
+    const textToSend = customPrompt !== undefined ? customPrompt : inputPrompt;
+    const hasAttachments = Boolean(attachmentIds && attachmentIds.length > 0);
+    if ((!textToSend.trim() && !hasAttachments) || isStreaming) return;
 
     let targetConvId = activeConvId;
 
@@ -106,11 +108,24 @@ export default function ChatPage() {
       if (!targetConvId) return;
     }
 
+    let loadedAttachments: AttachmentItem[] = [];
+    if (hasAttachments && attachmentIds) {
+      try {
+        const results = await Promise.all(
+          attachmentIds.map(id => AttachmentService.getAttachment(id).catch(() => null))
+        );
+        loadedAttachments = results.filter(Boolean) as AttachmentItem[];
+      } catch (err) {
+        console.error('Failed to resolve attachment details:', err);
+      }
+    }
+
     const userMsg: Message = {
       id: `user-${Date.now()}`,
       role: 'user',
       content: textToSend.trim(),
       created_at: new Date().toISOString(),
+      attachments: loadedAttachments.length > 0 ? loadedAttachments : undefined,
     };
 
     const assistantPlaceholderId = `assistant-${Date.now()}`;
@@ -165,7 +180,8 @@ export default function ChatPage() {
             accumulatedText = `⚠️ **Workflow error:** ${err?.message || 'Unknown error'}`;
             setMessages(prev => prev.map(m => m.id === assistantPlaceholderId ? { ...m, content: accumulatedText } : m));
           },
-          controller.signal
+          controller.signal,
+          attachmentIds
         );
       } catch (err: any) {
         if (err?.name !== 'AbortError') {
@@ -196,7 +212,11 @@ export default function ChatPage() {
       const response = await fetch(`/api/v1/conversations/${targetConvId}/messages/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: textToSend.trim(), model: selectedModelId }),
+        body: JSON.stringify({
+          content: textToSend.trim(),
+          model: selectedModelId,
+          attachments: attachmentIds && attachmentIds.length > 0 ? attachmentIds : undefined,
+        }),
         signal: controller.signal,
       });
 

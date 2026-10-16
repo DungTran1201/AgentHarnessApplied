@@ -8,6 +8,8 @@ import PageHeader from '@/components/ui/PageHeader';
 import Icon from '@/components/ui/Icon';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { formatErrorMessage } from '@/lib/errors';
+import { LibraryAssetManager } from '@/components/ui/AttachmentUploader';
+import { AttachmentItem } from '@/services/attachmentService';
 
 export default function EditSystemPromptPage() {
   const router = useRouter();
@@ -26,6 +28,7 @@ export default function EditSystemPromptPage() {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [content, setContent] = useState('');
+  const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -54,6 +57,7 @@ export default function EditSystemPromptPage() {
         setName(init.name);
         setDescription(init.description);
         setContent(init.content);
+        setAttachments(data.attachments || []);
       } catch (err: any) {
         setLoadError(formatErrorMessage(err, 'System prompt not found or access denied.'));
       } finally {
@@ -244,6 +248,15 @@ export default function EditSystemPromptPage() {
                   onChange={e => setContent(e.target.value)}
                   maxLength={10000}
                   required
+                />
+              </div>
+
+              {/* Supporting Library Assets */}
+              <div style={{ marginBottom: '1.75rem', borderTop: '1px solid var(--border-subtle)', paddingTop: '1.25rem' }}>
+                <LibraryAssetManager
+                  contextType="system_prompt"
+                  contextId={promptId}
+                  initialAttachments={attachments}
                 />
               </div>
 

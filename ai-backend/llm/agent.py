@@ -2,6 +2,7 @@ import os
 import json
 import asyncio
 import logging
+import base64
 from typing import TypedDict, Sequence, Optional, List, Dict, Any, AsyncGenerator
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langgraph.graph import StateGraph, END
@@ -149,9 +150,10 @@ class LangChainModelFactory:
 def build_langchain_messages(
     prompt: str,
     history: List[Dict[str, Any]],
-    system_instruction: Optional[str] = None
+    system_instruction: Optional[str] = None,
+    attachments: Optional[List[Dict[str, Any]]] = None
 ) -> List[BaseMessage]:
-    """Constructs a sliding window of max 20 messages (INV-04) formatted for LangChain with optional custom system instruction."""
+    """Constructs a sliding window of max 20 messages (INV-04) formatted for LangChain with optional custom system instruction and multimodal attachments."""
     default_instruction = (
         "Bạn là AI-Chan, trợ lý ảo thông minh và thân thiện. "
         "Hãy trả lời chính xác, hữu ích, hỗ trợ định dạng Markdown và mã nguồn chuẩn khi cần."
@@ -168,9 +170,61 @@ def build_langchain_messages(
             messages.append(HumanMessage(content=content))
         elif role == "assistant":
             messages.append(AIMessage(content=content))
+
+    # Process attachments for the current turn
+    image_parts: List[Dict[str, Any]] = []
+    text_attachment_blocks: List[str] = []
+
+    if attachments:
+        from src.core.attachment_storage import read_attachment_bytes, extract_text_from_file
+        for att in attachments:
+            m_type = (att.get("mime_type") or "").lower()
+            fname = att.get("filename") or att.get("original_name") or "tệp"
+            storage_path = att.get("storage_path")
             
-    messages.append(HumanMessage(content=prompt))
+            # 1. Image modalities (PNG, JPEG, WebP, GIF)
+            if m_type.startswith("image/"):
+                if storage_path:
+                    try:
+                        raw_bytes = read_attachment_bytes(storage_path)
+                        b64_str = base64.b64encode(raw_bytes).decode("utf-8")
+                        image_parts.append({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{m_type};base64,{b64_str}"
+                            }
+                        })
+                    except Exception as err:
+                        logger.warning(f"Không thể nạp dữ liệu ảnh {fname} ({storage_path}): {err}")
+
+            # 2. Text / Code / CSV / JSON / PDF text extraction
+            ext_text = att.get("extracted_text")
+            if not ext_text and storage_path and not m_type.startswith("image/"):
+                try:
+                    ext_text = extract_text_from_file(storage_path, m_type)
+                except Exception as err:
+                    logger.warning(f"Không thể trích xuất văn bản từ {fname}: {err}")
+
+            if ext_text and ext_text.strip():
+                text_attachment_blocks.append(
+                    f"\n\n--- [Tài liệu đính kèm: {fname} (MIME: {m_type})] ---\n"
+                    f"{ext_text.strip()}\n"
+                    f"--- [Hết tài liệu: {fname}] ---"
+                )
+
+    combined_text = prompt
+    if text_attachment_blocks:
+        combined_text = combined_text + "".join(text_attachment_blocks)
+
+    if image_parts:
+        content_parts: List[Dict[str, Any]] = [{"type": "text", "text": combined_text}]
+        content_parts.extend(image_parts)
+        messages.append(HumanMessage(content=content_parts))
+    else:
+        messages.append(HumanMessage(content=combined_text))
+
     return messages
+
 
 class ChatAgentOrchestrator:
     """Stateful Chat Agent orchestrator powered by LangChain and LangGraph."""
@@ -257,11 +311,12 @@ class ChatAgentOrchestrator:
         prompt: str,
         history: List[Dict[str, Any]],
         model_override: Optional[str] = None,
-        system_instruction: Optional[str] = None
+        system_instruction: Optional[str] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        """Asynchronously streams token chunks with automatic failover (SSE compatible) and custom system instruction."""
+        """Asynchronously streams token chunks with automatic failover (SSE compatible), custom system instruction, and multimodal attachments."""
         cfg = EnvKeyLoader.get_config()
-        messages = build_langchain_messages(prompt, history, system_instruction=system_instruction)
+        messages = build_langchain_messages(prompt, history, system_instruction=system_instruction, attachments=attachments)
         
         primary_prov = cfg["default_provider"] if cfg["default_provider"] in ["gemini", "openai"] else "gemini"
         target_model = model_override or cfg["default_model"]
@@ -345,7 +400,29 @@ class ChatAgentOrchestrator:
                 persona_role = first_line[:80]
 
         p_lower = prompt.lower()
-        if "giới thiệu" in p_lower or "bạn là ai" in p_lower or "who are you" in p_lower or "chào" in p_lower:
+        if attachments:
+            att_names = ", ".join(f"`{a.get('filename') or a.get('original_name') or 'tệp'}`" for a in attachments)
+            texts = [a.get("extracted_text") for a in attachments if a.get("extracted_text")]
+            images = [a for a in attachments if (a.get("mime_type") or "").startswith("image/")]
+            if texts and ("nội dung" in p_lower or "phân tích" in p_lower or "file" in p_lower or "tệp" in p_lower or "đọc" in p_lower or "tóm tắt" in p_lower or "hỏi" in p_lower):
+                combined_snippet = "\n".join(t.strip() for t in texts if t)[:800]
+                body = (
+                    f"Tôi đã phân tích thành công nội dung từ tệp đính kèm {att_names}:\n\n"
+                    f"**Nội dung trích xuất:**\n"
+                    f"```\n{combined_snippet}\n```\n\n"
+                    f"Về câu hỏi *\"{prompt}\"*: Nội dung trên đã được tiếp nhận và xử lý đầy đủ theo đúng yêu cầu của bạn."
+                )
+            elif images:
+                body = (
+                    f"Tôi đã nhận và phân tích hình ảnh đính kèm {att_names}.\n\n"
+                    f"Dưới vai trò **{persona_role}**, hình ảnh đã được xử lý thành công theo yêu cầu *\"{prompt}\"*."
+                )
+            else:
+                body = (
+                    f"Tôi đã tiếp nhận {len(attachments)} tệp đính kèm ({att_names}).\n\n"
+                    f"Dưới vai trò **{persona_role}**, tôi đã đọc và xử lý toàn bộ dữ liệu theo yêu cầu *\"{prompt}\"*."
+                )
+        elif "giới thiệu" in p_lower or "bạn là ai" in p_lower or "who are you" in p_lower or "chào" in p_lower:
             if "business analyst" in persona_role.lower() or "ba" in persona_role.lower() or "nghiệp vụ" in persona_role.lower():
                 body = (
                     f"Chào bạn! Tôi là một **{persona_role}**.\n\n"
@@ -394,6 +471,7 @@ class ChatAgentOrchestrator:
                 f"2. **Định hướng giải pháp**: Áp dụng các nguyên tắc thiết kế tối ưu và đảm bảo tính nhất quán.\n"
                 f"3. **Hành động tiếp theo**: Bạn có thể cung cấp thêm chi tiết để tôi đi sâu vào từng khía cạnh cụ thể."
             )
+
 
         full_text = body
         words = full_text.split(" ")

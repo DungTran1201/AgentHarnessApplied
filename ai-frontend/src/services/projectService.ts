@@ -198,7 +198,8 @@ export class ProjectService {
     onChunk: (chunk: string) => void,
     onDone: (data?: any) => void,
     onError: (err: any) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    attachments?: string[]
   ): Promise<void> {
     try {
       const res = await fetch(`${BASE_URL}/projects/${id}/chat`, {
@@ -208,9 +209,10 @@ export class ProjectService {
           Accept: 'text/event-stream',
         },
         credentials: 'include',
-        body: JSON.stringify({ message, conversation_id: conversationId }),
+        body: JSON.stringify({ message, conversation_id: conversationId, attachments }),
         signal,
       });
+
 
       if (!res.ok) {
         const errJson = await res.json().catch(() => ({ detail: res.statusText }));

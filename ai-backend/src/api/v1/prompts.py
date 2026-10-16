@@ -1,6 +1,6 @@
 import uuid
 import logging
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, status, Depends, Query, Request
 from pydantic import BaseModel, Field, field_validator
 
@@ -13,6 +13,7 @@ prompts_router = APIRouter(prefix="/system-prompts", tags=["System Prompts"])
 
 # ==============================================================================
 # 1. PYDANTIC V2 SCHEMAS (CONTRACT SPECIFICATIONS)
+
 # ==============================================================================
 
 class SystemPromptCreateRequest(BaseModel):
@@ -122,8 +123,10 @@ class SystemPromptDetailResponse(BaseModel):
     name: str
     description: Optional[str] = None
     content: str
+    attachments: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
     created_at: str
     updated_at: str
+
 
 
 # ==============================================================================
@@ -269,15 +272,63 @@ async def get_system_prompt_detail(
             }
         )
 
+    atts = query_all(
+        """
+        SELECT id, filename, mime_type, file_size, status, created_at
+        FROM attachments
+        WHERE prompt_id = ?
+        ORDER BY created_at DESC
+        """,
+        (id,)
+    )
+
+
     return SystemPromptDetailResponse(
         id=row["id"],
         user_id=row["user_id"],
         name=row["name"],
         description=row.get("description"),
         content=row["content"],
+        attachments=atts,
         created_at=str(row.get("created_at")),
         updated_at=str(row.get("updated_at"))
     )
+
+
+@prompts_router.get("/{id}/attachments", summary="Lấy danh sách tệp tài nguyên đính kèm của System Prompt")
+async def get_system_prompt_attachments(
+    id: str,
+    current_user: dict = Depends(get_optional_current_user)
+):
+    """
+    Truy vấn danh sách các tài nguyên thư viện đã đính kèm vào System Prompt (Anti-IDOR).
+    """
+    user_id = current_user.get("id", "guest_user")
+    row = query_one(
+        "SELECT id FROM system_prompts WHERE id = ? AND user_id = ?",
+        (id, user_id)
+    )
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error_code": "PROMPT_NOT_FOUND",
+                "message": "System Prompt không tồn tại hoặc bạn không có quyền truy cập."
+            }
+        )
+
+    atts = query_all(
+        """
+        SELECT id, filename, mime_type, file_size, status, created_at, updated_at
+        FROM attachments
+        WHERE prompt_id = ?
+        ORDER BY created_at DESC
+        """,
+        (id,)
+    )
+
+    return {"items": atts, "total": len(atts)}
+
 
 
 @prompts_router.put("/{id}", response_model=SystemPromptDetailResponse)

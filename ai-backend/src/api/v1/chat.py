@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, status, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from typing import Optional, AsyncGenerator
+from typing import Optional, AsyncGenerator, List, Dict, Any
 from src.core.security import get_current_user, app_rate_limiter
 from src.core.telemetry import quota_manager, metric_logger
 from src.db import query_one, query_all, execute_commit
@@ -15,8 +15,9 @@ from src.db import query_one, query_all, execute_commit
 chat_router = APIRouter(tags=["Chat Streaming"])
 
 class MessageStreamRequest(BaseModel):
-    content: str = Field(min_length=1, max_length=4000, description="Nội dung prompt câu hỏi (tối đa 4000 ký tự)")
+    content: str = Field(default="", max_length=4000, description="Nội dung prompt câu hỏi (tối đa 4000 ký tự)")
     model: Optional[str] = "gemini-3.8-flash"
+    attachments: Optional[List[str]] = Field(default=None, description="Danh sách attachment_id đính kèm cho lượt chat này")
 
 async def generate_mock_ai_stream(prompt: str, history: list) -> AsyncGenerator[str, None]:
     """Fallback high-quality AI streaming generator when external cloud keys are absent."""
@@ -117,12 +118,19 @@ async def stream_message_endpoint(
             detail="Cuộc trò chuyện không tồn tại hoặc bạn không có quyền truy cập."
         )
 
-    # 2. Kiểm tra độ dài prompt <= 4000 ký tự (INV-02, BR-003)
+    # 2. Kiểm tra độ dài prompt hoặc tệp đính kèm (INV-02, BR-003)
     prompt_text = req.content.strip()
-    if not prompt_text or len(prompt_text) > 4000:
+    if not prompt_text and not req.attachments:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Nội dung tin nhắn phải từ 1 đến 4000 ký tự."
+            detail="Nội dung tin nhắn phải từ 1 đến 4000 ký tự hoặc có tệp đính kèm."
+        )
+    if not prompt_text and req.attachments:
+        prompt_text = "Vui lòng phân tích tệp đính kèm."
+    elif len(prompt_text) > 4000:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Nội dung tin nhắn không được vượt quá 4000 ký tự."
         )
 
     # 3. Ghi nhận tin nhắn người dùng vào CSDL (bảng messages)
@@ -134,6 +142,42 @@ async def stream_message_endpoint(
         """,
         (user_msg_id, conversation_id, prompt_text, "client")
     )
+
+    # 3.5. Xử lý và xác thực danh sách attachment_ids (Anti-IDOR, BR-002, Attachment Lifecycle)
+    attachment_records: List[Dict[str, Any]] = []
+    if req.attachments:
+        for att_id in req.attachments:
+            att = query_one(
+                "SELECT * FROM attachments WHERE id = ? AND (user_id = ? OR user_id = 'guest_user')",
+                (att_id, user_id)
+            )
+            if not att:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail={
+                        "error_code": "ATTACHMENT_NOT_FOUND",
+                        "message": f"Tệp đính kèm '{att_id}' không tồn tại hoặc bạn không có quyền truy cập."
+                    }
+                )
+            if att.get("status") not in ("READY", "ATTACHED"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "error_code": "ATTACHMENT_NOT_READY",
+                        "message": f"Tệp đính kèm '{att.get('filename')}' chưa ở trạng thái sẵn sàng (READY)."
+
+                    }
+                )
+            # Ràng buộc attachment vào message và conversation
+            execute_commit(
+                """
+                UPDATE attachments
+                SET message_id = ?, conversation_id = ?, status = 'ATTACHED', updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (user_msg_id, conversation_id, att_id)
+            )
+            attachment_records.append(att)
 
     # 4. Tự động đổi tên tiêu đề nếu là tin nhắn đầu tiên (INV-03, BR-004)
     if conv["title"] == "Cuộc trò chuyện mới":
@@ -181,8 +225,10 @@ async def stream_message_endpoint(
             async for event in chat_agent.astream_agent(
                 prompt=prompt_text,
                 history=context_msgs,
-                model_override=selected_model
+                model_override=selected_model,
+                attachments=attachment_records if attachment_records else None
             ):
+
                 if event.get("status") == "streaming":
                     token_str = event.get("token", "")
                     accumulated_response.append(token_str)

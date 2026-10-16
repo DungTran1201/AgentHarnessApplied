@@ -33,8 +33,10 @@ class GraphSaveRequest(BaseModel):
     edges: List[Dict[str, Any]] = Field(..., description="Danh sách các cạnh kết nối giữa các node")
 
 class ProjectChatRequest(BaseModel):
-    message: str = Field(..., min_length=1, description="Nội dung câu hỏi của người dùng")
+    message: str = Field(default="", description="Nội dung câu hỏi của người dùng")
     conversation_id: Optional[str] = Field(None, description="Định danh phiên hội thoại liên kết (tùy chọn)")
+    attachments: Optional[List[str]] = Field(default=None, description="Danh sách attachment_id đính kèm cho lượt chat này")
+
 
 # ==============================================================================
 # 2. GRAPH VALIDATION ENGINE
@@ -750,9 +752,22 @@ async def chat_through_project(
             }
         )
 
-    # 1. Kiểm tra giới hạn từ của Web Input Node (PRJ-BR-008)
+    # 1. Kiểm tra nội dung tin nhắn và tệp đính kèm (PRJ-BR-008)
+    message_text = payload.message.strip()
+    if not message_text and not payload.attachments:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error_code": "EMPTY_MESSAGE",
+                "message": "Nội dung câu hỏi không được để trống hoặc phải có tệp đính kèm."
+            }
+        )
+    if not message_text and payload.attachments:
+        message_text = "Vui lòng phân tích tệp đính kèm."
+
+    # Kiểm tra giới hạn từ của Web Input Node (PRJ-BR-008)
     max_words_limit = proj.get("max_words_limit") or 500
-    actual_words = count_words(payload.message)
+    actual_words = count_words(message_text)
     if actual_words > max_words_limit:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -766,6 +781,7 @@ async def chat_through_project(
 
     # 2. Đọc cấu hình Model Node
     target_model_id = proj.get("target_model_id") or "gemini-3.8-flash"
+
     model_rec = query_one("SELECT * FROM models WHERE id = ?", (target_model_id,))
     if not model_rec or model_rec.get("status") != "ACTIVE":
         raise HTTPException(
@@ -946,14 +962,50 @@ async def chat_through_project(
         conv_id = f"conv_{uuid.uuid4().hex}"
         execute_commit(
             "INSERT INTO conversations (id, user_id, project_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-            (conv_id, user_id, project_id, payload.message[:30] + "...")
+            (conv_id, user_id, project_id, message_text[:30] + "...")
         )
 
+    user_msg_id = f"msg_{uuid.uuid4().hex}"
     # Lưu tin nhắn user
     execute_commit(
         "INSERT INTO messages (id, conversation_id, role, content, model_used) VALUES (?, ?, 'user', ?, ?)",
-        (f"msg_{uuid.uuid4().hex}", conv_id, payload.message, target_model_id)
+        (user_msg_id, conv_id, message_text, target_model_id)
     )
+
+    # Xử lý và xác thực attachments (Anti-IDOR)
+    attachment_records: List[Dict[str, Any]] = []
+    if payload.attachments:
+        for att_id in payload.attachments:
+            att = query_one(
+                "SELECT * FROM attachments WHERE id = ? AND (user_id = ? OR user_id = 'guest_user')",
+                (att_id, user_id)
+            )
+            if not att:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail={
+                        "error_code": "ATTACHMENT_NOT_FOUND",
+                        "message": f"Tệp đính kèm '{att_id}' không tồn tại hoặc bạn không có quyền truy cập."
+                    }
+                )
+            if att.get("status") not in ("READY", "ATTACHED"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "error_code": "ATTACHMENT_NOT_READY",
+                        "message": f"Tệp đính kèm '{att.get('filename')}' chưa ở trạng thái sẵn sàng (READY)."
+
+                    }
+                )
+            execute_commit(
+                """
+                UPDATE attachments
+                SET message_id = ?, project_id = ?, conversation_id = ?, status = 'ATTACHED', updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (user_msg_id, project_id, conv_id, att_id)
+            )
+            attachment_records.append(att)
 
     # Lấy ngữ cảnh hội thoại gần nhất (tối đa 20 tin nhắn)
     context_msgs = query_all(
@@ -982,11 +1034,13 @@ async def chat_through_project(
         try:
             from llm.agent import chat_agent
             async for event in chat_agent.astream_agent(
-                prompt=payload.message,
+                prompt=message_text,
                 history=context_msgs,
                 model_override=target_model_id,
-                system_instruction=combined_instruction if combined_instruction else None
+                system_instruction=combined_instruction if combined_instruction else None,
+                attachments=attachment_records if attachment_records else None
             ):
+
                 if event.get("status") == "streaming":
                     token_str = event.get("token", "")
                     if token_str:

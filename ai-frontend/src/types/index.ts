@@ -1,3 +1,6 @@
+import { AttachmentItem } from '@/services/attachmentService';
+export type { AttachmentItem };
+
 export type Role = 'user' | 'assistant' | 'system' | 'tool';
 
 export interface Message {
@@ -9,7 +12,9 @@ export interface Message {
   model?: string;
   source?: 'WEB' | 'DISCORD';
   status?: 'pending' | 'streaming' | 'completed' | 'error';
+  attachments?: AttachmentItem[];
 }
+
 
 export interface ChatSession {
   id: string;
@@ -371,6 +376,7 @@ export interface SystemPromptDetail {
   name: string;
   description: string | null;
   content: string;
+  attachments?: AttachmentItem[];
   created_at: string;
   updated_at: string;
 }
@@ -462,6 +468,7 @@ export interface SkillDetail {
   is_valid: boolean;
   file_tree: FileTreeItem[];
   validation_report: SkillValidationReport;
+  attachments?: AttachmentItem[];
   created_at: string;
   updated_at: string;
 }

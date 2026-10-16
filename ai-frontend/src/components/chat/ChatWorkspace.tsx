@@ -2,6 +2,9 @@
 
 import React, { useState } from 'react';
 
+import { AttachmentItem } from '@/services/attachmentService';
+import { MessageAttachments } from '@/components/ui/AttachmentUploader';
+
 export interface Message {
   id: string;
   role: 'user' | 'assistant' | 'system';
@@ -9,6 +12,7 @@ export interface Message {
   model?: string;
   created_at?: string;
   isStreaming?: boolean;
+  attachments?: AttachmentItem[];
 }
 
 interface ChatWorkspaceProps {
@@ -369,11 +373,23 @@ export default function ChatWorkspace({
                   }}
                 >
                   {isUser ? (
-                    <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6, fontSize: '0.9rem' }}>
-                      {msg.content}
-                    </div>
+                    <>
+                      {msg.attachments && msg.attachments.length > 0 && (
+                        <div style={{ marginBottom: '8px' }}>
+                          <MessageAttachments attachments={msg.attachments} />
+                        </div>
+                      )}
+                      <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6, fontSize: '0.9rem' }}>
+                        {msg.content}
+                      </div>
+                    </>
                   ) : (
                     <>
+                      {msg.attachments && msg.attachments.length > 0 && (
+                        <div style={{ marginBottom: '8px' }}>
+                          <MessageAttachments attachments={msg.attachments} />
+                        </div>
+                      )}
                       <FormattedMessage content={msg.content} isStreaming={msg.isStreaming} />
 
                       {/* Generating indicator */}

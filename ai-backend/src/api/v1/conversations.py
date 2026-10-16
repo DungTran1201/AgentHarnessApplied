@@ -75,10 +75,31 @@ async def get_conversation_messages(
         """,
         (conversation_id,)
     )
+
+    # Lấy danh sách attachments liên quan đến cuộc hội thoại này (SRS Unified File Uploads)
+    raw_attachments = query_all(
+        """
+        SELECT id, message_id, filename, mime_type, file_size, status, created_at
+        FROM attachments
+        WHERE conversation_id = ?
+        """,
+        (conversation_id,)
+    )
+
+    att_by_msg = {}
+    for att in raw_attachments:
+        mid = att.get("message_id")
+        if mid:
+            att_by_msg.setdefault(mid, []).append(att)
+
+    for msg in messages:
+        msg["attachments"] = att_by_msg.get(msg["id"], [])
+
     return {
         "conversation": conv,
         "messages": messages
     }
+
 
 @conv_router.patch("/{conversation_id}")
 async def rename_conversation(

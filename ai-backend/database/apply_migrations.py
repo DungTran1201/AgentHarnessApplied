@@ -173,6 +173,27 @@ def run_migration():
                 cur.execute("ALTER TABLE projects DROP COLUMN workspace_id")
                 conn.commit()
 
+        # 13. Apply 015_unified_file_upload_system.sql (Attachments and Assets)
+        # If attachments table already exists, ensure skill_id and prompt_id columns are added first
+        if "attachments" in [r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]:
+            att_cols = [c[1] for c in cur.execute("PRAGMA table_info(attachments)").fetchall()]
+            if "skill_id" not in att_cols:
+                print(f"Adding skill_id column to attachments in {db_path.name}...")
+                cur.execute("ALTER TABLE attachments ADD COLUMN skill_id VARCHAR(36) REFERENCES skills(id) ON DELETE CASCADE")
+                conn.commit()
+            if "prompt_id" not in att_cols:
+                print(f"Adding prompt_id column to attachments in {db_path.name}...")
+                cur.execute("ALTER TABLE attachments ADD COLUMN prompt_id VARCHAR(36) REFERENCES system_prompts(id) ON DELETE CASCADE")
+                conn.commit()
+
+        migration_015_file = MIGRATIONS_DIR / "015_unified_file_upload_system.sql"
+        if migration_015_file.exists():
+            print(f"Executing {migration_015_file.name} on {db_path.name}...")
+            with open(migration_015_file, "r", encoding="utf-8") as f:
+                cur.executescript(f.read())
+            conn.commit()
+            print(f"Applied 015 migration successfully to {db_path.name}.")
+
         # Verify active tables
         tables = [r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
         print(f"Tables in {db_path.name}: {tables}")

@@ -4,6 +4,13 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Project, GraphNode, GraphEdge, Message } from '@/types';
 import { ProjectService } from '@/services/projectService';
 import Icon from '@/components/ui/Icon';
+import {
+  AttachmentButton,
+  ComposerAttachmentChips,
+  MessageAttachments,
+  StagedFile
+} from '@/components/ui/AttachmentUploader';
+import { AttachmentService } from '@/services/attachmentService';
 
 interface FloatingProjectChatProps {
   project: Project | null;
@@ -306,6 +313,7 @@ export default function FloatingProjectChat({
   const [inputPrompt, setInputPrompt] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
+  const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -329,9 +337,77 @@ export default function FloatingProjectChat({
 
   const isWordLimitExceeded = currentWordCount > maxWordsLimit;
 
+  // ── Attachments Handling ─────────────────────────────────────────
+  const handleUploadFiles = async (files: File[]) => {
+    for (const file of files) {
+      const tempId = `staged_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const staged: StagedFile = {
+        id: tempId,
+        file,
+        name: file.name,
+        size: file.size,
+        mime: file.type || 'application/octet-stream',
+        status: 'UPLOADING',
+        progress: 20,
+      };
+      setStagedFiles(prev => [...prev, staged]);
+
+      try {
+        const item = await AttachmentService.uploadAttachment(
+          file,
+          'project_chat',
+          project?.id,
+          (percent) => {
+            setStagedFiles(prev =>
+              prev.map(f => (f.id === tempId ? { ...f, progress: percent } : f))
+            );
+          }
+        );
+        setStagedFiles(prev =>
+          prev.map(f => (f.id === tempId ? {
+            ...f,
+            id: item.id,
+            status: 'READY',
+            progress: 100,
+            attachment: item,
+          } : f))
+        );
+      } catch (err: any) {
+        setStagedFiles(prev =>
+          prev.map(f => (f.id === tempId ? {
+            ...f,
+            status: 'FAILED',
+            error: err.message || 'Upload failed',
+          } : f))
+        );
+      }
+    }
+  };
+
+  const handleRemoveStagedFile = (index: number) => {
+    setStagedFiles(prev => prev.filter((_, idx) => idx !== index));
+  };
+
+  const handleRetryStagedFile = (index: number) => {
+    const item = stagedFiles[index];
+    if (item && item.file) {
+      handleRemoveStagedFile(index);
+      handleUploadFiles([item.file]);
+    }
+  };
+
   // ── Sending Message ──────────────────────────────────────────────
   const handleSendMessage = async () => {
-    if (!inputPrompt.trim() || isStreaming || !project) return;
+    const isUploadingAny = stagedFiles.some(f => f.status === 'UPLOADING');
+    if (isUploadingAny) {
+      setErrorBanner('Vui lòng đợi tệp hoàn tất tải lên.');
+      return;
+    }
+
+    const readyAttachments = stagedFiles.filter(f => f.status === 'READY' && f.attachment).map(f => f.attachment!);
+    const readyIds = readyAttachments.map(a => a.id);
+
+    if ((!inputPrompt.trim() && readyIds.length === 0) || isStreaming || !project) return;
 
     if (isWordLimitExceeded) {
       setErrorBanner(`Word count (${currentWordCount}) exceeds project limit (${maxWordsLimit} words).`);
@@ -349,6 +425,7 @@ export default function FloatingProjectChat({
       content: userText,
       timestamp: Date.now(),
       status: 'completed',
+      attachments: readyAttachments.length > 0 ? readyAttachments : undefined,
     };
 
     const assistantPlaceholder: Message = {
@@ -361,6 +438,7 @@ export default function FloatingProjectChat({
 
     setMessages(prev => [...prev, userMessage, assistantPlaceholder]);
     setInputPrompt('');
+    setStagedFiles([]);
     setIsStreaming(true);
 
     const controller = new AbortController();
@@ -406,7 +484,8 @@ export default function FloatingProjectChat({
             )
           );
         },
-        controller.signal
+        controller.signal,
+        readyIds.length > 0 ? readyIds : undefined
       );
     } catch (err: any) {
       if (err?.name !== 'AbortError') {
@@ -1023,6 +1102,11 @@ export default function FloatingProjectChat({
                       color: 'var(--text-primary)',
                     }}
                   >
+                    {m.attachments && m.attachments.length > 0 && (
+                      <div style={{ marginBottom: '6px' }}>
+                        <MessageAttachments attachments={m.attachments} />
+                      </div>
+                    )}
                     {m.content ? (
                       <span style={{ whiteSpace: 'pre-wrap' }}>{m.content}</span>
                     ) : (
@@ -1065,13 +1149,23 @@ export default function FloatingProjectChat({
             background: 'rgba(0, 0, 0, 0.2)',
             padding: '8px 10px',
             flexShrink: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '6px',
           }}
         >
+          {/* Staged file chips */}
+          <ComposerAttachmentChips
+            files={stagedFiles}
+            onRemove={handleRemoveStagedFile}
+            onRetry={handleRetryStagedFile}
+          />
+
           <div
             style={{
               display: 'flex',
               alignItems: 'flex-end',
-              gap: '8px',
+              gap: '6px',
               background: 'var(--bg-surface)',
               border: isWordLimitExceeded
                 ? '1px solid var(--danger)'
@@ -1080,6 +1174,11 @@ export default function FloatingProjectChat({
               padding: '6px 8px',
             }}
           >
+            <AttachmentButton
+              onFilesSelected={handleUploadFiles}
+              disabled={isStreaming || (!isProjectActive && !messages.length)}
+            />
+
             <textarea
               value={inputPrompt}
               onChange={e => setInputPrompt(e.target.value)}
@@ -1133,19 +1232,19 @@ export default function FloatingProjectChat({
               <button
                 type="button"
                 onClick={handleSendMessage}
-                disabled={!inputPrompt.trim() || isWordLimitExceeded}
+                disabled={(!inputPrompt.trim() && !stagedFiles.some(f => f.status === 'READY')) || isWordLimitExceeded}
                 title="Send message (Enter)"
                 style={{
-                  background: inputPrompt.trim() && !isWordLimitExceeded
+                  background: (inputPrompt.trim() || stagedFiles.some(f => f.status === 'READY')) && !isWordLimitExceeded
                     ? 'var(--accent)'
                     : 'rgba(255, 255, 255, 0.08)',
-                  color: inputPrompt.trim() && !isWordLimitExceeded
+                  color: (inputPrompt.trim() || stagedFiles.some(f => f.status === 'READY')) && !isWordLimitExceeded
                     ? '#000'
                     : 'var(--text-muted)',
                   border: 'none',
                   borderRadius: '4px',
                   padding: '4px 10px',
-                  cursor: inputPrompt.trim() && !isWordLimitExceeded ? 'pointer' : 'not-allowed',
+                  cursor: (inputPrompt.trim() || stagedFiles.some(f => f.status === 'READY')) && !isWordLimitExceeded ? 'pointer' : 'not-allowed',
                   fontSize: '0.75rem',
                   fontWeight: 600,
                   display: 'flex',
