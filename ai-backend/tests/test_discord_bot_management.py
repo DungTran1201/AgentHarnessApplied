@@ -220,7 +220,7 @@ class TestDiscordBotManagement(unittest.TestCase):
         # 2. Gửi lệnh dispatch
         res = self.client.post(
             "/api/v1/bot/discord/test-dispatch",
-            json={"query": "Thử nghiệm tự động failover mô hình"},
+            json={"query": "Thử nghiệm tự động failover mô hình", "model_id": test_inactive_model},
             cookies=self.linked_cookies
         )
         self.assertEqual(res.status_code, 200)

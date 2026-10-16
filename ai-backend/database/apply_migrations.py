@@ -156,102 +156,24 @@ def run_migration():
             conn.commit()
             print(f"Applied 010 migration successfully to {db_path.name}.")
 
-        # 12. Apply 011_orchestrator_foundation.sql (Development Workspace & Agent Runner)
-        migration_011_file = MIGRATIONS_DIR / "011_orchestrator_foundation.sql"
-        if migration_011_file.exists():
-            print(f"Executing {migration_011_file.name} on {db_path.name}...")
-            with open(migration_011_file, "r", encoding="utf-8") as f:
+        # 12. Apply 014_sunset_development_orchestrator.sql (Sunset and Decommission Orchestrator/Workspaces)
+        migration_014_file = MIGRATIONS_DIR / "014_sunset_development_orchestrator.sql"
+        if migration_014_file.exists():
+            print(f"Executing {migration_014_file.name} on {db_path.name}...")
+            with open(migration_014_file, "r", encoding="utf-8") as f:
                 cur.executescript(f.read())
             conn.commit()
-            print(f"Applied 011 migration successfully to {db_path.name}.")
+            print(f"Applied 014 sunset migration successfully to {db_path.name}.")
 
-        # Add workspace_id column to projects if table exists and column missing
-        prj_cols = [c[1] for c in cur.execute("PRAGMA table_info(projects)").fetchall()]
-        if "workspace_id" not in prj_cols and "projects" in [r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]:
-            print(f"Adding workspace_id column to projects in {db_path.name}...")
-            cur.execute("ALTER TABLE projects ADD COLUMN workspace_id VARCHAR(36) REFERENCES development_workspaces(id) ON DELETE SET NULL")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_projects_workspace_id ON projects(workspace_id)")
-            conn.commit()
+        # Clean up unreferenced workspace_id column from projects if still present
+        if "projects" in [r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]:
+            prj_cols = [c[1] for c in cur.execute("PRAGMA table_info(projects)").fetchall()]
+            if "workspace_id" in prj_cols:
+                print(f"Dropping unreferenced workspace_id column from projects in {db_path.name}...")
+                cur.execute("ALTER TABLE projects DROP COLUMN workspace_id")
+                conn.commit()
 
-        # 13. Apply 012_development_task_management.sql (Tasks, Attempts, Events, Artifacts, Approvals)
-        migration_012_file = MIGRATIONS_DIR / "012_development_task_management.sql"
-        if migration_012_file.exists():
-            print(f"Executing {migration_012_file.name} on {db_path.name}...")
-            with open(migration_012_file, "r", encoding="utf-8") as f:
-                cur.executescript(f.read())
-            conn.commit()
-            print(f"Applied 012 migration successfully to {db_path.name}.")
-
-        # 14. Apply 013_verification_and_review_gates.sql (Verification Reports & Isolation Gates)
-        migration_013_file = MIGRATIONS_DIR / "013_verification_and_review_gates.sql"
-        if migration_013_file.exists():
-            print(f"Executing {migration_013_file.name} on {db_path.name}...")
-            with open(migration_013_file, "r", encoding="utf-8") as f:
-                cur.executescript(f.read())
-            conn.commit()
-            print(f"Applied 013 migration successfully to {db_path.name}.")
-
-        # Add columns to development_workspaces if missing
-        if "development_workspaces" in [r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]:
-            ws_cols = [c[1] for c in cur.execute("PRAGMA table_info(development_workspaces)").fetchall()]
-            if "verification_policy" not in ws_cols:
-                cur.execute("ALTER TABLE development_workspaces ADD COLUMN verification_policy TEXT")
-            if "isolation_strategy" not in ws_cols:
-                cur.execute("ALTER TABLE development_workspaces ADD COLUMN isolation_strategy VARCHAR(50) DEFAULT 'worktree'")
-            conn.commit()
-
-        # Add columns to task_attempts if missing
-        if "task_attempts" in [r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]:
-            att_cols = [c[1] for c in cur.execute("PRAGMA table_info(task_attempts)").fetchall()]
-            if "worktree_path" not in att_cols:
-                cur.execute("ALTER TABLE task_attempts ADD COLUMN worktree_path VARCHAR(1024)")
-            if "is_isolated" not in att_cols:
-                cur.execute("ALTER TABLE task_attempts ADD COLUMN is_isolated INTEGER DEFAULT 1")
-            if "diff_stat" not in att_cols:
-                cur.execute("ALTER TABLE task_attempts ADD COLUMN diff_stat TEXT")
-            if "review_feedback" not in att_cols:
-                cur.execute("ALTER TABLE task_attempts ADD COLUMN review_feedback TEXT")
-            if "parent_attempt_id" not in att_cols:
-                cur.execute("ALTER TABLE task_attempts ADD COLUMN parent_attempt_id VARCHAR(36)")
-            if "claimed_at" not in att_cols:
-                cur.execute("ALTER TABLE task_attempts ADD COLUMN claimed_at DATETIME")
-            if "first_event_at" not in att_cols:
-                cur.execute("ALTER TABLE task_attempts ADD COLUMN first_event_at DATETIME")
-            conn.commit()
-
-        # Add columns to development_tasks if missing
-        if "development_tasks" in [r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]:
-            tsk_cols = [c[1] for c in cur.execute("PRAGMA table_info(development_tasks)").fetchall()]
-            if "review_status" not in tsk_cols:
-                cur.execute("ALTER TABLE development_tasks ADD COLUMN review_status VARCHAR(30) DEFAULT 'PENDING'")
-            if "dispatch_state" not in tsk_cols:
-                cur.execute("ALTER TABLE development_tasks ADD COLUMN dispatch_state VARCHAR(50) DEFAULT 'IDLE'")
-            if "failure_code" not in tsk_cols:
-                cur.execute("ALTER TABLE development_tasks ADD COLUMN failure_code VARCHAR(50)")
-            conn.commit()
-
-        # Add columns to task_artifacts if missing
-        if "task_artifacts" in [r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]:
-            art_cols = [c[1] for c in cur.execute("PRAGMA table_info(task_artifacts)").fetchall()]
-            if "task_id" not in art_cols:
-                cur.execute("ALTER TABLE task_artifacts ADD COLUMN task_id VARCHAR(36)")
-            if "display_name" not in art_cols:
-                cur.execute("ALTER TABLE task_artifacts ADD COLUMN display_name VARCHAR(255)")
-            if "mime_type" not in art_cols:
-                cur.execute("ALTER TABLE task_artifacts ADD COLUMN mime_type VARCHAR(100) DEFAULT 'text/plain'")
-            if "checksum_sha256" not in art_cols:
-                cur.execute("ALTER TABLE task_artifacts ADD COLUMN checksum_sha256 VARCHAR(64)")
-            if "storage_path" not in art_cols:
-                cur.execute("ALTER TABLE task_artifacts ADD COLUMN storage_path VARCHAR(512)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_task_artifacts_task_id ON task_artifacts(task_id)")
-            cur.execute("""
-                UPDATE task_artifacts 
-                SET task_id = (SELECT task_id FROM task_attempts WHERE task_attempts.id = task_artifacts.attempt_id)
-                WHERE task_id IS NULL
-            """)
-            conn.commit()
-
-        # Verify tables
+        # Verify active tables
         tables = [r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
         print(f"Tables in {db_path.name}: {tables}")
         if "api_metric_logs" in tables and "user_quotas" in tables:
@@ -269,18 +191,6 @@ def run_migration():
         if "skills" in tables:
             skill_count = cur.execute("SELECT COUNT(*) FROM skills").fetchone()[0]
             print(f"Total skills in {db_path.name}: {skill_count}")
-        if "development_workspaces" in tables:
-            ws_count = cur.execute("SELECT COUNT(*) FROM development_workspaces").fetchone()[0]
-            print(f"Total development workspaces in {db_path.name}: {ws_count}")
-        if "agent_runners" in tables:
-            runner_count = cur.execute("SELECT COUNT(*) FROM agent_runners").fetchone()[0]
-            print(f"Total agent runners in {db_path.name}: {runner_count}")
-        if "development_tasks" in tables:
-            task_count = cur.execute("SELECT COUNT(*) FROM development_tasks").fetchone()[0]
-            print(f"Total development tasks in {db_path.name}: {task_count}")
-        if "task_attempts" in tables:
-            attempt_count = cur.execute("SELECT COUNT(*) FROM task_attempts").fetchone()[0]
-            print(f"Total task attempts in {db_path.name}: {attempt_count}")
             
         conn.close()
 

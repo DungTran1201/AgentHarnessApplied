@@ -1,8 +1,8 @@
 <#
 .SYNOPSIS
-    AI-Chan Fullstack & Development Orchestrator Launcher
+    AI-Chan Fullstack & Discord Bot Demo Launcher
 .DESCRIPTION
-    Starts FastAPI backend, Next.js frontend, Agent Runner daemon, and optional Discord bot
+    Starts FastAPI backend, Next.js frontend, and optional Discord bot
     with dependency preflights, port conflict detection, readiness health checks,
     dedicated visible Command Prompt (cmd.exe) windows with real-time logs, and graceful shutdown.
 .PARAMETER Command
@@ -12,7 +12,7 @@
 .PARAMETER NoDiscord
     Skip starting the optional Discord bot.
 .PARAMETER NoRunner
-    Skip starting the local Agent Runner daemon.
+    Deprecated no-op flag preserved for CLI compatibility.
 .PARAMETER Check
     Run preflight dependency, port, and configuration checks only without starting services.
 .PARAMETER Stop
@@ -115,25 +115,21 @@ function Write-Fail {
 
 if ($Help) {
     Write-Host @"
-AI-Chan Development Orchestrator Demo Launcher
+AI-Chan Fullstack & Discord Bot Demo Launcher
 
 Usage:
   run-demo.bat [options]
   powershell -File run-demo.ps1 [options]
 
 Options:
-  --check, check          Run preflight diagnostics (Python, Node, Git, agy, ports, env) and exit
+  --check, check          Run preflight diagnostics (Python, Node, Git, ports, env) and exit
   --stop, stop            Stop all running AI-Chan demo processes cleanly
   --single-console        Run services in background without separate visible CMD windows
   --no-browser            Do not automatically open the browser when ready
-  --no-runner             Do not start the local Agent Runner daemon
   --no-discord            Do not start the Discord bot
   --backend-port <int>    Port for FastAPI backend (default: 8000)
   --frontend-port <int>   Port for Next.js frontend (default: 3000)
   --help, -h              Show this help message
-
-Documentation:
-  docs/development-orchestrator/README.md
 "@
     exit 0
 }
@@ -353,24 +349,6 @@ function Test-PortAvailable {
 $backendPortFree = Test-PortAvailable -Port $BackendPort -ServiceName "Backend API"
 $frontendPortFree = Test-PortAvailable -Port $FrontendPort -ServiceName "Frontend UI"
 
-# 3.7 Runner Configuration State
-$RunnerConfigDir = Join-Path $env:USERPROFILE ".ai-chan"
-$RunnerConfigFile = Join-Path $RunnerConfigDir "runner.json"
-$RunnerPaired = $false
-if (Test-Path $RunnerConfigFile) {
-    try {
-        $rCfg = Get-Content $RunnerConfigFile -Raw | ConvertFrom-Json
-        if ($rCfg.runner_id -and $rCfg.runner_secret) {
-            $RunnerPaired = $true
-            Write-Success "Agent Runner enrollment: PAIRED (Runner ID: $($rCfg.runner_id))"
-        }
-    } catch {}
-}
-
-if (-not $RunnerPaired) {
-    Write-Info "Agent Runner enrollment: NOT PAIRED. (Pair via web interface: Workspaces -> Pair New Runner)"
-}
-
 if ($Check) {
     Write-Header "Preflight Diagnostics Complete"
     Write-Host "All checks finished. To start demo services, run without -Check." -ForegroundColor Green
@@ -391,16 +369,15 @@ if (-not $backendPortFree -or -not $frontendPortFree) {
 # ── 4. PROCESS LAUNCHING ───────────────────────────────────────────────────────
 $pids = @{}
 $serviceStatus = [ordered]@{
-    "backend"  = @{ Name = "FastAPI Backend"; Status = "PENDING"; Pid = $null; Log = "logs\backend.log"; Endpoint = "http://127.0.0.1:$BackendPort/api/v1/orchestrator/health" }
+    "backend"  = @{ Name = "FastAPI Backend"; Status = "PENDING"; Pid = $null; Log = "logs\backend.log"; Endpoint = "http://127.0.0.1:$BackendPort/api/v1/health" }
     "frontend" = @{ Name = "Next.js Frontend"; Status = "PENDING"; Pid = $null; Log = "logs\frontend.log"; Endpoint = "http://localhost:$FrontendPort" }
-    "runner"   = @{ Name = "Agent Runner"; Status = "SKIPPED"; Pid = $null; Log = "logs\runner.log"; Endpoint = "SSE Dispatch Channel" }
     "discord"  = @{ Name = "Discord Bot"; Status = "SKIPPED"; Pid = $null; Log = "logs\discord.log"; Endpoint = "Discord Gateway" }
 }
 
 Write-Header "Launching AI-Chan Demo Services"
 
 # 4.1 FastAPI Backend
-Write-Info "[1/4] Starting FastAPI Backend on http://127.0.0.1:$BackendPort ..."
+Write-Info "[1/3] Starting FastAPI Backend on http://127.0.0.1:$BackendPort ..."
 $backendLog = Join-Path $LogDir "backend.log"
 
 if ($SingleConsole) {
@@ -424,7 +401,7 @@ $serviceStatus["backend"].Pid = $backendProc.Id
 Write-Success "FastAPI Backend launched (PID: $($backendProc.Id), Title: 'AI-Chan | Backend API', Log: logs\backend.log)"
 
 # 4.2 Poll Backend Readiness
-Write-Info "Awaiting Backend readiness on http://127.0.0.1:$BackendPort/api/v1/orchestrator/health ..."
+Write-Info "Awaiting Backend readiness on http://127.0.0.1:$BackendPort/api/v1/health ..."
 $maxRetries = 30
 for ($i = 0; $i -lt $maxRetries; $i++) {
     Start-Sleep -Seconds 1
@@ -434,7 +411,7 @@ for ($i = 0; $i -lt $maxRetries; $i++) {
         break
     }
     try {
-        $res = Invoke-WebRequest -Uri "http://127.0.0.1:$BackendPort/api/v1/orchestrator/health" -UseBasicParsing -TimeoutSec 2 -ErrorAction SilentlyContinue
+        $res = Invoke-WebRequest -Uri "http://127.0.0.1:$BackendPort/api/v1/health" -UseBasicParsing -TimeoutSec 2 -ErrorAction SilentlyContinue
         if ($res.StatusCode -eq 200) {
             $serviceStatus["backend"].Status = "READY"
             break
@@ -443,14 +420,14 @@ for ($i = 0; $i -lt $maxRetries; $i++) {
 }
 
 if ($serviceStatus["backend"].Status -eq "READY") {
-    Write-Success "FastAPI Backend is READY (HTTP 200 OK - Orchestrator Healthy)"
+    Write-Success "FastAPI Backend is READY (HTTP 200 OK - Health API Healthy)"
 } elseif ($serviceStatus["backend"].Status -ne "FAILED") {
     $serviceStatus["backend"].Status = "FAILED"
     Write-Fail "Backend did not respond within $maxRetries seconds. Check logs\backend.log for details."
 }
 
 # 4.3 Next.js Frontend
-Write-Info "[2/4] Starting Next.js Frontend on http://localhost:$FrontendPort ..."
+Write-Info "[2/3] Starting Next.js Frontend on http://localhost:$FrontendPort ..."
 $frontendLog = Join-Path $LogDir "frontend.log"
 
 if ($SingleConsole) {
@@ -501,75 +478,7 @@ if ($serviceStatus["frontend"].Status -eq "READY") {
     Write-Warn "Frontend did not respond within $maxRetries seconds. It may still be compiling, check logs\frontend.log."
 }
 
-# 4.5 Agent Runner Daemon
-if (-not $NoRunner) {
-    if ($RunnerPaired) {
-        Write-Info "[3/4] Starting Local Agent Runner Daemon..."
-        $runnerLog = Join-Path $LogDir "runner.log"
-
-        if ($SingleConsole) {
-            $runnerProc = Start-Process -FilePath $PythonExe `
-                -ArgumentList "-u", "runner.py", "start", "--server", "http://localhost:$BackendPort" `
-                -WorkingDirectory (Join-Path $RepoRoot "ai-runner") `
-                -RedirectStandardOutput $runnerLog `
-                -RedirectStandardError (Join-Path $LogDir "runner.err.log") `
-                -NoNewWindow `
-                -PassThru
-        } else {
-            $runnerCmdScript = Join-Path $RepoRoot "tools\run-runner.cmd"
-            $runnerProc = Start-Process -FilePath "cmd.exe" `
-                -ArgumentList "/k `"`"$runnerCmdScript`" http://localhost:$BackendPort `"$PythonExe`"`"" `
-                -WorkingDirectory $RepoRoot `
-                -PassThru
-        }
-
-        $pids["runner"] = $runnerProc.Id
-        $serviceStatus["runner"].Pid = $runnerProc.Id
-        Write-Success "Agent Runner daemon launched (PID: $($runnerProc.Id), Title: 'AI-Chan | Agent Runner', Log: logs\runner.log)"
-
-        # Check Runner Connection State bounded
-        Write-Info "Verifying Runner SSE dispatch connection..."
-        $runnerMaxRetries = 10
-        for ($r = 0; $r -lt $runnerMaxRetries; $r++) {
-            Start-Sleep -Seconds 1
-            if ($runnerProc.HasExited) {
-                $serviceStatus["runner"].Status = "FAILED"
-                Write-Fail "Agent Runner exited unexpectedly. Check logs\runner.log."
-                break
-            }
-            try {
-                $hRes = Invoke-RestMethod -Uri "http://127.0.0.1:$BackendPort/api/v1/orchestrator/health" -TimeoutSec 2 -ErrorAction SilentlyContinue
-                if ($hRes -and $hRes.active_runner_channels -gt 0) {
-                    $serviceStatus["runner"].Status = "READY"
-                    break
-                }
-            } catch {}
-
-            if (Test-Path $runnerLog) {
-                $rLogContent = Get-Content $runnerLog -Tail 15 -ErrorAction SilentlyContinue
-                if ($rLogContent -match "(Subscribed to SSE channel|Outbound SSE Channel connected)") {
-                    $serviceStatus["runner"].Status = "READY"
-                    break
-                }
-            }
-        }
-
-        if ($serviceStatus["runner"].Status -eq "READY") {
-            Write-Success "Agent Runner: READY (Connected to SSE dispatch channel)"
-        } elseif ($serviceStatus["runner"].Status -ne "FAILED") {
-            $serviceStatus["runner"].Status = "STARTED, NOT CONNECTED"
-            Write-Warn "Agent Runner: STARTED, NOT CONNECTED (Process alive, awaiting SSE dispatch channel. Check logs\runner.log)"
-        }
-    } else {
-        $serviceStatus["runner"].Status = "SKIPPED"
-        Write-Info "[3/4] Agent Runner: SKIPPED (Not paired yet. Pair via web UI: Workspaces -> Pair New Runner)"
-    }
-} else {
-    $serviceStatus["runner"].Status = "SKIPPED"
-    Write-Info "[3/4] Agent Runner: SKIPPED (-NoRunner flag specified)"
-}
-
-# 4.6 Discord Bot (Optional)
+# 4.5 Discord Bot (Optional)
 if (-not $NoDiscord) {
     $hasDiscordToken = $false
     if (Test-Path $BackendEnv) {
@@ -585,7 +494,7 @@ if (-not $NoDiscord) {
     }
 
     if ($hasDiscordToken) {
-        Write-Info "[4/4] Starting AI-Chan Discord Bot..."
+        Write-Info "[3/3] Starting AI-Chan Discord Bot..."
         $discordLog = Join-Path $LogDir "discord.log"
 
         if ($SingleConsole) {
@@ -616,21 +525,20 @@ if (-not $NoDiscord) {
         }
     } else {
         $serviceStatus["discord"].Status = "SKIPPED"
-        Write-Info "[4/4] Discord Bot: SKIPPED (DISCORD_BOT_TOKEN not configured or placeholder in ai-backend\.env)"
+        Write-Info "[3/3] Discord Bot: SKIPPED (DISCORD_BOT_TOKEN not configured or placeholder in ai-backend\.env)"
     }
 } else {
     $serviceStatus["discord"].Status = "SKIPPED"
-    Write-Info "[4/4] Discord Bot: SKIPPED (-NoDiscord flag specified)"
+    Write-Info "[3/3] Discord Bot: SKIPPED (-NoDiscord flag specified)"
 }
 
-# 4.7 Record Structured Session State to .demo_pids.json
+# 4.6 Record Structured Session State to .demo_pids.json
 $pidsData = [ordered]@{
     session_id = "demo_$([Guid]::NewGuid().ToString('N').Substring(0, 8))"
     started_at = (Get-Date -Format "o")
     mode       = if ($SingleConsole) { "single_console" } else { "visible_windows" }
     backend    = @{ pid = $pids["backend"]; service = "FastAPI Backend"; port = $BackendPort }
     frontend   = @{ pid = $pids["frontend"]; service = "Next.js Frontend"; port = $FrontendPort }
-    runner     = @{ pid = $pids["runner"]; service = "Agent Runner" }
     discord    = @{ pid = $pids["discord"]; service = "Discord Bot" }
 }
 $pidsData | ConvertTo-Json -Depth 3 | Set-Content -Path $PidFile -Force
@@ -646,7 +554,6 @@ if ($hasCriticalFailure) {
         $color = switch ($svc.Status) {
             "READY" { "Green" }
             "SKIPPED" { "DarkGray" }
-            "STARTED, NOT CONNECTED" { "Yellow" }
             default { "Red" }
         }
         Write-Host ("  - {0,-18} : [{1}] (Log: {2})" -f $svc.Name, $svc.Status, $svc.Log) -ForegroundColor $color
@@ -667,7 +574,6 @@ if ($hasCriticalFailure) {
         $color = switch ($svc.Status) {
             "READY" { "Green" }
             "SKIPPED" { "DarkGray" }
-            "STARTED, NOT CONNECTED" { "Yellow" }
             default { "Red" }
         }
         $pidInfo = if ($svc.Pid) { "(PID: $($svc.Pid))" } else { "" }
@@ -675,17 +581,17 @@ if ($hasCriticalFailure) {
     }
 
     Write-Host "`nAccess Endpoints:" -ForegroundColor Cyan
-    Write-Host "  Frontend URL:     http://localhost:$FrontendPort" -ForegroundColor Cyan
+    Write-Host "  Frontend Chat:    http://localhost:$FrontendPort/chat" -ForegroundColor Cyan
+    Write-Host "  Projects Builder: http://localhost:$FrontendPort/projects" -ForegroundColor Cyan
     Write-Host "  Backend API Docs: http://127.0.0.1:$BackendPort/docs" -ForegroundColor Cyan
-    Write-Host "  Workspaces UI:    http://localhost:$FrontendPort/workspaces" -ForegroundColor Cyan
-    Write-Host "  Tasks Workbench:  http://localhost:$FrontendPort/tasks" -ForegroundColor Cyan
+    Write-Host "  Backend Health:   http://127.0.0.1:$BackendPort/api/v1/health" -ForegroundColor Cyan
     Write-Host "  Runtime Logs:     $LogDir" -ForegroundColor Cyan
     Write-Host "`n  To stop all services cleanly: Press Ctrl+C in this terminal," -ForegroundColor Yellow
     Write-Host "  or run: .\run-demo.bat --stop (or stop-demo.bat)" -ForegroundColor Yellow
     Write-Host "========================================================`n" -ForegroundColor Cyan
 
     if (-not $NoBrowser -and $serviceStatus["frontend"].Status -eq "READY") {
-        Start-Process "http://localhost:$FrontendPort"
+        Start-Process "http://localhost:$FrontendPort/chat"
     }
 }
 

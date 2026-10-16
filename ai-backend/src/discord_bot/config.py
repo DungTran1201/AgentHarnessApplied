@@ -100,9 +100,9 @@ class Settings(BaseSettings):
         elif self.DISCORD_BOT_API_KEY and not self.ANTIGRAVITY_API_KEY:
             self.ANTIGRAVITY_API_KEY = self.DISCORD_BOT_API_KEY
 
-        if self.ANTIGRAVITY_TIMEOUT_SECONDS is not None and self.DISCORD_BOT_TIMEOUT_SECONDS == 30.0:
+        if self.ANTIGRAVITY_TIMEOUT_SECONDS is not None:
             self.DISCORD_BOT_TIMEOUT_SECONDS = self.ANTIGRAVITY_TIMEOUT_SECONDS
-        elif self.ANTIGRAVITY_TIMEOUT_SECONDS is None:
+        else:
             self.ANTIGRAVITY_TIMEOUT_SECONDS = self.DISCORD_BOT_TIMEOUT_SECONDS
 
         return self

@@ -36,8 +36,6 @@ export const NAV_ITEMS: { key: string; label: string; icon: IconName; href: stri
   { key: 'bot',         label: 'Bot',             icon: 'bot',       href: '/bot/discord' },
   { key: 'prompts',     label: 'System Prompts',  icon: 'prompts',   href: '/prompts' },
   { key: 'skills',      label: 'Skills',          icon: 'skills',    href: '/skills' },
-  { key: 'workspaces',  label: 'Workspaces',      icon: 'workspace', href: '/workspaces' },
-  { key: 'tasks',       label: 'Tasks',           icon: 'terminal',  href: '/tasks' },
   { key: 'dashboard',   label: 'Dashboard',       icon: 'dashboard', href: '/dashboard' },
   { key: 'settings',    label: 'Settings',        icon: 'settings',  href: '/settings' },
 ];

@@ -1,9 +1,10 @@
 # AI-Chan Development Orchestrator — External Project Development with Antigravity Agent
 
-> **Version:** 1.0.0 (Production / MVP)  
-> **Status:** APPROVED & VERIFIED  
-> **Target OS:** Windows 10/11 x64 (Native support, PowerShell 5.1+ / PowerShell 7+)  
-> **Runtime Integration:** Antigravity CLI (`agy` v1.2.16+)
+> [!CAUTION]
+> **DECOMMISSIONED / ARCHIVED (2026-10-16)**  
+> Subsystem External Project Development / Workspace Manager / Task Orchestrator / Local Agent Runner (`ai-runner`) qua website AI-Chan đã chính thức được **gỡ bỏ hoàn toàn** do không đạt mục tiêu sử dụng thực tế.  
+> Tài liệu này được lưu trữ (archived) phục vụ mục đích tra cứu lịch sử kiến trúc.  
+> **Lộ trình tiếp theo:** Discord CLI Bridge (triển khai trong nhiệm vụ riêng độc lập, không điều phối qua web UI).
 
 ---
 

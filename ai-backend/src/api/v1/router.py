@@ -15,7 +15,6 @@ from src.api.v1.bot import (
 from src.api.v1.projects import projects_router
 from src.api.v1.prompts import prompts_router
 from src.api.v1.skills import skills_router
-from src.api.v1.orchestrator import orchestrator_router
 
 api_router = APIRouter()
 
@@ -52,7 +51,6 @@ api_router.include_router(bot_router)
 api_router.include_router(projects_router)
 api_router.include_router(prompts_router)
 api_router.include_router(skills_router)
-api_router.include_router(orchestrator_router)
 
 
 
