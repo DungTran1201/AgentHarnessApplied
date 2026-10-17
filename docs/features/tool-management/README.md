@@ -49,20 +49,16 @@ docs/features/tool-management/
 ├── 07-faiss-local-vector-store-spec.md          # Đặc tả chuyên sâu FAISS: embedding, dimension, persistence, chunking, rebuild
 ├── 08-mermaid-diagrams.md                       # 16 Biểu đồ Mermaid hoàn chỉnh (Use Case, Sequence, State, ERD, Data Flow...)
 ├── 09-test-plan-and-traceability-matrix.md      # Kế hoạch kiểm thử, 30+ Test Cases, Ma trận truy vết 2 chiều (Traceability)
-└── 10-decision-log-and-assumptions.md           # Nhật ký quyết định kiến trúc (ADR), danh sách giả định và kế hoạch chuyển giao
+├── 10-decision-log-and-assumptions.md           # Nhật ký quyết định kiến trúc (ADR), danh sách giả định và kế hoạch chuyển giao
+└── 11-implementation-and-verification-report.md # Báo cáo kết quả triển khai thực tế Full-stack & Bằng chứng kiểm thử (200/200 tests)
 ```
 
 ---
 
-## 4. Trạng thái Triển khai (Implementation Status Policy)
+## 4. Trạng thái Triển khai Thực tế (Implementation Status)
 
-Theo quy tắc làm việc nghiêm ngặt của dự án AI-Chan, tài liệu này áp dụng quy chuẩn phân loại trạng thái minh bạch:
-- **`EXISTS`**: Thành phần đã được kiểm chứng bằng mã nguồn thực tế trong repository (ví dụ: LangChain 0.3 core, file upload storage, project graph node system).
-- **`SPECIFIED`**: Đặc tả đề xuất chuẩn kiến trúc cho nhánh Tool Management, sẵn sàng để đội ngũ kỹ thuật triển khai khi bước sang giai đoạn coding.
-- **`OPTIONAL_DEPENDENCY`**: Tính năng yêu cầu cài đặt thêm thư viện phụ trợ (ví dụ: `faiss-cpu`, `openpyxl`, `python-docx`, `beautifulsoup4`) nhưng không được gây lỗi khởi động ứng dụng nếu vắng mặt.
-- **`EXTERNAL_CONFIGURATION_REQUIRED`**: Tính năng yêu cầu khóa API hoặc dịch vụ bên ngoài (ví dụ: Search API Key, Cloud Embedding Key).
-- **`DEFERRED`**: Tính năng thuộc giai đoạn mở rộng sau MVP (ví dụ: Sandbox Python code execution, multi-cluster vector DB).
-
-> [!IMPORTANT]
-> **Cam kết không làm hỏng Codebase hiện tại:**
-> Giai đoạn này **chỉ xây dựng tài liệu đặc tả và biểu đồ kiến trúc**. Không có mã nguồn sản phẩm, API runtime handler hay database migration nào bị sửa đổi. Mọi thiết kế đều đảm bảo tính tương thích lùi (backward compatibility) 100% với các Project, Chat, System Prompts và Skills hiện hữu.
+- **Backend Runtime & API:** Đã triển khai đầy đủ `ToolRegistryService`, `PolicyGateService`, `ToolExecutorService`, `SSRFGuardEngine`, `StorageSandbox` và các API REST `/api/v1/tools` + `/api/v1/projects/{id}/tools`.
+- **Database Migration:** Đã áp dụng `016_tool_management_system.sql` với 4 bảng: `tools`, `tool_configurations`, `project_tool_bindings`, `tool_executions`.
+- **Handlers:** Đã triển khai và kiểm thử 23 executable tools thật sự (vượt mục tiêu tối thiểu 20 tool).
+- **Frontend UI:** Đã triển khai giao diện Thư viện Tool (`/tools`) và Chi tiết Tool (`/tools/[id]`), tích hợp Sidebar.
+- **Bảo mật & Kiểm thử:** 200/200 tests backend vượt qua (0 regression). Frontend Next.js build thành công 0 lỗi. Chi tiết xem tại [11-implementation-and-verification-report.md](file:///c:/Users/PC/Project/ai-chan/docs/features/tool-management/11-implementation-and-verification-report.md).

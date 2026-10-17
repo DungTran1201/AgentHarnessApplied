@@ -504,3 +504,5 @@ export interface SkillUpdateRequest {
   expected_updated_at?: string | null;
 }
 
+export * from './tool';
+

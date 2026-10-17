@@ -304,4 +304,129 @@ BEGIN
 END;
 
 
+-- ------------------------------------------------------------------------------
+-- 11. BẢNG CÔNG CỤ (TOOLS)
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tools (
+    id VARCHAR(64) PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    description TEXT NOT NULL,
+    category VARCHAR(50) NOT NULL CHECK(category IN ('WEB', 'FILE', 'FAISS', 'DATA')),
+    version VARCHAR(20) NOT NULL DEFAULT '1.0.0',
+    risk_level VARCHAR(20) NOT NULL DEFAULT 'LOW' CHECK(risk_level IN ('LOW', 'MEDIUM', 'HIGH')),
+    source_type VARCHAR(20) NOT NULL DEFAULT 'BUILTIN' CHECK(source_type IN ('BUILTIN', 'CUSTOM')),
+    status VARCHAR(30) NOT NULL DEFAULT 'AVAILABLE' CHECK(status IN ('AVAILABLE', 'NEEDS_CONFIGURATION', 'DEPENDENCY_MISSING', 'DISABLED', 'ERROR', 'DEPRECATED')),
+    input_schema TEXT NOT NULL,
+    output_schema TEXT NOT NULL,
+    configuration_schema TEXT DEFAULT '{}',
+    tags TEXT DEFAULT '[]',
+    timeout_seconds INTEGER NOT NULL DEFAULT 30,
+    max_payload_bytes INTEGER NOT NULL DEFAULT 10485760,
+    requires_network BOOLEAN NOT NULL DEFAULT 0,
+    requires_filesystem BOOLEAN NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_tools_category ON tools(category);
+CREATE INDEX IF NOT EXISTS idx_tools_status ON tools(status);
+CREATE INDEX IF NOT EXISTS idx_tools_risk_level ON tools(risk_level);
+
+CREATE TRIGGER IF NOT EXISTS trg_tools_updated_at
+AFTER UPDATE ON tools
+FOR EACH ROW
+BEGIN
+    UPDATE tools SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
+END;
+
+
+-- ------------------------------------------------------------------------------
+-- 12. BẢNG CẤU HÌNH CÔNG CỤ (TOOL_CONFIGURATIONS)
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tool_configurations (
+    id VARCHAR(36) PRIMARY KEY,
+    tool_id VARCHAR(64) NOT NULL,
+    project_id VARCHAR(36),
+    user_id VARCHAR(36),
+    encrypted_secrets TEXT,
+    parameters TEXT NOT NULL DEFAULT '{}',
+    is_enabled BOOLEAN NOT NULL DEFAULT 1,
+    last_tested_at TIMESTAMP,
+    last_test_result VARCHAR(20) CHECK(last_test_result IN ('SUCCESS', 'FAILED')),
+    last_test_message TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (tool_id) REFERENCES tools(id) ON DELETE CASCADE,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE(tool_id, project_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tool_configurations_tool_id ON tool_configurations(tool_id);
+CREATE INDEX IF NOT EXISTS idx_tool_configurations_project_id ON tool_configurations(project_id);
+CREATE INDEX IF NOT EXISTS idx_tool_configurations_user_id ON tool_configurations(user_id);
+
+CREATE TRIGGER IF NOT EXISTS trg_tool_configurations_updated_at
+AFTER UPDATE ON tool_configurations
+FOR EACH ROW
+BEGIN
+    UPDATE tool_configurations SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
+END;
+
+
+-- ------------------------------------------------------------------------------
+-- 13. BẢNG LIÊN KẾT PROJECT VỚI TOOL (PROJECT_TOOL_BINDINGS)
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS project_tool_bindings (
+    id VARCHAR(36) PRIMARY KEY,
+    project_id VARCHAR(36) NOT NULL,
+    tool_id VARCHAR(64) NOT NULL,
+    is_enabled BOOLEAN NOT NULL DEFAULT 1,
+    custom_timeout_seconds INTEGER,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+    FOREIGN KEY (tool_id) REFERENCES tools(id) ON DELETE CASCADE,
+    UNIQUE(project_id, tool_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_tool_bindings_project_id ON project_tool_bindings(project_id);
+CREATE INDEX IF NOT EXISTS idx_project_tool_bindings_tool_id ON project_tool_bindings(tool_id);
+
+CREATE TRIGGER IF NOT EXISTS trg_project_tool_bindings_updated_at
+AFTER UPDATE ON project_tool_bindings
+FOR EACH ROW
+BEGIN
+    UPDATE project_tool_bindings SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
+END;
+
+
+-- ------------------------------------------------------------------------------
+-- 14. BẢNG LỊCH SỬ THỰC THI CÔNG CỤ (TOOL_EXECUTIONS)
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tool_executions (
+    id VARCHAR(36) PRIMARY KEY,
+    tool_id VARCHAR(64) NOT NULL,
+    project_id VARCHAR(36),
+    user_id VARCHAR(36),
+    conversation_id VARCHAR(36),
+    status VARCHAR(20) NOT NULL CHECK(status IN ('REQUESTED', 'VALIDATING', 'EXECUTING', 'SUCCEEDED', 'FAILED', 'TIMED_OUT', 'BLOCKED')),
+    input_payload TEXT NOT NULL,
+    output_payload TEXT,
+    error_message TEXT,
+    execution_time_ms INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (tool_id) REFERENCES tools(id) ON DELETE CASCADE,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_tool_executions_tool_id ON tool_executions(tool_id);
+CREATE INDEX IF NOT EXISTS idx_tool_executions_project_id ON tool_executions(project_id);
+CREATE INDEX IF NOT EXISTS idx_tool_executions_user_id ON tool_executions(user_id);
+CREATE INDEX IF NOT EXISTS idx_tool_executions_created_at ON tool_executions(created_at);
+
+
+
 

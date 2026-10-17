@@ -107,9 +107,10 @@ def validate_project_graph(graph_data: Dict[str, Any], user_id: Optional[str] = 
         errors.append("This model can be connected to only one bot. Remove the existing bot connection before selecting another.")
 
     skill_nodes = node_by_type.get("skill", [])
+    tool_nodes = node_by_type.get("tool", [])
 
     # Kiểm tra loại node không hợp lệ
-    valid_types = {"web_input", "model", "output", "system_prompt", "bot", "skill"}
+    valid_types = {"web_input", "model", "output", "system_prompt", "bot", "skill", "tool"}
     for ntype in node_by_type.keys():
         if ntype not in valid_types:
             errors.append(f"Phát hiện loại node không được hỗ trợ: '{ntype}'.")
@@ -133,7 +134,7 @@ def validate_project_graph(graph_data: Dict[str, Any], user_id: Optional[str] = 
     # 2. Kiểm tra các Edge và ràng buộc kết nối
     has_prompt = prompt_node is not None
     has_bot = bot_node is not None
-    expected_edge_count = 2 + (1 if has_prompt else 0) + (1 if has_bot else 0) + len(skill_nodes)
+    expected_edge_count = 2 + (1 if has_prompt else 0) + (1 if has_bot else 0) + len(skill_nodes) + len(tool_nodes)
     if len(edges) != expected_edge_count:
         errors.append(f"Graph yêu cầu chính xác {expected_edge_count} cạnh kết nối hợp lệ (hiện tại có {len(edges)} cạnh).")
 
@@ -147,6 +148,7 @@ def validate_project_graph(graph_data: Dict[str, Any], user_id: Optional[str] = 
     prompt_to_model_edge = False
     model_to_bot_edge = False
     connected_skill_ids: List[str] = []
+    connected_tool_ids: List[str] = []
 
     if input_node and model_node and output_node:
         in_id = input_node.get("id")
@@ -155,6 +157,7 @@ def validate_project_graph(graph_data: Dict[str, Any], user_id: Optional[str] = 
         prompt_id_node = prompt_node.get("id") if prompt_node else None
         bot_id_node = bot_node.get("id") if bot_node else None
         skill_id_nodes = {s.get("id"): s for s in skill_nodes if s.get("id")}
+        tool_id_nodes = {t.get("id"): t for t in tool_nodes if t.get("id")}
 
         for e in edges:
             src = e.get("source")
@@ -175,10 +178,14 @@ def validate_project_graph(graph_data: Dict[str, Any], user_id: Optional[str] = 
                 model_to_bot_edge = True
             elif src == model_id_node and tgt in skill_id_nodes:
                 connected_skill_ids.append(tgt)
+            elif src == model_id_node and tgt in tool_id_nodes:
+                connected_tool_ids.append(tgt)
             elif src == bot_id_node and tgt == model_id_node:
                 errors.append("Invalid reverse connection: Bot cannot connect to Model. Direction must be Model -> Bot.")
             elif tgt == model_id_node and src in skill_id_nodes:
                 errors.append("Invalid reverse connection: Skill cannot connect to Model. Direction must be Model -> Skill.")
+            elif src in tool_id_nodes and tgt == model_id_node:
+                errors.append("Invalid reverse connection: Tool cannot connect to Model. Direction must be Model -> Tool.")
             elif src == in_id and tgt == out_id:
                 errors.append("Phát hiện cạnh nối tắt trực tiếp từ Web Input sang Output (không được phép bỏ qua Model Node).")
             elif tgt == in_id:
@@ -201,6 +208,9 @@ def validate_project_graph(graph_data: Dict[str, Any], user_id: Optional[str] = 
         for sid, snode in skill_id_nodes.items():
             if sid not in connected_skill_ids:
                 errors.append(f"Skill Node '{snode.get('data', {}).get('label', sid)}' chưa được kết nối từ Model Node.")
+        for tid, tnode in tool_id_nodes.items():
+            if tid not in connected_tool_ids:
+                errors.append(f"Tool Node '{tnode.get('data', {}).get('label', tid)}' chưa được kết nối từ Model Node.")
 
     # 3. Kiểm tra System Prompt Node cấu hình & tồn tại trong DB
     target_prompt_id = None
@@ -277,6 +287,25 @@ def validate_project_graph(graph_data: Dict[str, Any], user_id: Optional[str] = 
         else:
             valid_skill_ids.append(ref_skill_id)
 
+    # 3.3 Kiểm tra Tool Nodes cấu hình & tồn tại trong DB
+    valid_tool_ids: List[str] = []
+    seen_tool_ids: set = set()
+    for t_node in tool_nodes:
+        t_cfg = t_node.get("data", {}).get("config", {})
+        ref_tool_id = t_cfg.get("tool_id")
+        if not ref_tool_id:
+            errors.append("Tool Node chưa được gắn tool_id hợp lệ.")
+            continue
+        if ref_tool_id in seen_tool_ids:
+            errors.append(f"Phát hiện công cụ trùng lặp '{ref_tool_id}' trong cùng một Model.")
+        seen_tool_ids.add(ref_tool_id)
+
+        t_rec = query_one("SELECT id, name, status FROM tools WHERE id = ?", (ref_tool_id,))
+        if not t_rec:
+            errors.append(f"Công cụ tham chiếu '{ref_tool_id}' không tồn tại trong Tool Registry.")
+        else:
+            valid_tool_ids.append(ref_tool_id)
+
     # 4. Kiểm tra cấu hình Web Input Node
     max_words = 500
     if input_node:
@@ -332,7 +361,8 @@ def validate_project_graph(graph_data: Dict[str, Any], user_id: Optional[str] = 
         "max_words_limit": max_words,
         "prompt_id": target_prompt_id,
         "bot_id": target_bot_id if bot_nodes else None,
-        "skill_ids": valid_skill_ids
+        "skill_ids": valid_skill_ids,
+        "tool_ids": valid_tool_ids
     }
 
 # ==============================================================================
@@ -600,7 +630,12 @@ async def save_project_graph(
     """
     execute_commit(sql, (graph_json, target_model_id, max_words_limit, is_valid_flag, project_id, user_id))
 
-    if not val_result["is_valid"]:
+    if val_result["is_valid"]:
+        if val_result.get("tool_ids"):
+            from src.services.tools.registry import ToolRegistryService
+            for tid in val_result["tool_ids"]:
+                ToolRegistryService.bind_tool_to_project(project_id, tid, is_enabled=True)
+    else:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={
@@ -955,6 +990,21 @@ async def chat_through_project(
     if skill_instructions:
         skills_block = "\n\n--- ACTIVE SKILLS INSTRUCTIONS ---\n" + "\n\n".join(skill_instructions) + "\n--- END SKILLS INSTRUCTIONS ---"
         combined_instruction = (combined_instruction + skills_block).strip()
+
+    # Phân giải Tools được cấp quyền cho Project
+    bound_tools = query_all(
+        """
+        SELECT b.tool_id, t.name, t.description
+        FROM project_tool_bindings b
+        JOIN tools t ON b.tool_id = t.id
+        WHERE b.project_id = ? AND b.is_enabled = 1 AND t.status = 'AVAILABLE'
+        """,
+        (project_id,)
+    )
+    if bound_tools:
+        tools_desc = [f"- **{bt['name']}** (`{bt['tool_id']}`): {bt['description']}" for bt in bound_tools]
+        tools_block = "\n\n--- AVAILABLE TOOLS FOR THIS PROJECT ---\n" + "\n".join(tools_desc) + "\n--- END AVAILABLE TOOLS ---"
+        combined_instruction = (combined_instruction + tools_block).strip()
 
     # 3. Quản lý conversation
     conv_id = payload.conversation_id

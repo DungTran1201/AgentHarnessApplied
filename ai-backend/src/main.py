@@ -25,6 +25,14 @@ app.add_middleware(TelemetryMiddleware)
 # Mount API Routers
 app.include_router(api_router, prefix="/api/v1")
 
+@app.on_event("startup")
+async def startup_event():
+    try:
+        from src.services.tools.registry import ToolRegistryService
+        ToolRegistryService.seed_tools()
+    except Exception as e:
+        print(f"Tool seeding on startup warning: {e}")
+
 from src.api.v1.bot import HealthResponse
 
 @app.get("/")

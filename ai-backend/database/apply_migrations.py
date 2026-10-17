@@ -194,6 +194,15 @@ def run_migration():
             conn.commit()
             print(f"Applied 015 migration successfully to {db_path.name}.")
 
+        # 14. Apply 016_tool_management_system.sql (Tools, Tool Configurations, Bindings, Executions)
+        migration_016_file = MIGRATIONS_DIR / "016_tool_management_system.sql"
+        if migration_016_file.exists():
+            print(f"Executing {migration_016_file.name} on {db_path.name}...")
+            with open(migration_016_file, "r", encoding="utf-8") as f:
+                cur.executescript(f.read())
+            conn.commit()
+            print(f"Applied 016 migration successfully to {db_path.name}.")
+
         # Verify active tables
         tables = [r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
         print(f"Tables in {db_path.name}: {tables}")

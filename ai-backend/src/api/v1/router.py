@@ -16,6 +16,7 @@ from src.api.v1.projects import projects_router
 from src.api.v1.prompts import prompts_router
 from src.api.v1.skills import skills_router
 from src.api.v1.attachments import attachments_router
+from src.api.v1.tools import tools_router, project_tools_router
 
 api_router = APIRouter()
 
@@ -53,6 +54,8 @@ api_router.include_router(projects_router)
 api_router.include_router(prompts_router)
 api_router.include_router(skills_router)
 api_router.include_router(attachments_router)
+api_router.include_router(tools_router)
+api_router.include_router(project_tools_router)
 
 
 
