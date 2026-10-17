@@ -191,7 +191,7 @@ export interface DiscordBotTestDispatchResponse {
 
 export type ProjectStatus = 'ACTIVE' | 'STOP' | 'DEACTIVE' | 'DELETED';
 
-export type NodeType = 'web_input' | 'system_prompt' | 'model' | 'output' | 'bot' | 'skill';
+export type NodeType = 'web_input' | 'system_prompt' | 'model' | 'output' | 'bot' | 'skill' | 'tool';
 
 export interface WebInputConfig {
   max_words: number;
@@ -228,6 +228,18 @@ export interface SkillNodeConfig {
   description?: string;
   version?: string;
   capability?: string;
+}
+
+export interface ToolNodeConfig {
+  tool_id: string;
+  name?: string;
+  description?: string;
+  category?: string;
+  risk_level?: string;
+  status?: string;
+  settings?: Record<string, any>;
+  custom_timeout_seconds?: number | null;
+  is_enabled?: boolean;
 }
 
 export interface AvailableBotItem {
@@ -310,7 +322,7 @@ export interface GraphNode {
   position?: { x: number; y: number };
   data: {
     label: string;
-    config: WebInputConfig | SystemPromptNodeConfig | ModelNodeConfig | OutputNodeConfig | BotNodeConfig | SkillNodeConfig | any;
+    config: WebInputConfig | SystemPromptNodeConfig | ModelNodeConfig | OutputNodeConfig | BotNodeConfig | SkillNodeConfig | ToolNodeConfig | any;
   };
 }
 

@@ -95,8 +95,23 @@ def handle_date_time_info(timezone_name: str = "UTC", format_str: Optional[str] 
             tz = zoneinfo.ZoneInfo(tz_str)
         except Exception:
             # Fallback for Windows environment without external tzdata package
-            tz = timezone.utc
-            tz_str = "UTC"
+            common_offsets = {
+                "asia/ho_chi_minh": 7, "asia/bangkok": 7, "asia/hanoi": 7, "ict": 7,
+                "asia/singapore": 8, "sgt": 8, "asia/tokyo": 9, "jst": 9,
+                "asia/seoul": 9, "europe/london": 0, "gmt": 0, "utc": 0
+            }
+            low = tz_str.lower()
+            if low in common_offsets:
+                from datetime import timedelta
+                tz = timezone(timedelta(hours=common_offsets[low]))
+            else:
+                m = re.match(r'^(?:utc|gmt)?([+-]\d{1,2})$', low)
+                if m:
+                    from datetime import timedelta
+                    tz = timezone(timedelta(hours=int(m.group(1))))
+                else:
+                    tz = timezone.utc
+                    tz_str = "UTC"
 
     now = datetime.now(tz)
     default_format = format_str or "%Y-%m-%d %H:%M:%S %Z"
@@ -107,6 +122,8 @@ def handle_date_time_info(timezone_name: str = "UTC", format_str: Optional[str] 
 
     return {
         "iso": now.isoformat(),
+        "iso_datetime": now.isoformat(),
+        "datetime": formatted,
         "timestamp": int(now.timestamp()),
         "timezone": tz_str,
         "formatted": formatted,

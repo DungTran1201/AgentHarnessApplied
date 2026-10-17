@@ -118,14 +118,26 @@ class ToolExecutorService:
         start_time = time.time()
         input_sanitized = json.dumps(arguments or {})
 
-        # Record initial status
-        execute_commit(
-            """
-            INSERT INTO tool_executions (id, tool_id, project_id, user_id, conversation_id, status, input_payload, execution_time_ms)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0)
-            """,
-            (exec_id, tool_id, project_id, user_id, conversation_id, ToolExecutionStatus.REQUESTED.value, input_sanitized)
-        )
+        # Record initial status safely (fallback with NULL foreign keys if transient/mock context)
+        try:
+            execute_commit(
+                """
+                INSERT INTO tool_executions (id, tool_id, project_id, user_id, conversation_id, status, input_payload, execution_time_ms)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+                """,
+                (exec_id, tool_id, project_id, user_id, conversation_id, ToolExecutionStatus.REQUESTED.value, input_sanitized)
+            )
+        except Exception:
+            try:
+                execute_commit(
+                    """
+                    INSERT INTO tool_executions (id, tool_id, project_id, user_id, conversation_id, status, input_payload, execution_time_ms)
+                    VALUES (?, ?, NULL, NULL, NULL, ?, ?, 0)
+                    """,
+                    (exec_id, tool_id, ToolExecutionStatus.REQUESTED.value, input_sanitized)
+                )
+            except Exception as e:
+                logger.warning(f"Failed to record tool execution audit log: {e}")
 
         handler = TOOL_HANDLER_MAP.get(tool_id)
         if not handler:

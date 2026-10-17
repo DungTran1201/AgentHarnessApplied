@@ -631,10 +631,35 @@ async def save_project_graph(
     execute_commit(sql, (graph_json, target_model_id, max_words_limit, is_valid_flag, project_id, user_id))
 
     if val_result["is_valid"]:
-        if val_result.get("tool_ids"):
-            from src.services.tools.registry import ToolRegistryService
-            for tid in val_result["tool_ids"]:
-                ToolRegistryService.bind_tool_to_project(project_id, tid, is_enabled=True)
+        from src.services.tools.registry import ToolRegistryService
+        tool_ids = val_result.get("tool_ids", [])
+        tool_node_configs = {}
+        for n in graph_dict.get("nodes", []):
+            if n.get("type") == "tool":
+                cfg = n.get("data", {}).get("config", {})
+                tid = cfg.get("tool_id")
+                if tid:
+                    tool_node_configs[tid] = {
+                        "is_enabled": cfg.get("is_enabled", True),
+                        "custom_timeout_seconds": cfg.get("custom_timeout_seconds")
+                    }
+
+        current_bindings = query_all("SELECT tool_id FROM project_tool_bindings WHERE project_id = ?", (project_id,))
+        current_tids = {b["tool_id"] for b in current_bindings}
+
+        # Remove bindings for tools unlinked from canvas
+        for old_tid in current_tids - set(tool_ids):
+            ToolRegistryService.unbind_tool_from_project(project_id, old_tid)
+
+        # Bind or update linked tools
+        for tid in tool_ids:
+            t_cfg = tool_node_configs.get(tid, {})
+            ToolRegistryService.bind_tool_to_project(
+                project_id,
+                tid,
+                is_enabled=t_cfg.get("is_enabled", True),
+                custom_timeout_seconds=t_cfg.get("custom_timeout_seconds")
+            )
     else:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -827,10 +852,12 @@ async def chat_through_project(
             }
         )
 
-    # 2.5. Phân giải System Prompt, Bot và Skills liên kết nếu có trong graph (DEC-SPN-01, DEC-SPN-03, DEC-SPN-04)
+    # 2.5. Phân giải System Prompt, Bot, Skills và Tools liên kết nếu có trong graph (DEC-SPN-01, DEC-SPN-03, DEC-SPN-04)
     system_prompt_instruction: Optional[str] = None
     connected_bot_info: Optional[Dict[str, Any]] = None
     connected_skills_info: List[Dict[str, Any]] = []
+    connected_tools_info: List[Dict[str, Any]] = []
+    connected_tool_definitions: List[Dict[str, Any]] = []
     skill_instructions: List[str] = []
 
     if proj.get("graph_data"):
@@ -980,6 +1007,72 @@ async def chat_through_project(
                             "name": skill_rec["name"],
                             "status": skill_rec["status"]
                         })
+
+            # Phân giải Tools liên kết (Model -> Tool)
+            tool_nodes = [n for n in g_nodes if n.get("type") == "tool"]
+            if tool_nodes and m_node_id:
+                seen_tools: set = set()
+                for t_node in tool_nodes:
+                    t_node_id = t_node.get("id")
+                    is_tool_connected = any(
+                        e.get("source") == m_node_id and e.get("target") == t_node_id
+                        for e in g_edges
+                    )
+                    if not is_tool_connected:
+                        continue
+                    t_cfg = t_node.get("data", {}).get("config", {})
+                    ref_tool_id = t_cfg.get("tool_id")
+                    if not ref_tool_id or ref_tool_id in seen_tools:
+                        continue
+                    seen_tools.add(ref_tool_id)
+
+                    t_rec = query_one(
+                        "SELECT id, name, description, category, status, input_schema, output_schema, timeout_seconds FROM tools WHERE id = ?",
+                        (ref_tool_id,)
+                    )
+                    if not t_rec:
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail={
+                                "error_code": "TOOL_UNAVAILABLE",
+                                "message": f"Công cụ liên kết '{ref_tool_id}' không tồn tại trong Tool Registry."
+                            }
+                        )
+                    if t_rec.get("status") != "AVAILABLE":
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail={
+                                "error_code": "TOOL_DISABLED",
+                                "message": f"Công cụ liên kết '{t_rec.get('name', ref_tool_id)}' hiện không khả dụng (status: {t_rec.get('status')})."
+                            }
+                        )
+
+                    ptb = query_one(
+                        "SELECT is_enabled, custom_timeout_seconds FROM project_tool_bindings WHERE project_id = ? AND tool_id = ?",
+                        (project_id, ref_tool_id)
+                    )
+                    if ptb and not bool(ptb.get("is_enabled", 1)):
+                        continue
+                    if t_cfg.get("is_enabled") is False:
+                        continue
+
+                    timeout_sec = (ptb.get("custom_timeout_seconds") if ptb else None) or t_cfg.get("custom_timeout_seconds") or t_rec.get("timeout_seconds") or 30
+
+                    connected_tools_info.append({
+                        "id": t_rec["id"],
+                        "name": t_rec["name"],
+                        "category": t_rec["category"],
+                        "status": t_rec["status"]
+                    })
+                    connected_tool_definitions.append({
+                        "id": t_rec["id"],
+                        "name": t_rec["name"],
+                        "description": t_rec["description"],
+                        "category": t_rec["category"],
+                        "input_schema": json.loads(t_rec.get("input_schema") or "{}"),
+                        "output_schema": json.loads(t_rec.get("output_schema") or "{}"),
+                        "timeout_seconds": timeout_sec
+                    })
         except HTTPException:
             raise
         except Exception as e:
@@ -991,20 +1084,26 @@ async def chat_through_project(
         skills_block = "\n\n--- ACTIVE SKILLS INSTRUCTIONS ---\n" + "\n\n".join(skill_instructions) + "\n--- END SKILLS INSTRUCTIONS ---"
         combined_instruction = (combined_instruction + skills_block).strip()
 
-    # Phân giải Tools được cấp quyền cho Project
-    bound_tools = query_all(
-        """
-        SELECT b.tool_id, t.name, t.description
-        FROM project_tool_bindings b
-        JOIN tools t ON b.tool_id = t.id
-        WHERE b.project_id = ? AND b.is_enabled = 1 AND t.status = 'AVAILABLE'
-        """,
-        (project_id,)
-    )
-    if bound_tools:
-        tools_desc = [f"- **{bt['name']}** (`{bt['tool_id']}`): {bt['description']}" for bt in bound_tools]
-        tools_block = "\n\n--- AVAILABLE TOOLS FOR THIS PROJECT ---\n" + "\n".join(tools_desc) + "\n--- END AVAILABLE TOOLS ---"
+    # Thêm mô tả các Tools được kết nối vào ngữ cảnh chỉ dẫn
+    if connected_tool_definitions:
+        tools_desc = [f"- **{td['name']}** (`{td['id']}`): {td['description']}" for td in connected_tool_definitions]
+        tools_block = "\n\n--- AVAILABLE TOOLS FOR THIS MODEL ---\n" + "\n".join(tools_desc) + "\n--- END AVAILABLE TOOLS ---"
         combined_instruction = (combined_instruction + tools_block).strip()
+    else:
+        # Fallback to bound tools if existing project has project_tool_bindings
+        bound_tools = query_all(
+            """
+            SELECT b.tool_id, t.name, t.description
+            FROM project_tool_bindings b
+            JOIN tools t ON b.tool_id = t.id
+            WHERE b.project_id = ? AND b.is_enabled = 1 AND t.status = 'AVAILABLE'
+            """,
+            (project_id,)
+        )
+        if bound_tools:
+            tools_desc = [f"- **{bt['name']}** (`{bt['tool_id']}`): {bt['description']}" for bt in bound_tools]
+            tools_block = "\n\n--- AVAILABLE TOOLS FOR THIS PROJECT ---\n" + "\n".join(tools_desc) + "\n--- END AVAILABLE TOOLS ---"
+            combined_instruction = (combined_instruction + tools_block).strip()
 
     # 3. Quản lý conversation
     conv_id = payload.conversation_id
@@ -1075,7 +1174,8 @@ async def chat_through_project(
             "model": target_model_id,
             "conversation_id": conv_id,
             "bot": connected_bot_info,
-            "skills": connected_skills_info
+            "skills": connected_skills_info,
+            "tools": connected_tools_info
         }, ensure_ascii=False)
         yield f"event: start\ndata: {start_payload}\n\n"
         
@@ -1088,7 +1188,11 @@ async def chat_through_project(
                 history=context_msgs,
                 model_override=target_model_id,
                 system_instruction=combined_instruction if combined_instruction else None,
-                attachments=attachment_records if attachment_records else None
+                attachments=attachment_records if attachment_records else None,
+                tools=connected_tool_definitions if connected_tool_definitions else None,
+                project_id=project_id,
+                user_id=user_id,
+                conversation_id=conv_id
             ):
 
                 if event.get("status") == "streaming":

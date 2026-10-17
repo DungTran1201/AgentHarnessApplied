@@ -12,11 +12,13 @@ import {
   AgentModel,
   SystemPromptSummary,
   AvailableBotItem,
-  SkillSummary
+  SkillSummary,
+  ToolSummary
 } from '@/types';
 import { ProjectService } from '@/services/projectService';
 import { SystemPromptService } from '@/services/systemPromptService';
 import { SkillService } from '@/services/skillService';
+import { ToolService } from '@/services/toolService';
 import Icon from '@/components/ui/Icon';
 import { getErrorMessage } from '@/lib/errors';
 import FloatingProjectChat from '@/components/chat/FloatingProjectChat';
@@ -49,6 +51,11 @@ export default function ProjectEditorPage() {
   const [availableSkills, setAvailableSkills] = useState<SkillSummary[]>([]);
   const [loadingSkills, setLoadingSkills] = useState(false);
 
+  // Available tools from tools registry
+  const [availableTools, setAvailableTools] = useState<ToolSummary[]>([]);
+  const [loadingTools, setLoadingTools] = useState(false);
+  const [toolsError, setToolsError] = useState<string | null>(null);
+
   // Node Catalog UI state: Collapsible groups, Search & Category Filter
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({
     input: false,
@@ -56,10 +63,11 @@ export default function ProjectEditorPage() {
     model: false,
     output: false,
     bot: false,
-    skill: false
+    skill: false,
+    tool: false
   });
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterCategory, setFilterCategory] = useState<'all' | 'input' | 'system_prompt' | 'model' | 'output' | 'bot' | 'skill'>('all');
+  const [filterCategory, setFilterCategory] = useState<'all' | 'input' | 'system_prompt' | 'model' | 'output' | 'bot' | 'skill' | 'tool'>('all');
 
   const toggleGroup = (key: string) => {
     setCollapsedGroups(prev => ({ ...prev, [key]: !prev[key] }));
@@ -117,8 +125,10 @@ export default function ProjectEditorPage() {
         setLoadingPrompts(true);
         setLoadingBots(true);
         setLoadingSkills(true);
+        setLoadingTools(true);
+        setToolsError(null);
 
-        const [projData, modelsRes, promptsRes, botRes, skillsRes] = await Promise.all([
+        const [projData, modelsRes, promptsRes, botRes, skillsRes, toolsRes] = await Promise.all([
           ProjectService.getProject(projectId),
           fetch('/api/v1/models', { credentials: 'include' }).then(r => r.ok ? r.json() : []).catch(() => []),
           SystemPromptService.getPrompts().then(r => r.items).catch(() => []),
@@ -127,7 +137,11 @@ export default function ProjectEditorPage() {
             if (r.ok) return { linked: true, items: await r.json() };
             return { linked: null, items: [] };
           }).catch(() => ({ linked: null, items: [] })),
-          SkillService.getSkills(undefined, 'VALID').then(r => r.items).catch(() => [])
+          SkillService.getSkills(undefined, 'VALID').then(r => r.items).catch(() => []),
+          ToolService.getTools({ limit: 100 }).then(r => r.items).catch(err => {
+            setToolsError(getErrorMessage(err, 'Failed to load tools registry.'));
+            return [];
+          })
         ]);
 
         setProject(projData);
@@ -136,6 +150,7 @@ export default function ProjectEditorPage() {
         setDiscordLinked(botRes.linked);
         setAvailableBots(botRes.items || []);
         setAvailableSkills(skillsRes || []);
+        setAvailableTools(toolsRes || []);
 
         if (projData.graph_data && projData.graph_data.nodes && projData.graph_data.nodes.length > 0) {
           const defaultPositionsByType: Record<string, { x: number; y: number }> = {
@@ -144,7 +159,8 @@ export default function ProjectEditorPage() {
             model: { x: 440, y: 220 },
             output: { x: 800, y: 220 },
             bot: { x: 440, y: 400 },
-            skill: { x: 800, y: 380 }
+            skill: { x: 800, y: 380 },
+            tool: { x: 440, y: 550 }
           };
 
           const normalizedNodes: GraphNode[] = projData.graph_data.nodes.map((n: GraphNode, index: number) => {
@@ -207,6 +223,7 @@ export default function ProjectEditorPage() {
         setLoadingPrompts(false);
         setLoadingBots(false);
         setLoadingSkills(false);
+        setLoadingTools(false);
       }
     };
 
@@ -221,6 +238,7 @@ export default function ProjectEditorPage() {
     const promptNodes = nodes.filter(n => n.type === 'system_prompt');
     const botNodes = nodes.filter(n => n.type === 'bot');
     const skillNodes = nodes.filter(n => n.type === 'skill');
+    const toolNodes = nodes.filter(n => n.type === 'tool');
 
     if (!inputNode || !modelNode || !outputNode) return false;
     if (promptNodes.length > 1) return false;
@@ -251,7 +269,13 @@ export default function ProjectEditorPage() {
       if (!sNode.data.config?.skill_id) return false;
     }
 
-    const expectedEdgeCount = 2 + (promptNodes.length === 1 ? 1 : 0) + (botNodes.length === 1 ? 1 : 0) + skillNodes.length;
+    for (const tNode of toolNodes) {
+      const hasModelToTool = edges.some(e => e.source === modelNode.id && e.target === tNode.id);
+      if (!hasModelToTool) return false;
+      if (!tNode.data.config?.tool_id) return false;
+    }
+
+    const expectedEdgeCount = 2 + (promptNodes.length === 1 ? 1 : 0) + (botNodes.length === 1 ? 1 : 0) + skillNodes.length + toolNodes.length;
     return edges.length === expectedEdgeCount;
   };
 
@@ -318,7 +342,8 @@ export default function ProjectEditorPage() {
       output: 'Web Output',
       system_prompt: 'System Prompt',
       bot: 'Bot Agent',
-      skill: 'Skill Agent'
+      skill: 'Skill Agent',
+      tool: 'Tool Node'
     };
 
     const defaultConfigs: Record<NodeType, any> = {
@@ -327,7 +352,8 @@ export default function ProjectEditorPage() {
       output: { streaming: true },
       system_prompt: {},
       bot: { bot_id: '', name: 'Bot Agent' },
-      skill: { skill_id: '', name: 'Skill' }
+      skill: { skill_id: '', name: 'Skill' },
+      tool: { tool_id: '', name: 'Tool', status: 'AVAILABLE', custom_timeout_seconds: 30, is_enabled: true }
     };
 
     const posX = type === 'web_input' ? 100 : type === 'model' ? 420 : 740;
@@ -441,6 +467,43 @@ export default function ProjectEditorPage() {
     setHasUnsavedChanges(true);
     setSelectedNodeId(newId);
     showToast('success', `Added Skill: "${skill.name}" to canvas.`);
+  };
+
+  // Add Tool Node from Tools Registry
+  const handleAddToolNode = (tool: ToolSummary) => {
+    const existingToolNode = nodes.find(n => n.type === 'tool' && n.data.config?.tool_id === tool.id);
+    if (existingToolNode) {
+      showToast('error', `Tool "${tool.name}" is already added to the canvas.`);
+      triggerConflictHighlight(null, existingToolNode.id);
+      return;
+    }
+
+    const toolIndex = nodes.filter(n => n.type === 'tool').length;
+    const newId = `node_tool_${Date.now()}`;
+    const newNode: GraphNode = {
+      id: newId,
+      type: 'tool',
+      position: { x: 440 + (toolIndex * 40), y: 480 + (toolIndex * 70) },
+      data: {
+        label: tool.name,
+        config: {
+          tool_id: tool.id,
+          name: tool.name,
+          description: tool.description,
+          category: tool.category,
+          risk_level: tool.risk_level,
+          status: tool.status,
+          custom_timeout_seconds: 30,
+          is_enabled: tool.status === 'AVAILABLE',
+          settings: {}
+        }
+      }
+    };
+
+    setNodes(prev => [...prev, newNode]);
+    setHasUnsavedChanges(true);
+    setSelectedNodeId(newId);
+    showToast('success', `Added Tool: "${tool.name}" to canvas.`);
   };
 
   // Delete node
@@ -563,6 +626,11 @@ export default function ProjectEditorPage() {
       setConnectingSourceNodeId(null);
       return;
     }
+    if (srcNode.type === 'tool' && tgtNode.type === 'model') {
+      showToast('error', 'Reverse connection rejected. Connect Model to Tool, not Tool to Model.');
+      setConnectingSourceNodeId(null);
+      return;
+    }
 
     let isValid = false;
     let edgeType = 'data_flow';
@@ -582,6 +650,9 @@ export default function ProjectEditorPage() {
     } else if (srcNode.type === 'model' && tgtNode.type === 'skill' && targetHandle === 'skill_in') {
       isValid = true;
       edgeType = 'skill_binding';
+    } else if (srcNode.type === 'model' && tgtNode.type === 'tool' && targetHandle === 'tool_in') {
+      isValid = true;
+      edgeType = 'model_tool';
     }
 
     if (!isValid) {
@@ -590,7 +661,7 @@ export default function ProjectEditorPage() {
       } else if (srcNode.type === 'web_input' && targetHandle !== 'in') {
         showToast('error', 'Web Input node must connect to the Data input (blue port) of the Model node.');
       } else {
-        showToast('error', `Cannot connect ${srcNode.type} to ${tgtNode.type}. Valid edges: Web Input -> Model, System Prompt -> Model, Model -> Output, Model -> Bot, Model -> Skill.`);
+        showToast('error', `Cannot connect ${srcNode.type} to ${tgtNode.type}. Valid edges: Web Input -> Model, System Prompt -> Model, Model -> Output, Model -> Bot, Model -> Skill, Model -> Tool.`);
       }
       setConnectingSourceNodeId(null);
       return;
@@ -603,6 +674,8 @@ export default function ProjectEditorPage() {
         showToast('error', 'This model already has a bot connected. Remove the existing bot connection before selecting another.');
       } else if (tgtNode.type === 'skill') {
         showToast('error', 'This skill is already connected to the model.');
+      } else if (tgtNode.type === 'tool') {
+        showToast('error', 'This tool is already connected to the model.');
       } else {
         showToast('error', 'Duplicate connection rejected. This connection already exists.');
       }
@@ -639,6 +712,32 @@ export default function ProjectEditorPage() {
           setConnectingSourceNodeId(null);
           return;
         }
+      }
+    }
+
+    // Model to Tool rules (1:N from model to tools, but no duplicate tool_id on same model, and tool node belongs to at most one model)
+    if (srcNode.type === 'model' && tgtNode.type === 'tool') {
+      const targetToolId = tgtNode.data.config?.tool_id;
+      if (targetToolId) {
+        const existingToolEdge = edges.find(e => {
+          if (e.source !== srcNode.id) return false;
+          const tNode = nodes.find(n => n.id === e.target);
+          return tNode?.type === 'tool' && tNode.data.config?.tool_id === targetToolId;
+        });
+        if (existingToolEdge) {
+          showToast('error', 'This tool is already connected to the model.');
+          triggerConflictHighlight(existingToolEdge.id, existingToolEdge.target);
+          setConnectingSourceNodeId(null);
+          return;
+        }
+      }
+
+      const existingIncomingEdge = edges.find(e => e.target === tgtNode.id && e.type === 'model_tool');
+      if (existingIncomingEdge && existingIncomingEdge.source !== srcNode.id) {
+        showToast('error', 'This Tool node is already connected to another Model node.');
+        triggerConflictHighlight(existingIncomingEdge.id, tgtNode.id);
+        setConnectingSourceNodeId(null);
+        return;
       }
     }
 
@@ -734,6 +833,17 @@ export default function ProjectEditorPage() {
       (s.description && s.description.toLowerCase().includes(q))
     );
   }, [availableSkills, searchQuery]);
+
+  const filteredTools = useMemo(() => {
+    if (!searchQuery.trim()) return availableTools;
+    const q = searchQuery.toLowerCase().trim();
+    return availableTools.filter(t =>
+      t.name.toLowerCase().includes(q) ||
+      t.id.toLowerCase().includes(q) ||
+      t.category.toLowerCase().includes(q) ||
+      (t.description && t.description.toLowerCase().includes(q))
+    );
+  }, [availableTools, searchQuery]);
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg-base)', color: 'var(--text-primary)', overflow: 'hidden' }}>
@@ -871,7 +981,7 @@ export default function ProjectEditorPage() {
           <div style={{ position: 'relative' }}>
             <input
               type="text"
-              placeholder="Search nodes, bots, skills..."
+              placeholder="Search nodes, bots, skills, tools..."
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
               className="input"
@@ -906,7 +1016,8 @@ export default function ProjectEditorPage() {
               { id: 'model', label: 'Model' },
               { id: 'output', label: 'Output' },
               { id: 'bot', label: 'Bots' },
-              { id: 'skill', label: 'Skills' }
+              { id: 'skill', label: 'Skills' },
+              { id: 'tool', label: 'Tools' }
             ].map(f => (
               <button
                 key={f.id}
@@ -1352,6 +1463,111 @@ export default function ProjectEditorPage() {
                 )}
               </div>
             )}
+
+            {/* 7. Tools Group */}
+            {(filterCategory === 'all' || filterCategory === 'tool') && (
+              <div style={{ border: '1px solid var(--border-subtle)', borderRadius: '6px', overflow: 'hidden' }}>
+                <button
+                  onClick={() => toggleGroup('tool')}
+                  style={{
+                    width: '100%',
+                    padding: '6px 8px',
+                    background: 'var(--bg-subtle)',
+                    border: 'none',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    cursor: 'pointer',
+                    color: 'var(--text-secondary)',
+                    fontSize: '0.75rem',
+                    fontWeight: 600
+                  }}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Icon name="tools" size={13} style={{ color: '#0ea5e9' }} />
+                    Tools ({filteredTools.length})
+                  </span>
+                  <span>{collapsedGroups.tool ? '+' : '−'}</span>
+                </button>
+                {!collapsedGroups.tool && (
+                  <div style={{ padding: '6px', display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '200px', overflowY: 'auto' }}>
+                    {loadingTools ? (
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', padding: '6px' }}>Loading registry tools...</div>
+                    ) : toolsError ? (
+                      <div style={{ fontSize: '0.7rem', color: 'var(--danger)', padding: '6px' }}>
+                        <div>{toolsError}</div>
+                      </div>
+                    ) : filteredTools.length === 0 ? (
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', padding: '6px' }}>
+                        {searchQuery ? 'No matching tools found' : 'No tools in library'}
+                        <div style={{ marginTop: '4px' }}>
+                          <Link href="/tools" style={{ color: '#0ea5e9', textDecoration: 'none', fontWeight: 600 }}>
+                            + Manage Tools
+                          </Link>
+                        </div>
+                      </div>
+                    ) : (
+                      filteredTools.map(tool => {
+                        const isUsedInCanvas = nodes.some(n => n.type === 'tool' && n.data.config?.tool_id === tool.id);
+                        const isAvailable = tool.status === 'AVAILABLE';
+                        return (
+                          <div
+                            key={tool.id}
+                            onClick={() => handleAddToolNode(tool)}
+                            style={{
+                              background: 'var(--bg-surface)',
+                              border: '1px solid var(--border-subtle)',
+                              borderRadius: '4px',
+                              padding: '6px 8px',
+                              cursor: isUsedInCanvas ? 'not-allowed' : 'pointer',
+                              opacity: isUsedInCanvas ? 0.5 : 1
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <span style={{ fontWeight: 600, fontSize: '0.75rem', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                🛠️ {tool.name}
+                              </span>
+                              {isUsedInCanvas ? (
+                                <span className="badge badge-neutral" style={{ fontSize: '0.65rem' }}>Added</span>
+                              ) : (
+                                <span style={{ fontSize: '0.65rem', color: '#0ea5e9' }}>+ Add</span>
+                              )}
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.65rem', marginTop: '3px' }}>
+                              <span style={{
+                                padding: '1px 4px',
+                                borderRadius: '3px',
+                                background: 'rgba(14, 165, 233, 0.12)',
+                                color: '#38bdf8',
+                                fontWeight: 500
+                              }}>
+                                {tool.category}
+                              </span>
+                              <span style={{
+                                color: isAvailable ? 'var(--accent)' : 'var(--danger)',
+                                fontWeight: 600
+                              }}>
+                                • {tool.status}
+                              </span>
+                              {tool.risk_level && tool.risk_level !== 'LOW' && (
+                                <span style={{ color: '#f59e0b', fontSize: '0.62rem' }}>
+                                  [{tool.risk_level}]
+                                </span>
+                              )}
+                            </div>
+                            {tool.description && (
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {tool.description}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div style={{ marginTop: 'auto', padding: '6px 8px', background: 'var(--bg-subtle)', borderRadius: '4px', fontSize: '0.68rem', color: 'var(--text-muted)', lineHeight: '1.4' }}>
@@ -1360,7 +1576,8 @@ export default function ProjectEditorPage() {
             • Orange port (Prompt) → Bottom port of Model (Instruction)<br />
             • Right port of Model → Output port (SSE Stream)<br />
             • Right port of Model → Bot (max 1 Bot connection)<br />
-            • Right port of Model → Skills (multiple allowed)
+            • Right port of Model → Skills (multiple allowed)<br />
+            • Right port of Model → Tools (multiple allowed, 1:N)
           </div>
         </aside>
 
@@ -1430,6 +1647,7 @@ export default function ProjectEditorPage() {
                 const isPromptEdge = srcNode.type === 'system_prompt';
                 const isBotEdge = tgtNode.type === 'bot';
                 const isSkillEdge = tgtNode.type === 'skill';
+                const isToolEdge = tgtNode.type === 'tool';
                 const isSelected = selectedEdgeId === edge.id;
 
                 const srcPos = (srcNode.position && typeof srcNode.position.x === 'number' && typeof srcNode.position.y === 'number')
@@ -1463,6 +1681,8 @@ export default function ProjectEditorPage() {
                   ? '#6366f1'
                   : isSkillEdge
                   ? '#f43f5e'
+                  : isToolEdge
+                  ? '#0ea5e9'
                   : '#38bdf8';
 
                 return (
@@ -1480,7 +1700,7 @@ export default function ProjectEditorPage() {
                       fill="none"
                       stroke={edgeStroke}
                       strokeWidth={isConflicting ? 4 : isSelected ? 3 : 2}
-                      strokeDasharray={isConflicting ? '6 4' : isPromptEdge ? '4 3' : (isBotEdge || isSkillEdge) ? '3 3' : '6 4'}
+                      strokeDasharray={isConflicting ? '6 4' : isPromptEdge ? '4 3' : (isBotEdge || isSkillEdge || isToolEdge) ? '3 3' : '6 4'}
                       filter={isConflicting ? 'drop-shadow(0 0 8px rgba(239, 68, 68, 0.9))' : undefined}
                       onClick={() => setSelectedEdgeId(edge.id)}
                       style={{ cursor: 'pointer' }}
@@ -1541,6 +1761,7 @@ export default function ProjectEditorPage() {
               const isOutput = node.type === 'output';
               const isBot = node.type === 'bot';
               const isSkill = node.type === 'skill';
+              const isTool = node.type === 'tool';
 
               const accentColor = isInput
                 ? '#06b6d4'
@@ -1552,6 +1773,8 @@ export default function ProjectEditorPage() {
                 ? '#6366f1'
                 : isSkill
                 ? '#f43f5e'
+                : isTool
+                ? '#0ea5e9'
                 : 'var(--accent)';
 
               const nodePos = (node.position && typeof node.position.x === 'number' && typeof node.position.y === 'number')
@@ -1646,6 +1869,27 @@ export default function ProjectEditorPage() {
                     />
                   )}
 
+                  {isTool && (
+                    <div
+                      className="handle-circle"
+                      onMouseUp={e => handleTargetHandleMouseUp(e, node.id, 'tool_in')}
+                      style={{
+                        position: 'absolute',
+                        left: '-7px',
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        width: '14px',
+                        height: '14px',
+                        borderRadius: '50%',
+                        background: '#0ea5e9',
+                        border: '2px solid var(--bg-surface)',
+                        cursor: 'crosshair',
+                        zIndex: 20
+                      }}
+                      title="Tool Binding Port (In: Connect from Model)"
+                    />
+                  )}
+
                   {isModel && (
                     <>
                       <div
@@ -1704,7 +1948,7 @@ export default function ProjectEditorPage() {
                         cursor: 'crosshair',
                         zIndex: 20
                       }}
-                      title={isModel ? "Output Port (Connect to Output, Bot, or Skills)" : "Output Port: Drag to connect"}
+                      title={isModel ? "Output Port (Connect to Output, Bot, Skills, or Tools)" : "Output Port: Drag to connect"}
                     />
                   )}
 
@@ -1712,7 +1956,7 @@ export default function ProjectEditorPage() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                       <Icon
-                        name={isInput ? 'chat' : isPrompt ? 'prompts' : isModel ? 'settings' : isBot ? 'bot' : isSkill ? 'skills' : 'check'}
+                        name={isInput ? 'chat' : isPrompt ? 'prompts' : isModel ? 'settings' : isBot ? 'bot' : isSkill ? 'skills' : isTool ? 'tools' : 'check'}
                         size={14}
                         style={{ color: accentColor }}
                       />
@@ -1752,6 +1996,7 @@ export default function ProjectEditorPage() {
                           const connectedBotEdge = edges.find(e => e.source === node.id && nodes.find(n => n.id === e.target)?.type === 'bot');
                           const connectedBotNode = connectedBotEdge ? nodes.find(n => n.id === connectedBotEdge.target) : null;
                           const connectedSkillEdges = edges.filter(e => e.source === node.id && nodes.find(n => n.id === e.target)?.type === 'skill');
+                          const connectedToolEdges = edges.filter(e => e.source === node.id && nodes.find(n => n.id === e.target)?.type === 'tool');
 
                           return (
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px' }}>
@@ -1775,6 +2020,16 @@ export default function ProjectEditorPage() {
                               }}>
                                 Skills: {connectedSkillEdges.length}
                               </span>
+                              <span style={{
+                                fontSize: '0.62rem',
+                                padding: '1px 5px',
+                                borderRadius: '3px',
+                                background: connectedToolEdges.length > 0 ? 'rgba(14, 165, 233, 0.15)' : 'var(--bg-base)',
+                                border: `1px solid ${connectedToolEdges.length > 0 ? '#0ea5e9' : 'var(--border-subtle)'}`,
+                                color: connectedToolEdges.length > 0 ? '#38bdf8' : 'var(--text-muted)'
+                              }}>
+                                Tools: {connectedToolEdges.length}
+                              </span>
                             </div>
                           );
                         })()}
@@ -1796,6 +2051,25 @@ export default function ProjectEditorPage() {
                     {isSkill && (
                       <div>
                         Skill: <strong style={{ color: '#fb7185' }}>{node.data.config?.skill_name || node.data.label}</strong>
+                      </div>
+                    )}
+                    {isTool && (
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <span style={{ color: '#38bdf8', fontWeight: 600 }}>{node.data.config?.category || 'TOOL'}</span>
+                          <span style={{
+                            fontSize: '0.62rem',
+                            padding: '1px 4px',
+                            borderRadius: '3px',
+                            background: node.data.config?.status === 'AVAILABLE' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                            color: node.data.config?.status === 'AVAILABLE' ? '#10b981' : '#ef4444'
+                          }}>
+                            {node.data.config?.status || 'UNKNOWN'}
+                          </span>
+                        </div>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.65rem', marginTop: '2px' }}>
+                          Timeout: {node.data.config?.custom_timeout_seconds || 30}s • {node.data.config?.is_enabled ?? true ? 'Enabled' : 'Disabled'}
+                        </div>
                       </div>
                     )}
                     {isOutput && (
@@ -1845,7 +2119,7 @@ export default function ProjectEditorPage() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '0.5rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <Icon
-                  name={selectedNode.type === 'web_input' ? 'chat' : selectedNode.type === 'system_prompt' ? 'prompts' : selectedNode.type === 'model' ? 'settings' : selectedNode.type === 'bot' ? 'bot' : selectedNode.type === 'skill' ? 'skills' : 'check'}
+                  name={selectedNode.type === 'web_input' ? 'chat' : selectedNode.type === 'system_prompt' ? 'prompts' : selectedNode.type === 'model' ? 'settings' : selectedNode.type === 'bot' ? 'bot' : selectedNode.type === 'skill' ? 'skills' : selectedNode.type === 'tool' ? 'tools' : 'check'}
                   size={15}
                   style={{ color: 'var(--accent)' }}
                 />
@@ -2118,6 +2392,101 @@ export default function ProjectEditorPage() {
                 >
                   Open Skill Management
                 </Link>
+              </div>
+            )}
+
+            {selectedNode.type === 'tool' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <div style={{ background: 'rgba(14, 165, 233, 0.08)', border: '1px solid rgba(14, 165, 233, 0.25)', padding: '10px', borderRadius: '6px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#38bdf8' }}>
+                      TOOL REGISTRY
+                    </span>
+                    <span style={{
+                      fontSize: '0.65rem',
+                      background: selectedNode.data.config?.status === 'AVAILABLE' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                      color: selectedNode.data.config?.status === 'AVAILABLE' ? '#10b981' : '#ef4444',
+                      padding: '2px 6px',
+                      borderRadius: '4px',
+                      fontWeight: 600
+                    }}>
+                      {selectedNode.data.config?.status || 'AVAILABLE'}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '2px' }}>
+                    🛠️ {selectedNode.data.config?.name || selectedNode.data.label}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                    <span>Category: <strong style={{ color: '#38bdf8' }}>{selectedNode.data.config?.category || 'TOOL'}</strong></span>
+                    {selectedNode.data.config?.risk_level && (
+                      <span>• Risk: <strong style={{ color: '#f59e0b' }}>{selectedNode.data.config?.risk_level}</strong></span>
+                    )}
+                  </div>
+                  {selectedNode.data.config?.description && (
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px', lineHeight: '1.4' }}>
+                      {selectedNode.data.config.description}
+                    </div>
+                  )}
+                </div>
+
+                {/* Enabled Toggle */}
+                <div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.8rem', color: 'var(--text-primary)' }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedNode.data.config?.is_enabled ?? true}
+                      onChange={e => updateNodeConfig('is_enabled', e.target.checked)}
+                      style={{ width: '15px', height: '15px', accentColor: '#0ea5e9' }}
+                    />
+                    <span style={{ fontWeight: 600 }}>Enable Tool for Model</span>
+                  </label>
+                  <p style={{ fontSize: '0.68rem', color: 'var(--text-muted)', margin: '4px 0 0 23px' }}>
+                    When disabled, the model will not have access to call this tool during conversations.
+                  </p>
+                </div>
+
+                {/* Custom Timeout */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                    Execution Timeout (seconds):
+                  </label>
+                  <input
+                    type="number"
+                    min={5}
+                    max={300}
+                    value={selectedNode.data.config?.custom_timeout_seconds || 30}
+                    onChange={e => updateNodeConfig('custom_timeout_seconds', parseInt(e.target.value) || 30)}
+                    className="input"
+                    style={{ padding: '6px 8px', fontSize: '0.8rem' }}
+                  />
+                  <p style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                    Maximum seconds to wait for tool execution before timing out. Default is 30s.
+                  </p>
+                </div>
+
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', background: 'var(--bg-card)', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-subtle)' }}>
+                  <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '4px' }}>
+                    TOOL ID / REGISTRY KEY
+                  </div>
+                  <code style={{ fontSize: '0.75rem', color: '#7dd3fc', wordBreak: 'break-all' }}>
+                    {selectedNode.data.config?.tool_id}
+                  </code>
+                </div>
+
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+                  <strong>Model-to-Tool Binding:</strong> When connected to the Model node, the model can choose to call this tool zero, one, or multiple times depending on the conversation. Tools are NOT executed automatically.
+                </div>
+
+                {selectedNode.data.config?.tool_id && (
+                  <Link
+                    href={`/tools/${selectedNode.data.config.tool_id}`}
+                    target="_blank"
+                    className="btn btn-secondary"
+                    style={{ textAlign: 'center', fontSize: '0.75rem', padding: '6px' }}
+                  >
+                    Open Tool Details & Test
+                  </Link>
+                )}
               </div>
             )}
           </aside>

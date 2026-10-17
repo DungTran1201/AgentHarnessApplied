@@ -205,3 +205,45 @@ To enable the `web_search` tool:
 2. Navigate to **Tool Library** -> **Search Web via API (`web_search`)** -> **Configure**.
 3. Enter your API key under `API_KEY` (or add `TAVILY_API_KEY=...` to your `.env` file).
 4. Save the configuration; the tool will transition from `NEEDS_CONFIGURATION` to `AVAILABLE`.
+
+---
+
+## 7. Project Node Catalog & Model ↔ Tools Runtime Integration
+
+### 7.1 Overview & Architecture Accomplishments
+1. **Dynamic Node Catalog Integration:**
+   - Added Group 7 **"Tools"** to the Project Editor sidebar with accordion expand/collapse, dynamically populated from `GET /api/v1/tools?limit=100` (zero hardcoded tool lists on frontend).
+   - Unified catalog search (searches across name, ID, category, description) and category filter (`tool`).
+   - Loading, empty, and error states with clear user messaging.
+2. **Canvas Drag & Drop Tool Nodes:**
+   - Instantiates a `ToolNode` with unique stable ID, category badge, risk indicator, status badge, and custom timeout setting.
+   - Interactive Tool Drawer allows configuring `is_enabled` and `custom_timeout_seconds`.
+3. **Strict Model ↔ Tools Relationship (1:N):**
+   - **One Model connects to 0..N Tools:** Multiple distinct tools can be connected to the same model.
+   - **Single Model Ownership:** Each Tool Node instance belongs to at most one Model Node.
+   - **Duplicate Rejection:** Connecting duplicate tool types to the same Model is rejected with a clear conflict toast.
+   - **Directed Edge Semantics:** `Model -> Tool` (stroke: `#0ea5e9`, handle `out` -> `tool_in`, type `model_tool`). Reverse connections (`Tool -> Model`) are strictly rejected.
+4. **Graph Persistence & DB Synchronization:**
+   - `PUT /api/v1/projects/:id/graph` synchronizes `project_tool_bindings`: binds newly linked tools, updates timeouts, and cleanly removes unlinked tools.
+5. **Runtime Tool Calling & Execution:**
+   - During Project Chat (`POST /api/v1/projects/:id/chat`), the backend resolves connected tools, verifies `AVAILABLE` status and permissions via `PolicyGateService`, binds tool schemas to the model, and passes them to `chat_agent.astream_agent`.
+   - The model calls tools on demand when required (e.g. calculation requests invoke `calculator`); general conversations (e.g. "Xin chào") execute **zero tools**.
+   - 100% backward compatibility for legacy graphs (Input -> Model -> Output) without tools.
+
+### 7.2 Automated Test Evidence
+- **Backend Integration Test Suite** (`ai-backend/tests/test_project_model_tools.py`):
+  - **10/10 Passed (100%)**:
+    1. `test_catalog_returns_real_tools_from_registry`: Validates real tool catalog response with schemas and status.
+    2. `test_save_and_reload_graph_with_1_model_and_3_tools`: Verifies 1 Model connected to 3 Tools saves properly and syncs `project_tool_bindings`.
+    3. `test_validation_rejects_reverse_tool_to_model_edge`: Verifies 422 rejection on reverse `Tool -> Model` edge.
+    4. `test_validation_rejects_duplicate_tool_on_same_model`: Verifies 422 rejection on duplicate tool types on same model.
+    5. `test_unbinding_tool_when_removed_from_canvas`: Verifies automatic cleanup in `project_tool_bindings` when a tool is deleted from the canvas.
+    6. `test_project_chat_executes_calculator_on_math_prompt`: Verifies prompt `"tính 25 * 4"` triggers `calculator` and logs an audit execution record.
+    7. `test_project_chat_does_not_execute_tools_for_general_conversation`: Verifies prompt `"Xin chào"` causes **0 tool executions**.
+    8. `test_project_chat_reports_cleanly_when_tool_not_connected`: Verifies prompt requiring tool when not connected causes 0 executions.
+    9. `test_project_chat_with_disabled_tool_raises_422_tool_disabled`: Verifies 422 rejection when attempting to chat with a disabled connected tool.
+    10. `test_backward_compatibility_graph_without_tools`: Verifies legacy 3-node graph continues to work without tools.
+- **Frontend Test Suite** (`ai-frontend/src/tests/projectCanvasCatalog.test.ts`):
+  - **29/29 Passed (100%)**:
+    - Validates 1:N Model-to-Tools connection, duplicate tool rejection, reverse edge rejection, single-model ownership, and stable resource mappings.
+

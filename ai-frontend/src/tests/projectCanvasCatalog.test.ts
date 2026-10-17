@@ -24,15 +24,16 @@ export function validateConnectionAttempt(
   const isOutput = targetNode.type === 'output';
   const isBot = targetNode.type === 'bot';
   const isSkill = targetNode.type === 'skill';
+  const isTool = targetNode.type === 'tool';
 
   // 1. Disallow self connections
   if (sourceNode.id === targetNode.id) {
     return { valid: false, error: 'Cannot connect a node to itself.' };
   }
 
-  // 2. Reject reverse connections (e.g., Bot -> Model, Skill -> Model, Output -> Model)
-  if (sourceNode.type === 'bot' || sourceNode.type === 'skill' || sourceNode.type === 'output') {
-    return { valid: false, error: 'Reverse connections are not supported. Edges must flow from Model to Bot/Skill/Output.' };
+  // 2. Reject reverse connections (e.g., Bot -> Model, Skill -> Model, Tool -> Model, Output -> Model)
+  if (sourceNode.type === 'bot' || sourceNode.type === 'skill' || sourceNode.type === 'tool' || sourceNode.type === 'output') {
+    return { valid: false, error: 'Reverse connections are not supported. Edges must flow from Model to Bot/Skill/Tool/Output.' };
   }
 
   // 3. Disallow duplicate connections
@@ -62,6 +63,18 @@ export function validateConnectionAttempt(
 
   // 5. Model -> Skill connection constraint (multiple allowed, duplicates rejected)
   if (isModelSource && isSkill && targetHandle === 'skill_in') {
+    return { valid: true };
+  }
+
+  // 5b. Model -> Tool connection constraint (multiple allowed, one tool instance belongs to at most one model)
+  if (isModelSource && isTool && targetHandle === 'tool_in') {
+    const existingToolEdge = existingEdges.find(e => e.target === targetNode.id);
+    if (existingToolEdge && existingToolEdge.source !== sourceNode.id) {
+      return {
+        valid: false,
+        error: 'A Tool Node can only be connected to one Model Node.'
+      };
+    }
     return { valid: true };
   }
 
@@ -333,5 +346,131 @@ test('Project Canvas Node Catalog and Graph Connection Constraints', async (t) =
     // Node instance IDs differ from authoritative resource IDs
     assert.notEqual(botNodeA.id, botNodeA.data.config?.bot_id);
     assert.notEqual(skillNodeA.id, skillNodeA.data.config?.skill_id);
+  });
+
+  const toolNodeCalculator: GraphNode = {
+    id: 'node_tool_calc',
+    type: 'tool',
+    position: { x: 420, y: 550 },
+    data: {
+      label: 'Safe Calculator',
+      config: {
+        tool_id: 'calculator',
+        name: 'Safe Calculator',
+        category: 'DATA',
+        risk_level: 'LOW',
+        status: 'AVAILABLE'
+      }
+    }
+  };
+
+  const toolNodeCsv: GraphNode = {
+    id: 'node_tool_csv',
+    type: 'tool',
+    position: { x: 580, y: 550 },
+    data: {
+      label: 'Parse CSV',
+      config: {
+        tool_id: 'parse_csv',
+        name: 'Parse CSV Table',
+        category: 'FILE_DOCUMENT',
+        risk_level: 'LOW',
+        status: 'AVAILABLE'
+      }
+    }
+  };
+
+  const toolNodeWebSearch: GraphNode = {
+    id: 'node_tool_search',
+    type: 'tool',
+    position: { x: 740, y: 550 },
+    data: {
+      label: 'Web Search',
+      config: {
+        tool_id: 'web_search',
+        name: 'Web Search via API',
+        category: 'WEB',
+        risk_level: 'MEDIUM',
+        status: 'NEEDS_CONFIGURATION'
+      }
+    }
+  };
+
+  await t.test('10. Model connecting to a single Tool is valid', () => {
+    const result = validateConnectionAttempt(modelNode, toolNodeCalculator, 'out', 'tool_in', baseEdges);
+    assert.equal(result.valid, true);
+    assert.equal(result.error, undefined);
+  });
+
+  await t.test('11. Model connecting to multiple (3+) distinct Tools is ALLOWED (1:N Model-to-Tools)', () => {
+    const edgesWithTool1: GraphEdge[] = [
+      ...baseEdges,
+      { id: 'e_tool_calc', source: modelNode.id, target: toolNodeCalculator.id, sourceHandle: 'out', targetHandle: 'tool_in', type: 'model_tool' }
+    ];
+
+    // Connect 2nd tool
+    const resTool2 = validateConnectionAttempt(modelNode, toolNodeCsv, 'out', 'tool_in', edgesWithTool1);
+    assert.equal(resTool2.valid, true);
+
+    const edgesWithTool2: GraphEdge[] = [
+      ...edgesWithTool1,
+      { id: 'e_tool_csv', source: modelNode.id, target: toolNodeCsv.id, sourceHandle: 'out', targetHandle: 'tool_in', type: 'model_tool' }
+    ];
+
+    // Connect 3rd tool
+    const resTool3 = validateConnectionAttempt(modelNode, toolNodeWebSearch, 'out', 'tool_in', edgesWithTool2);
+    assert.equal(resTool3.valid, true);
+
+    const edgesWithAllTools: GraphEdge[] = [
+      ...edgesWithTool2,
+      { id: 'e_tool_search', source: modelNode.id, target: toolNodeWebSearch.id, sourceHandle: 'out', targetHandle: 'tool_in', type: 'model_tool' }
+    ];
+
+    assert.equal(edgesWithAllTools.length, 5);
+  });
+
+  await t.test('12. Duplicate connection from Model to same Tool is REJECTED', () => {
+    const edgesWithTool1: GraphEdge[] = [
+      ...baseEdges,
+      { id: 'e_tool_calc', source: modelNode.id, target: toolNodeCalculator.id, sourceHandle: 'out', targetHandle: 'tool_in', type: 'model_tool' }
+    ];
+
+    const result = validateConnectionAttempt(modelNode, toolNodeCalculator, 'out', 'tool_in', edgesWithTool1);
+    assert.equal(result.valid, false);
+    assert.equal(result.error, 'This connection already exists.');
+  });
+
+  await t.test('13. Reverse Tool -> Model connection is REJECTED', () => {
+    const revTool = validateConnectionAttempt(toolNodeCalculator, modelNode, 'tool_in', 'out', baseEdges);
+    assert.equal(revTool.valid, false);
+    assert.match(revTool.error || '', /Reverse connections are not supported/);
+  });
+
+  await t.test('14. Connecting same Tool Node instance to a second Model Node is REJECTED', () => {
+    const secondModelNode: GraphNode = {
+      id: 'node_model_2',
+      type: 'model',
+      position: { x: 420, y: 700 },
+      data: { label: 'Second Model', config: { model_id: 'gpt-4o' } }
+    };
+
+    const edgesWithTool1: GraphEdge[] = [
+      ...baseEdges,
+      { id: 'e_tool_calc', source: modelNode.id, target: toolNodeCalculator.id, sourceHandle: 'out', targetHandle: 'tool_in', type: 'model_tool' }
+    ];
+
+    const result = validateConnectionAttempt(secondModelNode, toolNodeCalculator, 'out', 'tool_in', edgesWithTool1);
+    assert.equal(result.valid, false);
+    assert.equal(result.error, 'A Tool Node can only be connected to one Model Node.');
+  });
+
+  await t.test('15. Unsupported connection combinations involving Tools are REJECTED', () => {
+    // Web Input -> Tool
+    const inputToTool = validateConnectionAttempt(inputNode, toolNodeCalculator, 'out', 'tool_in', baseEdges);
+    assert.equal(inputToTool.valid, false);
+
+    // Tool -> Output
+    const toolToOutput = validateConnectionAttempt(toolNodeCalculator, outputNode, 'out', 'in', baseEdges);
+    assert.equal(toolToOutput.valid, false);
   });
 });

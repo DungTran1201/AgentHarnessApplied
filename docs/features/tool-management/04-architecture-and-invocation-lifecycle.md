@@ -92,15 +92,20 @@ graph LR
     InputNode["Web Input Node<br/>(User Prompt)"] --> ModelNode["Model Node<br/>(Gemini / GPT-4o)"]
     PromptNode["System Prompt Node<br/>(Persona)"] --> ModelNode
     SkillNode["Skill Node<br/>(Playbook)"] --> ModelNode
-    ToolNode1["Tool Node: calculator<br/>(Math Tool)"] --> ModelNode
-    ToolNode2["Tool Node: search_faiss<br/>(Knowledge Base)"] --> ModelNode
     ModelNode --> OutputNode["Output Node<br/>(SSE Stream)"]
+    ModelNode -.->|model_tool: availability| ToolNode1["Tool Node: calculator<br/>(Math Tool)"]
+    ModelNode -.->|model_tool: availability| ToolNode2["Tool Node: convert_units<br/>(Conversion Tool)"]
+    ModelNode -.->|model_tool: availability| ToolNode3["Tool Node: date_time_info<br/>(Time Tool)"]
 ```
 
-- **Quy tắc Binding:**
-  - Một Project có thể liên kết với 0, 1 hoặc nhiều Tools thông qua bảng quan hệ `project_tool_bindings`.
-  - Nếu Project không gắn bất kỳ Tool nào, luồng chat chạy bình thường như hiện tại (không thay đổi hành vi cũ).
-  - Khi một Tool bị xóa hoặc vô hiệu hóa, Project Graph vẫn giữ nguyên cấu trúc nhưng trạng thái node Tool sẽ hiển thị cảnh báo `Tool Disabled`.
+- **Quy tắc Binding & Ràng buộc Đồ thị (Model ↔ Tools):**
+  - **Quan hệ 1:N:** Một Model Node có thể kết nối với **0..N Tool Nodes**.
+  - **Sở hữu đơn nhất:** Mỗi Tool Node instance trên canvas chỉ thuộc về tối đa một Model Node.
+  - **Không trùng lặp:** Trong cùng một Model, không được gắn 2 node cùng tham chiếu đến một loại tool (ví dụ: 2 node calculator cùng nối vào Model sẽ bị từ chối với lỗi 422 `Phát hiện công cụ trùng lặp`).
+  - **Chiều cạnh (Edge Semantics):** Cạnh kết nối có hướng từ **Model sang Tool** (`Model -> Tool`, handle `out` sang `tool_in`, edge type `model_tool`, stroke màu xanh da trời `#0ea5e9`). Cạnh này thể hiện **quyền truy cập / khả năng gọi tool (tool availability/binding)** mà Model được phép kích hoạt trong runtime, không phải luồng dữ liệu tuần tự.
+  - **Chặn kết nối ngược:** Các kết nối ngược `Tool -> Model` bị chặn tuyệt đối cả ở frontend canvas lẫn backend graph validator.
+  - **Đồng bộ cơ sở dữ liệu:** Khi lưu đồ thị (`PUT /api/v1/projects/:id/graph`), backend tự động đồng bộ hóa bảng `project_tool_bindings`: tự động thêm các tool mới nối, cập nhật `is_enabled` và `custom_timeout_seconds`, và gỡ bỏ liên kết của các tool bị xóa khỏi canvas.
+  - **Tương thích ngược 100%:** Các đồ thị cũ chỉ gồm `Input -> Model -> Output` không có Tool Node vẫn hoạt động hoàn toàn bình thường mà không bị ảnh hưởng.
 
 ### 3.2 Phân giải Năng lực Mô hình (Capability Resolution Matrix)
 
