@@ -314,9 +314,105 @@ export default function FloatingProjectChat({
   const [isStreaming, setIsStreaming] = useState(false);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
   const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Map raw backend message item to UI Message interface
+  const mapRawMessageToUI = useCallback((m: any): Message => {
+    let uiStatus: 'pending' | 'streaming' | 'completed' | 'error' = 'completed';
+    if (m.status === 'RUNNING' || m.status === 'QUEUED') {
+      uiStatus = 'streaming';
+    } else if (m.status === 'FAILED') {
+      uiStatus = 'error';
+    }
+    const ts = m.created_at ? new Date(m.created_at).getTime() : Date.now();
+    return {
+      id: m.id,
+      role: m.role || 'user',
+      content: m.content || '',
+      timestamp: isNaN(ts) ? Date.now() : ts,
+      model: m.model_used,
+      status: uiStatus,
+      attachments: m.attachments,
+    };
+  }, []);
+
+  // Fetch or resolve primary conversation and load chat history
+  const loadProjectHistory = useCallback(async () => {
+    if (!project?.id) {
+      setMessages([]);
+      setConversationId(null);
+      return;
+    }
+    setIsLoadingHistory(true);
+    try {
+      const conv = await ProjectService.getOrCreateProjectConversation(project.id);
+      if (conv?.id) {
+        setConversationId(conv.id);
+        const rawMsgs = await ProjectService.getProjectMessages(conv.id);
+        const mapped = rawMsgs.map(mapRawMessageToUI);
+        setMessages(mapped);
+
+        // Check if the latest message was running when page opened / reloaded
+        const lastMsg = mapped[mapped.length - 1];
+        if (lastMsg && lastMsg.role === 'assistant' && lastMsg.status === 'streaming') {
+          setIsStreaming(true);
+          const controller = new AbortController();
+          abortControllerRef.current = controller;
+          let currentContent = lastMsg.content;
+
+          ProjectService.reconnectProjectChat(
+            project.id,
+            conv.id,
+            -1,
+            (chunk: string) => {
+              currentContent += chunk;
+              setMessages(prev =>
+                prev.map(m => m.id === lastMsg.id ? { ...m, content: currentContent, status: 'streaming' } : m)
+              );
+            },
+            () => {
+              setIsStreaming(false);
+              abortControllerRef.current = null;
+              setMessages(prev =>
+                prev.map(m => m.id === lastMsg.id ? { ...m, status: 'completed' } : m)
+              );
+            },
+            (err: any) => {
+              setIsStreaming(false);
+              abortControllerRef.current = null;
+              if (err?.name !== 'AbortError') {
+                setMessages(prev =>
+                  prev.map(m => m.id === lastMsg.id ? { ...m, status: 'error' } : m)
+                );
+              }
+            },
+            controller.signal
+          );
+        }
+      }
+    } catch (err: any) {
+      console.error('Failed to load project conversation history:', err);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  }, [project?.id, mapRawMessageToUI]);
+
+  useEffect(() => {
+    loadProjectHistory();
+  }, [loadProjectHistory]);
+
+  // Clean up client connection on unmount without cancelling backend turn
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+    };
+  }, []);
 
   // Auto-scroll on new message
   useEffect(() => {
@@ -446,10 +542,19 @@ export default function FloatingProjectChat({
     let accumulatedText = '';
 
     try {
+      let activeTargetConvId = conversationId;
+      if (!activeTargetConvId) {
+        const resolvedConv = await ProjectService.getOrCreateProjectConversation(project.id);
+        if (resolvedConv?.id) {
+          activeTargetConvId = resolvedConv.id;
+          setConversationId(resolvedConv.id);
+        }
+      }
+
       await ProjectService.streamProjectChat(
         project.id,
         userText,
-        conversationId,
+        activeTargetConvId,
         (chunk: string) => {
           accumulatedText += chunk;
           setMessages(prev =>
@@ -504,11 +609,23 @@ export default function FloatingProjectChat({
     }
   };
 
-  const handleStopStreaming = () => {
+  const handleStopStreaming = async () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
-      setIsStreaming(false);
       abortControllerRef.current = null;
+    }
+    setIsStreaming(false);
+    if (project?.id && conversationId) {
+      await ProjectService.cancelProjectChat(project.id, conversationId);
+      // Reload messages to display updated cancelled status
+      try {
+        const rawMsgs = await ProjectService.getProjectMessages(conversationId);
+        if (rawMsgs && rawMsgs.length > 0) {
+          setMessages(rawMsgs.map(mapRawMessageToUI));
+        }
+      } catch (err) {
+        console.error('Failed to refresh messages after stop:', err);
+      }
     }
   };
 

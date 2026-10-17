@@ -33,6 +33,14 @@ async def startup_event():
     except Exception as e:
         print(f"Tool seeding on startup warning: {e}")
 
+    try:
+        from src.services.chat_turn_manager import ProjectChatTurnManager
+        reconciled = ProjectChatTurnManager.reconcile_startup_interrupted_turns()
+        if reconciled:
+            print(f"Reconciled {reconciled} interrupted chat turns from previous run.")
+    except Exception as e:
+        print(f"Startup chat reconciliation warning: {e}")
+
 from src.api.v1.bot import HealthResponse
 
 @app.get("/")

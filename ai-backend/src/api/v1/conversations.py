@@ -9,23 +9,38 @@ conv_router = APIRouter(prefix="/conversations", tags=["Conversations"])
 
 class CreateConversationRequest(BaseModel):
     title: Optional[str] = "Cuộc trò chuyện mới"
+    project_id: Optional[str] = None
 
 class UpdateConversationRequest(BaseModel):
     title: str = Field(min_length=1, max_length=255)
 
 @conv_router.get("/")
 @conv_router.get("", include_in_schema=False)
-async def list_conversations(current_user: dict = Depends(get_current_user)):
+async def list_conversations(
+    project_id: Optional[str] = None,
+    current_user: dict = Depends(get_current_user)
+):
     user_id = current_user["id"]
-    threads = query_all(
-        """
-        SELECT id, user_id, title, created_at, updated_at
-        FROM conversations
-        WHERE user_id = ?
-        ORDER BY updated_at DESC
-        """,
-        (user_id,)
-    )
+    if project_id:
+        threads = query_all(
+            """
+            SELECT id, user_id, project_id, title, created_at, updated_at
+            FROM conversations
+            WHERE user_id = ? AND project_id = ?
+            ORDER BY updated_at DESC
+            """,
+            (user_id, project_id)
+        )
+    else:
+        threads = query_all(
+            """
+            SELECT id, user_id, project_id, title, created_at, updated_at
+            FROM conversations
+            WHERE user_id = ?
+            ORDER BY updated_at DESC
+            """,
+            (user_id,)
+        )
     return {"conversations": threads}
 
 @conv_router.post("/", status_code=status.HTTP_201_CREATED)
@@ -38,12 +53,20 @@ async def create_conversation(
     user_id = current_user["id"]
     title_clean = req.title.strip() if req.title else "Cuộc trò chuyện mới"
 
+    if req.project_id:
+        proj = query_one("SELECT id FROM projects WHERE id = ? AND user_id = ?", (req.project_id, user_id))
+        if not proj and user_id != "guest_user":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Project không tồn tại hoặc bạn không có quyền truy cập."
+            )
+
     execute_commit(
         """
-        INSERT INTO conversations (id, user_id, title)
-        VALUES (?, ?, ?)
+        INSERT INTO conversations (id, user_id, project_id, title)
+        VALUES (?, ?, ?, ?)
         """,
-        (conv_id, user_id, title_clean)
+        (conv_id, user_id, req.project_id, title_clean)
     )
 
     thread = query_one("SELECT * FROM conversations WHERE id = ?", (conv_id,))
@@ -52,12 +75,14 @@ async def create_conversation(
 @conv_router.get("/{conversation_id}/messages")
 async def get_conversation_messages(
     conversation_id: str,
+    limit: int = 100,
+    offset: int = 0,
     current_user: dict = Depends(get_current_user)
 ):
     user_id = current_user["id"]
     # Kiểm tra quyền sở hữu chống IDOR (BR-002, CTRL-002, TC-011)
     conv = query_one(
-        "SELECT id, title FROM conversations WHERE id = ? AND user_id = ?",
+        "SELECT id, user_id, project_id, title, created_at, updated_at FROM conversations WHERE id = ? AND user_id = ?",
         (conversation_id, user_id)
     )
     if not conv:
@@ -66,14 +91,18 @@ async def get_conversation_messages(
             detail="Không tìm thấy cuộc trò chuyện hoặc bạn không có quyền truy cập."
         )
 
+    safe_limit = max(1, min(limit, 500))
+    safe_offset = max(0, offset)
+
     messages = query_all(
         """
-        SELECT id, conversation_id, role, content, model_used, tokens_prompt, tokens_completion, source, created_at
+        SELECT id, conversation_id, role, content, model_used, tokens_prompt, tokens_completion, source, status, created_at, updated_at
         FROM messages
         WHERE conversation_id = ?
-        ORDER BY created_at ASC
+        ORDER BY created_at ASC, id ASC
+        LIMIT ? OFFSET ?
         """,
-        (conversation_id,)
+        (conversation_id, safe_limit, safe_offset)
     )
 
     # Lấy danh sách attachments liên quan đến cuộc hội thoại này (SRS Unified File Uploads)
@@ -97,7 +126,10 @@ async def get_conversation_messages(
 
     return {
         "conversation": conv,
-        "messages": messages
+        "messages": messages,
+        "total": len(messages),
+        "limit": safe_limit,
+        "offset": safe_offset
     }
 
 

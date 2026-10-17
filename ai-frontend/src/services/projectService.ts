@@ -295,4 +295,135 @@ export class ProjectService {
       onError(err);
     }
   }
+
+  static async getOrCreateProjectConversation(projectId: string): Promise<any> {
+    const res = await fetch(`${BASE_URL}/projects/${projectId}/conversation`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+      credentials: 'include',
+    });
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(errJson.detail || 'Không thể lấy cuộc trò chuyện của project');
+    }
+    const data = await res.json();
+    return data.conversation;
+  }
+
+  static async getProjectMessages(conversationId: string, limit: number = 100, offset: number = 0): Promise<any[]> {
+    const res = await fetch(`${BASE_URL}/conversations/${conversationId}/messages?limit=${limit}&offset=${offset}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+      credentials: 'include',
+    });
+    if (!res.ok) {
+      return [];
+    }
+    const data = await res.json();
+    return data.messages || [];
+  }
+
+  static async cancelProjectChat(projectId: string, conversationId: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${BASE_URL}/projects/${projectId}/chat/cancel`, {
+        method: 'POST',
+        headers: {
+          ...getAuthHeaders(),
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({ conversation_id: conversationId }),
+      });
+      if (!res.ok) return false;
+      const data = await res.json();
+      return !!data.success;
+    } catch {
+      return false;
+    }
+  }
+
+  static async reconnectProjectChat(
+    projectId: string,
+    conversationId: string,
+    afterSeq: number = -1,
+    onChunk: (chunk: string) => void,
+    onDone: (data?: any) => void,
+    onError: (err: any) => void,
+    signal?: AbortSignal
+  ): Promise<void> {
+    try {
+      const res = await fetch(
+        `${BASE_URL}/projects/${projectId}/chat/stream?conversation_id=${encodeURIComponent(conversationId)}&after_seq=${afterSeq}`,
+        {
+          method: 'GET',
+          headers: {
+            ...getAuthHeaders(),
+            Accept: 'text/event-stream',
+          },
+          credentials: 'include',
+          signal,
+        }
+      );
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(errJson.detail || 'Không thể nối lại luồng chat.');
+      }
+
+      if (!res.body) throw new Error('ReadableStream is not supported.');
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const blocks = buffer.split(/\r?\n\r?\n/);
+        buffer = blocks.pop() || '';
+
+        for (const block of blocks) {
+          if (!block.trim()) continue;
+          const lines = block.split(/\r?\n/);
+          let eventType = 'message';
+          let dataStr = '';
+
+          for (const line of lines) {
+            if (line.startsWith('event:')) {
+              eventType = line.slice(6).trim();
+            } else if (line.startsWith('data:')) {
+              dataStr = line.slice(5).trim();
+            }
+          }
+
+          if (!dataStr) continue;
+
+          try {
+            const data = JSON.parse(dataStr);
+            if (eventType === 'error' || data.status === 'error') {
+              onError(new Error(data.message || 'Lỗi khi nhận phản hồi.'));
+              return;
+            }
+
+            const rawToken = data.token ?? data.content;
+            if (rawToken) {
+              onChunk(rawToken);
+            }
+
+            if (eventType === 'done' || data.status === 'done' || data.finish_reason) {
+              onDone(data);
+              return;
+            }
+          } catch {}
+        }
+      }
+      onDone();
+    } catch (err: any) {
+      if (err.name === 'AbortError') return;
+      onError(err);
+    }
+  }
 }
+

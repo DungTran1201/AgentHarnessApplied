@@ -319,3 +319,133 @@ data: {"finish_reason": "stop", "prompt_words": 15, "tokens_used": 128}
   "max_words": 500
 }
 ```
+
+---
+
+### 4.5. `GET /api/v1/projects/{id}/conversation` - Lấy hoặc Khởi Tạo Idempotent Conversation Chính của Project
+- **Phương thức**: `GET`
+- **Đường dẫn**: `/api/v1/projects/{id}/conversation`
+- **Header**:
+  - `Authorization: Bearer <jwt_token>`
+- **Mô tả**: Trả về cuộc hội thoại đang tiếp diễn của người dùng cho Project này. Nếu chưa có, tạo mới và gắn `project_id`. Đảm bảo tính Idempotent khi mở lại trang hoặc từ 2 tab cùng lúc.
+- **Phản hồi Thành Công (200 OK)**:
+```json
+{
+  "conversation": {
+    "id": "conv_99887766-5544-3322-1100-aabbccddeeff",
+    "user_id": "user_123",
+    "project_id": "proj_a1b2c3d4",
+    "title": "Project Chat - Trợ Lý Kỹ Thuật",
+    "created_at": "2026-10-17T03:30:00Z",
+    "updated_at": "2026-10-17T03:45:00Z"
+  }
+}
+```
+- **Phản hồi Thất Bại (404 Not Found)**:
+```json
+{
+  "detail": "Project không tồn tại hoặc bạn không có quyền truy cập."
+}
+```
+
+---
+
+### 4.6. `GET /api/v1/projects/{id}/chat/stream` - Nối Lại Luồng SSE và Replay Event Cho Lượt Đang Sinh
+- **Phương thức**: `GET`
+- **Đường dẫn**: `/api/v1/projects/{id}/chat/stream?conversation_id={conv_id}&after_seq={seq}`
+- **Header**:
+  - `Authorization: Bearer <jwt_token>`
+  - `Accept: text/event-stream`
+- **Tham số Query**:
+  - `conversation_id`: Bắt buộc. Định danh cuộc trò chuyện.
+  - `after_seq`: Tùy chọn (mặc định -1). Sequence number của event cuối cùng mà client đã nhận trước khi ngắt kết nối.
+- **Mô tả**: Cho phép client khi rời màn hình hoặc tải lại trang kết nối lại với tác vụ sinh chạy ngầm ở backend (`ProjectChatTurnManager`). Backend sẽ phát lại các chunk/event có sequence > `after_seq` và tiếp tục streaming trực tiếp.
+- **Phản hồi SSE (200 OK - `Content-Type: text/event-stream`)**:
+```
+event: chunk
+data: {"token": " và tiếp tục xử lý", "seq": 12}
+
+event: done
+data: {"status": "done", "finish_reason": "stop", "turn_id": "turn_123", "message_id": "msg_456", "model": "gemini-3.8-flash", "tokens_prompt": 25, "conversation_id": "conv_99887766"}
+```
+- **Phản hồi Không Có Turn Hoạt Động (404 Not Found)**: Nếu lượt đã hoàn tất hoặc không tồn tại.
+
+---
+
+### 4.7. `POST /api/v1/projects/{id}/chat/cancel` - Hủy Lượt Sinh Theo Yêu Cầu Người Dùng (Stop Button)
+- **Phương thức**: `POST`
+- **Đường dẫn**: `/api/v1/projects/{id}/chat/cancel`
+- **Header**:
+  - `Authorization: Bearer <jwt_token>`
+  - `Content-Type: application/json`
+- **Request Body**:
+```json
+{
+  "conversation_id": "conv_99887766-5544-3322-1100-aabbccddeeff"
+}
+```
+- **Phản hồi Thành Công (200 OK)**:
+```json
+{
+  "success": true,
+  "message": "Đã hủy lượt sinh thành công."
+}
+```
+
+---
+
+## 5. Sơ Đồ Tuần Tự: Luồng Chạy Ngầm Bền Vững & Nối Lại Luồng (Turn Lifecycle & Stream Reconnect)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Người Dùng
+    participant FE as Frontend (Floating Chat / Chat Page)
+    participant API as Projects API Router
+    participant TM as ProjectChatTurnManager (Detached Async Task)
+    participant LLM as LLM Provider
+    participant DB as SQLite DB
+
+    User->>FE: Gửi tin nhắn mới
+    FE->>API: POST /projects/{id}/chat { message, conversation_id }
+    API->>API: Anti-IDOR check (Xác minh user & project_id)
+    API->>DB: INSERT INTO messages (role='user', status='COMPLETED')
+    API->>DB: INSERT INTO messages (role='assistant', status='RUNNING')
+    API->>TM: start_turn(task) -> Chạy async task độc lập với HTTP Request
+    TM->>API: Trả về instance ActiveChatTurn
+    API-->>FE: Bắt đầu StreamingResponse (SSE)
+
+    User->>FE: Đổi màn hình / Rời trang / Đổi Project
+    Note over FE,API: HTTP Socket Client ngắt kết nối (Client Disconnect)
+    Note over TM,LLM: Task backend VẪN TIẾP TỤC CHẠY độc lập trong TurnManager!
+    LLM-->>TM: Tiếp tục sinh các chunks
+    TM->>TM: Lưu vào buffer turn.events (kèm seq tăng dần)
+
+    User->>FE: Quay lại màn hình Project / Chat Page
+    FE->>API: GET /projects/{id}/chat/stream?conversation_id=...&after_seq=last_seq
+    API->>TM: Lấy turn đang active từ ProjectChatTurnManager
+    TM-->>FE: SSE Replay các event có seq > last_seq, sau đó stream live các chunks còn lại
+    LLM-->>TM: Hoàn tất lượt sinh (Done)
+    TM->>DB: UPDATE messages SET content=full_content, status='COMPLETED'
+    TM-->>FE: event: done
+```
+
+---
+
+## 6. Sơ Đồ Trạng Thái: Vòng Đời Lượt Sinh Chat (Turn Lifecycle State Diagram)
+
+```mermaid
+stateDiagram-v2
+    [*] --> QUEUED: Khởi tạo lượt sinh & lưu placeholder DB
+    QUEUED --> RUNNING: Backend Turn Manager bắt đầu gọi Model
+    RUNNING --> COMPLETED: Model hoàn tất thành công (Lưu DB & phát done event)
+    RUNNING --> FAILED: Provider lỗi / Timeout (Đánh dấu FAILED & lưu error message)
+    RUNNING --> CANCELLED: Người dùng bấm "Stop" -> Gọi POST /projects/{id}/chat/cancel
+    RUNNING --> INTERRUPTED: Backend restart trong lúc sinh -> Reconciled lúc startup
+    QUEUED --> INTERRUPTED: Backend restart khi chưa kịp sinh
+    COMPLETED --> [*]
+    FAILED --> [*]
+    CANCELLED --> [*]
+    INTERRUPTED --> [*]
+```
+

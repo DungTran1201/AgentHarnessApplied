@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from src.core.config import settings
-from src.core.security import decode_access_token
+from src.core.security import decode_access_token, get_current_user
 from src.db import get_db_connection, query_one, query_all, execute_commit
 from src.api.v1.models import check_provider_api_key
 
@@ -1105,19 +1105,55 @@ async def chat_through_project(
             tools_block = "\n\n--- AVAILABLE TOOLS FOR THIS PROJECT ---\n" + "\n".join(tools_desc) + "\n--- END AVAILABLE TOOLS ---"
             combined_instruction = (combined_instruction + tools_block).strip()
 
-    # 3. Quản lý conversation
+    # 3. Quản lý conversation (Anti-IDOR & Idempotent Primary Project Conversation)
     conv_id = payload.conversation_id
-    if not conv_id:
-        conv_id = f"conv_{uuid.uuid4().hex}"
-        execute_commit(
-            "INSERT INTO conversations (id, user_id, project_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-            (conv_id, user_id, project_id, message_text[:30] + "...")
+    if conv_id:
+        conv = query_one(
+            "SELECT id, user_id, project_id FROM conversations WHERE id = ?",
+            (conv_id,)
         )
+        if not conv or (conv["user_id"] != user_id and user_id != "guest_user"):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Cuộc trò chuyện không tồn tại hoặc bạn không có quyền truy cập."
+            )
+        if conv["project_id"] and conv["project_id"] != project_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cuộc trò chuyện không thuộc về Project này."
+            )
+        if not conv["project_id"]:
+            execute_commit("UPDATE conversations SET project_id = ? WHERE id = ?", (project_id, conv_id))
+    else:
+        # Tự động gắn kết vào conversation chính của project cho user hiện tại
+        primary_conv = query_one(
+            """
+            SELECT id FROM conversations
+            WHERE project_id = ? AND user_id = ?
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            (project_id, user_id)
+        )
+        if primary_conv:
+            conv_id = primary_conv["id"]
+        else:
+            conv_id = f"conv_{uuid.uuid4().hex}"
+            execute_commit(
+                """
+                INSERT INTO conversations (id, user_id, project_id, title, created_at, updated_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                (conv_id, user_id, project_id, f"Project Chat - {proj['name']}")
+            )
 
     user_msg_id = f"msg_{uuid.uuid4().hex}"
-    # Lưu tin nhắn user
+    # Lưu tin nhắn user vào CSDL
     execute_commit(
-        "INSERT INTO messages (id, conversation_id, role, content, model_used) VALUES (?, ?, 'user', ?, ?)",
+        """
+        INSERT INTO messages (id, conversation_id, role, content, model_used, status)
+        VALUES (?, ?, 'user', ?, ?, 'COMPLETED')
+        """,
         (user_msg_id, conv_id, message_text, target_model_id)
     )
 
@@ -1143,7 +1179,6 @@ async def chat_through_project(
                     detail={
                         "error_code": "ATTACHMENT_NOT_READY",
                         "message": f"Tệp đính kèm '{att.get('filename')}' chưa ở trạng thái sẵn sàng (READY)."
-
                     }
                 )
             execute_commit(
@@ -1156,87 +1191,44 @@ async def chat_through_project(
             )
             attachment_records.append(att)
 
-    # Lấy ngữ cảnh hội thoại gần nhất (tối đa 20 tin nhắn)
+    # Lấy ngữ cảnh hội thoại gần nhất (loại trừ user_msg_id hiện tại để không nhân đôi prompt trong LLM context)
     context_msgs = query_all(
         """
         SELECT role, content FROM messages
-        WHERE conversation_id = ?
+        WHERE conversation_id = ? AND id != ?
         ORDER BY created_at DESC
         LIMIT 20
         """,
-        (conv_id,)
+        (conv_id, user_msg_id)
     )
     context_msgs.reverse()
 
-    async def sse_stream_generator():
-        start_payload = json.dumps({
-            "project_id": project_id,
-            "model": target_model_id,
-            "conversation_id": conv_id,
-            "bot": connected_bot_info,
-            "skills": connected_skills_info,
-            "tools": connected_tools_info
-        }, ensure_ascii=False)
-        yield f"event: start\ndata: {start_payload}\n\n"
-        
-        accumulated_chunks: List[str] = []
-        final_model_used = target_model_id
-        try:
-            from llm.agent import chat_agent
-            async for event in chat_agent.astream_agent(
-                prompt=message_text,
-                history=context_msgs,
-                model_override=target_model_id,
-                system_instruction=combined_instruction if combined_instruction else None,
-                attachments=attachment_records if attachment_records else None,
-                tools=connected_tool_definitions if connected_tool_definitions else None,
-                project_id=project_id,
-                user_id=user_id,
-                conversation_id=conv_id
-            ):
-
-                if event.get("status") == "streaming":
-                    token_str = event.get("token", "")
-                    if token_str:
-                        accumulated_chunks.append(token_str)
-                        chunk_payload = json.dumps({
-                            "token": token_str,
-                            "content": token_str,
-                            "status": "streaming"
-                        }, ensure_ascii=False)
-                        yield f"event: chunk\ndata: {chunk_payload}\n\n"
-                elif event.get("status") == "done":
-                    final_model_used = event.get("model", final_model_used)
-                elif event.get("status") == "error":
-                    err_msg = event.get("message", "Lỗi sinh phản hồi từ mô hình")
-                    err_payload = json.dumps({"status": "error", "message": err_msg}, ensure_ascii=False)
-                    yield f"event: error\ndata: {err_payload}\n\n"
-                    return
-        except Exception as e:
-            err_payload = json.dumps({"status": "error", "message": f"Dịch vụ AI tạm thời gián đoạn: {str(e)}"}, ensure_ascii=False)
-            yield f"event: error\ndata: {err_payload}\n\n"
-            return
-
-        # Lưu tin nhắn assistant vào DB với nội dung text sạch (không chứa SSE headers)
-        full_content = "".join(accumulated_chunks).strip()
-        assistant_msg_id = f"msg_{uuid.uuid4().hex}"
-        execute_commit(
-            "INSERT INTO messages (id, conversation_id, role, content, model_used) VALUES (?, ?, 'assistant', ?, ?)",
-            (assistant_msg_id, conv_id, full_content, final_model_used)
+    from src.services.chat_turn_manager import ProjectChatTurnManager
+    try:
+        turn = ProjectChatTurnManager.start_turn(
+            project_id=project_id,
+            conversation_id=conv_id,
+            user_id=user_id,
+            user_msg_id=user_msg_id,
+            message_text=message_text,
+            context_msgs=context_msgs,
+            target_model_id=target_model_id,
+            combined_instruction=combined_instruction if combined_instruction else None,
+            attachment_records=attachment_records if attachment_records else None,
+            connected_tool_definitions=connected_tool_definitions if connected_tool_definitions else None,
+            connected_bot_info=connected_bot_info,
+            connected_skills_info=connected_skills_info,
+            connected_tools_info=connected_tools_info,
+            actual_words=actual_words,
         )
-        
-        done_payload = json.dumps({
-            "status": "done",
-            "finish_reason": "stop",
-            "message_id": assistant_msg_id,
-            "model": final_model_used,
-            "tokens_prompt": actual_words,
-            "conversation_id": conv_id
-        }, ensure_ascii=False)
-        yield f"event: done\ndata: {done_payload}\n\n"
+    except RuntimeError as re_err:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(re_err)
+        )
 
     return StreamingResponse(
-        sse_stream_generator(),
+        ProjectChatTurnManager.stream_turn(turn),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -1244,3 +1236,122 @@ async def chat_through_project(
             "X-Accel-Buffering": "no"
         }
     )
+
+
+@projects_router.get("/{project_id}/conversation")
+async def get_or_create_project_conversation(
+    project_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Lấy hoặc tạo cuộc hội thoại chính của Project cho người dùng hiện tại (Idempotent)."""
+    user_id = current_user["id"]
+    proj = query_one(
+        "SELECT id, name FROM projects WHERE id = ? AND (user_id = ? OR user_id = 'guest_user')",
+        (project_id, user_id)
+    )
+    if not proj:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project không tồn tại hoặc bạn không có quyền truy cập."
+        )
+
+    conv = query_one(
+        """
+        SELECT id, user_id, project_id, title, created_at, updated_at
+        FROM conversations
+        WHERE project_id = ? AND user_id = ?
+        ORDER BY updated_at DESC
+        LIMIT 1
+        """,
+        (project_id, user_id)
+    )
+
+    if not conv:
+        conv_id = f"conv_{uuid.uuid4().hex}"
+        title = f"Project Chat - {proj['name']}"
+        execute_commit(
+            """
+            INSERT INTO conversations (id, user_id, project_id, title, created_at, updated_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """,
+            (conv_id, user_id, project_id, title)
+        )
+        conv = query_one("SELECT id, user_id, project_id, title, created_at, updated_at FROM conversations WHERE id = ?", (conv_id,))
+
+    return {"conversation": conv}
+
+
+@projects_router.get("/{project_id}/chat/stream")
+async def stream_project_chat_reconnect(
+    project_id: str,
+    conversation_id: str,
+    after_seq: int = -1,
+    current_user: dict = Depends(get_current_user)
+):
+    """Nối lại luồng SSE cho lượt sinh đang chạy trong Project Chat."""
+    user_id = current_user["id"]
+    conv = query_one(
+        "SELECT id, user_id, project_id FROM conversations WHERE id = ? AND project_id = ?",
+        (conversation_id, project_id)
+    )
+    if not conv or (conv["user_id"] != user_id and user_id != "guest_user"):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Cuộc trò chuyện không tồn tại hoặc bạn không có quyền truy cập."
+        )
+
+    from src.services.chat_turn_manager import ProjectChatTurnManager
+    turn = ProjectChatTurnManager.get_active_turn(conversation_id)
+    if not turn:
+        # Nếu turn đã hoàn thành trong DB, trả về event done ngay lập tức
+        last_msg = query_one(
+            "SELECT id, role, content, model_used, status FROM messages WHERE conversation_id = ? ORDER BY created_at DESC, id DESC LIMIT 1",
+            (conversation_id,)
+        )
+        if last_msg and last_msg["role"] == "assistant":
+            done_payload = {
+                "status": "done",
+                "finish_reason": "stop",
+                "message_id": last_msg["id"],
+                "model": last_msg["model_used"],
+                "conversation_id": conversation_id,
+            }
+            async def single_done_generator():
+                yield f"event: done\ndata: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
+            return StreamingResponse(single_done_generator(), media_type="text/event-stream")
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Không có lượt sinh nào đang hoạt động trong cuộc hội thoại này."
+        )
+
+    return StreamingResponse(
+        ProjectChatTurnManager.stream_turn(turn, after_seq=after_seq),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+class CancelChatRequest(BaseModel):
+    conversation_id: str
+
+
+@projects_router.post("/{project_id}/chat/cancel")
+async def cancel_project_chat(
+    project_id: str,
+    payload: CancelChatRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """Hủy lượt sinh đang thực thi theo yêu cầu chủ động của người dùng (Stop button)."""
+    user_id = current_user["id"]
+    from src.services.chat_turn_manager import ProjectChatTurnManager
+    success = ProjectChatTurnManager.cancel_turn(payload.conversation_id, user_id)
+    return {
+        "success": success,
+        "message": "Đã hủy lượt sinh thành công." if success else "Không có lượt sinh nào đang chạy để hủy."
+    }
+

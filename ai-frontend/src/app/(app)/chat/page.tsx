@@ -55,24 +55,101 @@ export default function ChatPage() {
     })();
   }, []);
 
-  // ── Load messages when activeConvId changes ───────────────────────
+  // ── Sync active conversation when selectedProjectId changes ────────
+  useEffect(() => {
+    if (!selectedProjectId) return;
+    let isCancelled = false;
+    (async () => {
+      try {
+        const conv = await ProjectService.getOrCreateProjectConversation(selectedProjectId);
+        if (conv?.id && !isCancelled) {
+          setActiveConvId(conv.id);
+          const activeProj = activeProjects.find(p => p.id === selectedProjectId);
+          const modelNode = activeProj?.graph_data?.nodes.find((n: any) => n.type === 'model');
+          if (modelNode?.data?.config?.model_id) {
+            setSelectedModelId(modelNode.data.config.model_id);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to sync project conversation on project select:', err);
+      }
+    })();
+    return () => {
+      isCancelled = true;
+    };
+  }, [selectedProjectId, activeProjects, setActiveConvId]);
+
+  // ── Load messages when activeConvId changes & reconnect if RUNNING ──
   useEffect(() => {
     if (!activeConvId) {
       setMessages([]);
       return;
     }
+    let isCancelled = false;
     (async () => {
       try {
         const res = await fetch(`/api/v1/conversations/${activeConvId}/messages`);
         if (res.ok) {
           const data = await res.json();
-          setMessages(data.messages || []);
+          if (isCancelled) return;
+          const loadedMsgs = (data.messages || []).map((m: any) => {
+            const isRunning = m.status === 'RUNNING' || m.status === 'QUEUED';
+            return {
+              ...m,
+              isStreaming: isRunning,
+            };
+          });
+          setMessages(loadedMsgs);
+
+          // Reconnect stream if the last assistant message is RUNNING
+          const lastMsg = loadedMsgs[loadedMsgs.length - 1];
+          if (selectedProjectId && lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming) {
+            setIsStreaming(true);
+            const controller = new AbortController();
+            abortControllerRef.current = controller;
+            let currentContent = lastMsg.content || '';
+            ProjectService.reconnectProjectChat(
+              selectedProjectId,
+              activeConvId,
+              -1,
+              (chunk: string) => {
+                currentContent += chunk;
+                setMessages(prev => prev.map(m => m.id === lastMsg.id ? { ...m, content: currentContent, isStreaming: true } : m));
+              },
+              () => {
+                setIsStreaming(false);
+                abortControllerRef.current = null;
+                setMessages(prev => prev.map(m => m.id === lastMsg.id ? { ...m, isStreaming: false } : m));
+              },
+              (err: any) => {
+                setIsStreaming(false);
+                abortControllerRef.current = null;
+                if (err?.name !== 'AbortError') {
+                  setMessages(prev => prev.map(m => m.id === lastMsg.id ? { ...m, isStreaming: false } : m));
+                }
+              },
+              controller.signal
+            );
+          }
         }
       } catch (err) {
         console.error('Failed to load messages:', err);
       }
     })();
-  }, [activeConvId]);
+    return () => {
+      isCancelled = true;
+    };
+  }, [activeConvId, selectedProjectId]);
+
+  // Clean up client subscription on unmount without cancelling backend turn
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+    };
+  }, []);
 
   // ── Scroll ────────────────────────────────────────────────────────
   const scrollToBottom = (smooth = true) => {
@@ -89,10 +166,22 @@ export default function ChatPage() {
     setShowScrollBottom(scrollHeight - scrollTop - clientHeight > 120);
   };
 
-  const handleStopGeneration = () => {
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = null;
+  const handleStopGeneration = async () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
     setIsStreaming(false);
+    if (selectedProjectId && activeConvId) {
+      await ProjectService.cancelProjectChat(selectedProjectId, activeConvId);
+      try {
+        const res = await fetch(`/api/v1/conversations/${activeConvId}/messages`);
+        if (res.ok) {
+          const data = await res.json();
+          setMessages(data.messages || []);
+        }
+      } catch {}
+    }
   };
 
   // ── Send ──────────────────────────────────────────────────────────
@@ -104,8 +193,14 @@ export default function ChatPage() {
     let targetConvId = activeConvId;
 
     if (!targetConvId) {
-      targetConvId = await createConversation();
-      if (!targetConvId) return;
+      if (selectedProjectId) {
+        const pConv = await ProjectService.getOrCreateProjectConversation(selectedProjectId);
+        targetConvId = pConv.id;
+        setActiveConvId(pConv.id);
+      } else {
+        targetConvId = await createConversation();
+        if (!targetConvId) return;
+      }
     }
 
     let loadedAttachments: AttachmentItem[] = [];
