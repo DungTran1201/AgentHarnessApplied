@@ -1,6 +1,0 @@
-change_type: feature
-risk: R2
-artifacts:
-  required: []
-  conditional: []
-approval_gate: plan-review

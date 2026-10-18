@@ -389,10 +389,10 @@ if ($SingleConsole) {
         -NoNewWindow `
         -PassThru
 } else {
-    $backendCmdScript = Join-Path $RepoRoot "tools\run-backend.cmd"
+    $backendDir = Join-Path $RepoRoot "ai-backend"
     $backendProc = Start-Process -FilePath "cmd.exe" `
-        -ArgumentList "/k `"`"$backendCmdScript`" $BackendPort `"$PythonExe`"`"" `
-        -WorkingDirectory $RepoRoot `
+        -ArgumentList "/k `"title AI-Chan | Backend API && cd /d `"$backendDir`" && `"$PythonExe`" -u -m uvicorn src.main:app --host 127.0.0.1 --port $BackendPort --reload`"" `
+        -WorkingDirectory $backendDir `
         -PassThru
 }
 
@@ -441,10 +441,12 @@ if ($SingleConsole) {
         -NoNewWindow `
         -PassThru
 } else {
-    $frontendCmdScript = Join-Path $RepoRoot "tools\run-frontend.cmd"
+    $npmExec = "npm.cmd"
+    if (-not (Get-Command $npmExec -ErrorAction SilentlyContinue)) { $npmExec = "npm" }
+    $frontendDir = Join-Path $RepoRoot "ai-frontend"
     $frontendProc = Start-Process -FilePath "cmd.exe" `
-        -ArgumentList "/k `"`"$frontendCmdScript`" $FrontendPort `"$PythonExe`"`"" `
-        -WorkingDirectory $RepoRoot `
+        -ArgumentList "/k `"title AI-Chan | Frontend && cd /d `"$frontendDir`" && $npmExec run dev -- --port $FrontendPort`"" `
+        -WorkingDirectory $frontendDir `
         -PassThru
 }
 
@@ -506,10 +508,10 @@ if (-not $NoDiscord) {
                 -NoNewWindow `
                 -PassThru
         } else {
-            $discordCmdScript = Join-Path $RepoRoot "tools\run-discord.cmd"
+            $backendDir = Join-Path $RepoRoot "ai-backend"
             $discordProc = Start-Process -FilePath "cmd.exe" `
-                -ArgumentList "/k `"`"$discordCmdScript`" `"$PythonExe`"`"" `
-                -WorkingDirectory $RepoRoot `
+                -ArgumentList "/k `"title AI-Chan | Discord Bot && cd /d `"$backendDir`" && `"$PythonExe`" -u -m src.discord_bot.main`"" `
+                -WorkingDirectory $backendDir `
                 -PassThru
         }
 

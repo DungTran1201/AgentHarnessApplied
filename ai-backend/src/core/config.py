@@ -9,7 +9,7 @@ _env_path = str(_backend_dir / ".env") if (_backend_dir / ".env").exists() else 
 class Settings(BaseSettings):
     APP_ENV: str = "development"
     APP_NAME: str = "ai-chan-backend"
-    HOST: str = "0.0.0.0"
+    HOST: str = "127.0.0.1"
     PORT: int = 8000
     DEBUG: bool = True
 

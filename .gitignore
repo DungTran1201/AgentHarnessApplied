@@ -30,11 +30,15 @@ __pycache__/
 .gemini/
 node_modules/
 .next/
-dist/
-build/
 venv/
 .venv/
-
+# Packaging & Build Output
+dist/
+build/
+release-artifacts/
+*.exe
+*.spec
+*.iss.bak
 
 # IDE & Editor Settings
 .vscode/
@@ -47,4 +51,4 @@ logs/
 .ai-chan/
 
 ai-backend/database/uploads/
-
+ai-backend/data/storage/temp/
