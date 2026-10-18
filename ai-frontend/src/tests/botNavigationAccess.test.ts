@@ -28,6 +28,7 @@ test('Bot Navigation & Discord-Based Access Control Specification', async (t) =>
       'prompts',
       'skills',
       'tools',
+      'rules',
       'dashboard',
       'settings'
     ]);

@@ -87,6 +87,7 @@ class ProjectChatTurnManager:
         connected_bot_info: Optional[Dict[str, Any]] = None,
         connected_skills_info: Optional[List[Dict[str, Any]]] = None,
         connected_tools_info: Optional[List[Dict[str, Any]]] = None,
+        connected_rules_info: Optional[List[Dict[str, Any]]] = None,
         actual_words: int = 0,
     ) -> ActiveChatTurn:
         existing = cls.get_active_turn(conversation_id)
@@ -130,6 +131,7 @@ class ProjectChatTurnManager:
             "bot": connected_bot_info,
             "skills": connected_skills_info,
             "tools": connected_tools_info,
+            "rules": connected_rules_info,
             "status": "RUNNING",
         }
         turn.add_event("start", start_payload)

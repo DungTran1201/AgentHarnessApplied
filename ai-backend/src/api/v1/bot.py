@@ -847,11 +847,29 @@ async def execute_antigravity_prompt(prompt_req: PromptRequest, req: Request) ->
     explicit_project_id = prompt_req.metadata.get("project_id") if prompt_req.metadata else None
     bot_id_filter = prompt_req.metadata.get("bot_id") if prompt_req.metadata else None
     guild_id_filter = prompt_req.metadata.get("guild_id") if prompt_req.metadata else None
+    bot_cfg_id = prompt_req.metadata.get("bot_config_id") if prompt_req.metadata else None
+    bot_alias_filter = prompt_req.metadata.get("bot_alias") if prompt_req.metadata else None
+
+    # Check if request came from a registered bot in Bot Registry
+    registered_bot = None
+    if bot_cfg_id:
+        registered_bot = query_one("SELECT * FROM discord_bot_configs WHERE id = ?", (bot_cfg_id,))
+    elif bot_alias_filter:
+        registered_bot = query_one("SELECT * FROM discord_bot_configs WHERE alias = ?", (bot_alias_filter,))
+
+    if registered_bot:
+        if not registered_bot.get("project_id"):
+            bot_name = registered_bot.get("name") or registered_bot.get("alias") or registered_bot["id"]
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Discord Bot '{bot_name}' is not linked to any Project. Please link this bot to a Project in Bot Management before running commands."
+            )
+        explicit_project_id = registered_bot["project_id"]
 
     if explicit_project_id:
         proj = query_one(
-            "SELECT * FROM projects WHERE id = ? AND user_id = ? AND status != 'DELETED'",
-            (explicit_project_id, user_id)
+            "SELECT * FROM projects WHERE id = ? AND status != 'DELETED'",
+            (explicit_project_id,)
         )
         if not proj:
             raise HTTPException(

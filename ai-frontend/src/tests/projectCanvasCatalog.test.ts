@@ -19,6 +19,8 @@ export function validateConnectionAttempt(
 ): ValidationResult {
   const isInput = sourceNode.type === 'web_input';
   const isPrompt = sourceNode.type === 'system_prompt';
+  const isRuleSource = sourceNode.type === 'rule';
+  const isRuleTarget = targetNode.type === 'rule';
   const isModelSource = sourceNode.type === 'model';
   const isModelTarget = targetNode.type === 'model';
   const isOutput = targetNode.type === 'output';
@@ -31,9 +33,15 @@ export function validateConnectionAttempt(
     return { valid: false, error: 'Cannot connect a node to itself.' };
   }
 
-  // 2. Reject reverse connections (e.g., Bot -> Model, Skill -> Model, Tool -> Model, Output -> Model)
+  // 2. Reject reverse connections (e.g., Bot -> Model, Skill -> Model, Tool -> Model, Output -> Model, Model -> Rule)
   if (sourceNode.type === 'bot' || sourceNode.type === 'skill' || sourceNode.type === 'tool' || sourceNode.type === 'output') {
     return { valid: false, error: 'Reverse connections are not supported. Edges must flow from Model to Bot/Skill/Tool/Output.' };
+  }
+  if (isModelSource && isRuleTarget) {
+    return { valid: false, error: 'Reverse connection rejected. Connect Rule to Model, not Model to Rule.' };
+  }
+  if (isRuleSource && isRuleTarget) {
+    return { valid: false, error: 'Cannot connect Rule to Rule.' };
   }
 
   // 3. Disallow duplicate connections
@@ -73,6 +81,18 @@ export function validateConnectionAttempt(
       return {
         valid: false,
         error: 'A Tool Node can only be connected to one Model Node.'
+      };
+    }
+    return { valid: true };
+  }
+
+  // 5c. Rule -> Model connection constraint (multiple rules allowed per model, 1:N)
+  if (isRuleSource && isModelTarget && (targetHandle === 'rule_in' || targetHandle === 'rules')) {
+    const existingRuleEdgeFromThisNode = existingEdges.find(e => e.source === sourceNode.id);
+    if (existingRuleEdgeFromThisNode && existingRuleEdgeFromThisNode.target !== targetNode.id) {
+      return {
+        valid: false,
+        error: 'A Rule Node can only be connected to one Model Node.'
       };
     }
     return { valid: true };
@@ -129,6 +149,15 @@ export function checkGraphValidity(nodes: GraphNode[], edges: GraphEdge[]): { va
     });
     if (botEdges.length > 1) {
       reasons.push(SECOND_BOT_ERROR_MESSAGE);
+    }
+
+    // Check rules: all rule nodes must be connected to Model
+    const ruleNodes = nodes.filter(n => n.type === 'rule');
+    for (const rNode of ruleNodes) {
+      const hasRuleToModel = edges.some(e => e.source === rNode.id && e.target === modelNode.id);
+      if (!hasRuleToModel) {
+        reasons.push(`Rule Node '${rNode.data.label}' must be connected to Model`);
+      }
     }
   }
 
@@ -472,5 +501,170 @@ test('Project Canvas Node Catalog and Graph Connection Constraints', async (t) =
     // Tool -> Output
     const toolToOutput = validateConnectionAttempt(toolNodeCalculator, outputNode, 'out', 'in', baseEdges);
     assert.equal(toolToOutput.valid, false);
+  });
+
+  // Setup Rule Nodes for 1:N Rule Testing
+  const ruleNode1: GraphNode = {
+    id: 'node_rule_1',
+    type: 'rule',
+    position: { x: 80, y: 460 },
+    data: {
+      label: 'Security Guidelines',
+      config: {
+        rule_id: 'rul_security_01',
+        name: 'Security Guidelines',
+        scope: 'system',
+        priority: 90,
+        status: 'active'
+      }
+    }
+  };
+
+  const ruleNode2: GraphNode = {
+    id: 'node_rule_2',
+    type: 'rule',
+    position: { x: 80, y: 550 },
+    data: {
+      label: 'Vietnamese Tone',
+      config: {
+        rule_id: 'rul_vn_tone_02',
+        name: 'Vietnamese Tone',
+        scope: 'user',
+        priority: 70,
+        status: 'active'
+      }
+    }
+  };
+
+  const ruleNode3: GraphNode = {
+    id: 'node_rule_3',
+    type: 'rule',
+    position: { x: 80, y: 640 },
+    data: {
+      label: 'Code Formatting Rule',
+      config: {
+        rule_id: 'rul_code_format_03',
+        name: 'Code Formatting Rule',
+        scope: 'project',
+        priority: 50,
+        status: 'active'
+      }
+    }
+  };
+
+  await t.test('16. Valid Rule -> Model connection to rule_in port', () => {
+    const res = validateConnectionAttempt(ruleNode1, modelNode, 'rule_out', 'rule_in', baseEdges);
+    assert.equal(res.valid, true);
+    assert.equal(res.error, undefined);
+  });
+
+  await t.test('17. One Model connects to multiple (at least 3) distinct Rule Nodes (1:N)', () => {
+    const edge1: GraphEdge = {
+      id: 'e_rule_1',
+      source: ruleNode1.id,
+      target: modelNode.id,
+      sourceHandle: 'rule_out',
+      targetHandle: 'rule_in',
+      type: 'rule_binding'
+    };
+    const edgesWith1Rule = [...baseEdges, edge1];
+
+    // Second rule connects to same model
+    const res2 = validateConnectionAttempt(ruleNode2, modelNode, 'rule_out', 'rule_in', edgesWith1Rule);
+    assert.equal(res2.valid, true);
+
+    const edge2: GraphEdge = {
+      id: 'e_rule_2',
+      source: ruleNode2.id,
+      target: modelNode.id,
+      sourceHandle: 'rule_out',
+      targetHandle: 'rule_in',
+      type: 'rule_binding'
+    };
+    const edgesWith2Rules = [...edgesWith1Rule, edge2];
+
+    // Third rule connects to same model
+    const res3 = validateConnectionAttempt(ruleNode3, modelNode, 'rule_out', 'rule_in', edgesWith2Rules);
+    assert.equal(res3.valid, true);
+  });
+
+  await t.test('18. Duplicate connection from same Rule Node to Model is REJECTED', () => {
+    const edgesWithRule1: GraphEdge[] = [
+      ...baseEdges,
+      {
+        id: 'e_rule_1',
+        source: ruleNode1.id,
+        target: modelNode.id,
+        sourceHandle: 'rule_out',
+        targetHandle: 'rule_in',
+        type: 'rule_binding'
+      }
+    ];
+
+    const dupRes = validateConnectionAttempt(ruleNode1, modelNode, 'rule_out', 'rule_in', edgesWithRule1);
+    assert.equal(dupRes.valid, false);
+    assert.equal(dupRes.error, 'This connection already exists.');
+  });
+
+  await t.test('19. Reverse Model -> Rule connection is REJECTED', () => {
+    const revRes = validateConnectionAttempt(modelNode, ruleNode1, 'out', 'rule_in', baseEdges);
+    assert.equal(revRes.valid, false);
+    assert.match(revRes.error || '', /Reverse connection rejected/);
+  });
+
+  await t.test('20. Rule -> Rule connection is REJECTED', () => {
+    const ruleToRule = validateConnectionAttempt(ruleNode1, ruleNode2, 'rule_out', 'rule_in', baseEdges);
+    assert.equal(ruleToRule.valid, false);
+    assert.match(ruleToRule.error || '', /Cannot connect Rule to Rule/);
+  });
+
+  await t.test('21. Unsupported connection combinations involving Rules are REJECTED', () => {
+    // Rule -> Web Input
+    const ruleToInput = validateConnectionAttempt(ruleNode1, inputNode, 'rule_out', 'in', baseEdges);
+    assert.equal(ruleToInput.valid, false);
+
+    // Rule -> Output
+    const ruleToOutput = validateConnectionAttempt(ruleNode1, outputNode, 'rule_out', 'in', baseEdges);
+    assert.equal(ruleToOutput.valid, false);
+
+    // Rule -> Tool
+    const ruleToTool = validateConnectionAttempt(ruleNode1, toolNodeCalculator, 'rule_out', 'tool_in', baseEdges);
+    assert.equal(ruleToTool.valid, false);
+
+    // Rule -> Bot
+    const ruleToBot = validateConnectionAttempt(ruleNode1, botNodeA, 'rule_out', 'bot_in', baseEdges);
+    assert.equal(ruleToBot.valid, false);
+  });
+
+  await t.test('22. checkGraphValidity with 1 Model and 3 Rules: valid when all connected, invalid when rule unconnected', () => {
+    const nodesWith3Rules: GraphNode[] = [
+      inputNode,
+      modelNode,
+      outputNode,
+      ruleNode1,
+      ruleNode2,
+      ruleNode3
+    ];
+
+    const fullyConnectedEdges: GraphEdge[] = [
+      ...baseEdges,
+      { id: 'e_r1', source: ruleNode1.id, target: modelNode.id, type: 'rule_binding' },
+      { id: 'e_r2', source: ruleNode2.id, target: modelNode.id, type: 'rule_binding' },
+      { id: 'e_r3', source: ruleNode3.id, target: modelNode.id, type: 'rule_binding' }
+    ];
+
+    // All 3 rules connected
+    const validCheck = checkGraphValidity(nodesWith3Rules, fullyConnectedEdges);
+    assert.equal(validCheck.valid, true);
+    assert.equal(validCheck.reasons.length, 0);
+
+    // 1 rule unconnected
+    const missingEdgeCheck = checkGraphValidity(nodesWith3Rules, [
+      ...baseEdges,
+      { id: 'e_r1', source: ruleNode1.id, target: modelNode.id, type: 'rule_binding' }
+    ]);
+    assert.equal(missingEdgeCheck.valid, false);
+    assert.ok(missingEdgeCheck.reasons.some(r => r.includes(ruleNode2.data.label)));
+    assert.ok(missingEdgeCheck.reasons.some(r => r.includes(ruleNode3.data.label)));
   });
 });

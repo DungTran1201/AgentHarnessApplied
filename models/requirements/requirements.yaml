@@ -543,6 +543,37 @@ security_requirements:
   - id: "SEC-014"
     name: "Multi-Project & Conversational Memory Isolation for External Bot Executions"
     status: "IMPLEMENTED"
+  - id: "FR-SKL-EXT-001"
+    name: "External Skills Catalog Browsing and Search"
+    type: "functional"
+    capability: "CAP-SKILLS"
+    priority: "MUST"
+    status: "IMPLEMENTED"
+    actors: ["Registered User"]
+  - id: "FR-SKL-EXT-002"
+    name: "External Skill Preview and Security Assessment"
+    type: "functional"
+    capability: "CAP-SKILLS"
+    priority: "MUST"
+    status: "IMPLEMENTED"
+    actors: ["Registered User"]
+  - id: "FR-SKL-EXT-003"
+    name: "Safe External Skill Import and Conflict Resolution"
+    type: "functional"
+    capability: "CAP-SKILLS"
+    priority: "MUST"
+    status: "IMPLEMENTED"
+    actors: ["Registered User"]
+  - id: "FR-SKL-EXT-004"
+    name: "Skill Provenance and Local Modification Tracking"
+    type: "functional"
+    capability: "CAP-SKILLS"
+    priority: "MUST"
+    status: "IMPLEMENTED"
+    actors: ["Registered User"]
+  - id: "SEC-020"
+    name: "External Catalog SSRF, Path Traversal, and Prompt Injection Defense"
+    status: "IMPLEMENTED"
 
 
 

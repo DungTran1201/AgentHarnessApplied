@@ -161,31 +161,73 @@ class LangChainModelFactory:
         return [target_model] if target_model else []
 
     @staticmethod
-    def create_model(provider: str, model_name: Optional[str] = None):
+    def create_model(provider: str, model_name: Optional[str] = None, user_id: Optional[str] = None):
         cfg = EnvKeyLoader.get_config()
         provider = provider.lower()
+        if provider == "google":
+            provider = "gemini"
+
+        # Resolve effective key: User Personal Key > System .env Default
+        effective_key = None
+        try:
+            from src.services.credential_service import CredentialService
+            effective_key = CredentialService.get_effective_key(user_id, provider)
+        except Exception:
+            pass
         
-        if provider == "gemini" and cfg["gemini_api_key"]:
-            from langchain_google_genai import ChatGoogleGenerativeAI
-            target = model_name or cfg["default_model"] or "gemini-3.5-flash-lite"
-            if target in ["gemini-1.5-flash", "gemini-2.5-flash"]:
-                target = "gemini-3.5-flash-lite"
-            return ChatGoogleGenerativeAI(
-                model=target,
-                google_api_key=cfg["gemini_api_key"],
-                temperature=0.7,
-                timeout=12.0,
-                max_retries=1
-            )
-        elif provider == "openai" and cfg["openai_api_key"]:
-            from langchain_openai import ChatOpenAI
-            target = model_name or "gpt-4o-mini"
-            return ChatOpenAI(
-                model=target,
-                api_key=cfg["openai_api_key"],
-                temperature=0.7,
-                timeout=30.0
-            )
+        if provider == "gemini":
+            key = effective_key or cfg["gemini_api_key"]
+            if key:
+                from langchain_google_genai import ChatGoogleGenerativeAI
+                target = model_name or cfg["default_model"] or "gemini-3.5-flash-lite"
+                if target in ["gemini-1.5-flash", "gemini-2.5-flash"]:
+                    target = "gemini-3.5-flash-lite"
+                return ChatGoogleGenerativeAI(
+                    model=target,
+                    google_api_key=key,
+                    temperature=0.7,
+                    timeout=12.0,
+                    max_retries=1
+                )
+        elif provider == "openai":
+            key = effective_key or cfg["openai_api_key"]
+            if key:
+                from langchain_openai import ChatOpenAI
+                target = model_name or "gpt-4o-mini"
+                return ChatOpenAI(
+                    model=target,
+                    api_key=key,
+                    temperature=0.7,
+                    timeout=30.0
+                )
+        elif provider == "anthropic":
+            key = effective_key or cfg["anthropic_api_key"]
+            if key:
+                try:
+                    from langchain_anthropic import ChatAnthropic
+                    target = model_name or "claude-3-7-sonnet"
+                    return ChatAnthropic(
+                        model=target,
+                        api_key=key,
+                        temperature=0.7,
+                        timeout=30.0
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to initialize ChatAnthropic: {e}")
+        elif provider == "groq":
+            key = effective_key or cfg["groq_api_key"]
+            if key:
+                try:
+                    from langchain_groq import ChatGroq
+                    target = model_name or "llama-3.3-70b-versatile"
+                    return ChatGroq(
+                        model=target,
+                        api_key=key,
+                        temperature=0.7,
+                        timeout=30.0
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to initialize ChatGroq: {e}")
         return None
 
 def build_langchain_messages(
@@ -333,9 +375,10 @@ class ChatAgentOrchestrator:
             cfg = EnvKeyLoader.get_config()
             primary_prov = cfg["default_provider"] if cfg["default_provider"] in ["gemini", "openai"] else "gemini"
             target_model = state.get("target_model")
+            user_id = state.get("user_id")
             candidates = LangChainModelFactory.get_candidate_models(primary_prov, target_model)
             for cand_model in candidates:
-                model = LangChainModelFactory.create_model(primary_prov, cand_model)
+                model = LangChainModelFactory.create_model(primary_prov, cand_model, user_id=user_id)
                 if not model:
                     continue
                 try:
@@ -363,8 +406,9 @@ class ChatAgentOrchestrator:
             # Failover logic: if gemini failed, try openai, or vice-versa (BR-005)
             fallback_prov = "openai" if state.get("active_provider") == "gemini" else "gemini"
             fallback_candidates = LangChainModelFactory.get_candidate_models(fallback_prov)
+            user_id = state.get("user_id")
             for fb_cand in fallback_candidates:
-                model = LangChainModelFactory.create_model(fallback_prov, fb_cand)
+                model = LangChainModelFactory.create_model(fallback_prov, fb_cand, user_id=user_id)
                 if not model:
                     continue
                 try:
@@ -438,7 +482,7 @@ class ChatAgentOrchestrator:
         # 1. Thử truyền luồng từ Primary Provider với intra-provider model failover (BR-005)
         primary_candidates = LangChainModelFactory.get_candidate_models(primary_prov, target_model)
         for cand_model in primary_candidates:
-            primary_model = LangChainModelFactory.create_model(primary_prov, cand_model)
+            primary_model = LangChainModelFactory.create_model(primary_prov, cand_model, user_id=user_id)
             if not primary_model:
                 continue
             if formatted_tools and hasattr(primary_model, "bind_tools"):
@@ -561,7 +605,7 @@ class ChatAgentOrchestrator:
         fallback_prov = "openai" if primary_prov == "gemini" else "gemini"
         fallback_candidates = LangChainModelFactory.get_candidate_models(fallback_prov)
         for fb_cand in fallback_candidates:
-            fallback_model = LangChainModelFactory.create_model(fallback_prov, fb_cand)
+            fallback_model = LangChainModelFactory.create_model(fallback_prov, fb_cand, user_id=user_id)
             if not fallback_model:
                 continue
             if formatted_tools and hasattr(fallback_model, "bind_tools"):

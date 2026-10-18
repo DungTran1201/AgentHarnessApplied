@@ -2,6 +2,7 @@ import uuid
 import json
 import logging
 import io
+from pathlib import Path
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, status, Depends, Query, Request, UploadFile, File
 from fastapi.responses import StreamingResponse
@@ -28,6 +29,12 @@ from src.core.skill_storage import (
     remove_additional_resource,
     get_skill_dir
 )
+from src.services.text_import_service import (
+    TextImportService,
+    TextFileImportRequest,
+    ALLOWED_TEXT_EXTENSIONS
+)
+from src.services.external_skills_service import ExternalSkillsService
 
 logger = logging.getLogger("skills")
 
@@ -47,6 +54,17 @@ class SkillSummaryResponse(BaseModel):
     is_valid: bool
     created_at: str
     updated_at: str
+    source_provider: Optional[str] = None
+    source_repository_url: Optional[str] = None
+    source_skill_id: Optional[str] = None
+    source_path: Optional[str] = None
+    source_version: Optional[str] = None
+    source_content_hash: Optional[str] = None
+    source_license: Optional[str] = None
+    attribution: Optional[str] = None
+    imported_at: Optional[str] = None
+    source_updated_at: Optional[str] = None
+    source_status: Optional[str] = None
 
 class SkillListResponse(BaseModel):
     items: List[SkillSummaryResponse]
@@ -79,7 +97,116 @@ class SkillDetailResponse(BaseModel):
     validation_report: SkillValidationReport
     created_at: str
     updated_at: str
+    source_provider: Optional[str] = None
+    source_repository_url: Optional[str] = None
+    source_skill_id: Optional[str] = None
+    source_path: Optional[str] = None
+    source_version: Optional[str] = None
+    source_content_hash: Optional[str] = None
+    source_license: Optional[str] = None
+    attribution: Optional[str] = None
+    imported_at: Optional[str] = None
+    source_updated_at: Optional[str] = None
+    source_status: Optional[str] = None
 
+# External Catalog Schemas (BR-020)
+class ExternalCatalogProviderResponse(BaseModel):
+    id: str
+    name: str
+    canonical_url: str
+    redirected_from: Optional[str] = None
+    status: str
+    total_skills: int
+    last_synced_at: Optional[str] = None
+    is_stale: bool = False
+    license_policy: str
+    attribution_requirement: str
+
+class ExternalSkillSummary(BaseModel):
+    id: str
+    path: str
+    category: Optional[str] = None
+    name: str
+    description: Optional[str] = None
+    risk: Optional[str] = "safe"
+    source: Optional[str] = None
+    date_added: Optional[str] = None
+    plugin: Optional[Dict[str, Any]] = None
+
+class ExternalSkillCategory(BaseModel):
+    name: str
+    count: int
+
+class ExternalCatalogSearchResponse(BaseModel):
+    items: List[ExternalSkillSummary]
+    total: int
+    page: int
+    limit: int
+    total_pages: int
+    categories: List[ExternalSkillCategory]
+    is_stale: bool = False
+    last_synced_at: Optional[str] = None
+
+class SecurityAssessment(BaseModel):
+    risk_level: str
+    warnings: List[str] = Field(default_factory=list)
+    is_safe_to_preview: bool = True
+    has_prompt_injection_warning: bool = False
+
+class ExternalSkillDetailResponse(BaseModel):
+    source_provider: str
+    source_repository_url: str
+    source_skill_id: str
+    source_path: str
+    source_version: str
+    source_content_hash: str
+    source_license: str
+    attribution: str
+    name: str
+    description: str
+    category: str
+    risk: str
+    date_added: Optional[str] = None
+    plugin: Optional[Dict[str, Any]] = None
+    raw_content: str
+    frontmatter: str
+    markdown_body: str
+    security_assessment: SecurityAssessment
+    is_imported: bool = False
+    local_skill_id: Optional[str] = None
+    local_skill_name: Optional[str] = None
+
+class ExternalSkillImportRequest(BaseModel):
+    conflict_action: Optional[str] = Field(default=None, description="RENAME, REPLACE, hoặc SKIP nếu trùng lặp")
+    target_name: Optional[str] = Field(default=None, description="Tên tùy chỉnh cho kỹ năng nội bộ")
+
+class ExternalSkillImportResponse(BaseModel):
+    imported: bool
+    status: str
+    message: str
+    skill_id: Optional[str] = None
+    name: Optional[str] = None
+    is_valid: Optional[bool] = None
+    validation_report: Optional[Dict[str, Any]] = None
+
+class SkillProvenanceResponse(BaseModel):
+    skill_id: str
+    name: str
+    is_imported: bool
+    source_type: Optional[str] = None
+    source_provider: Optional[str] = None
+    source_repository_url: Optional[str] = None
+    source_skill_id: Optional[str] = None
+    source_path: Optional[str] = None
+    source_version: Optional[str] = None
+    source_content_hash: Optional[str] = None
+    current_content_hash: Optional[str] = None
+    is_locally_modified: bool = False
+    source_license: Optional[str] = None
+    attribution: Optional[str] = None
+    imported_at: Optional[str] = None
+    source_updated_at: Optional[str] = None
+    source_status: Optional[str] = None
 
 class SkillCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=64, description="Tên kỹ năng (chữ thường, số, dấu gạch nối)")
@@ -187,7 +314,9 @@ async def list_skills(
     # Lấy danh sách phân trang
     query_params = list(params) + [limit, offset]
     sql = f"""
-        SELECT id, name, description, status, source_type, storage_path, is_valid, created_at, updated_at
+        SELECT id, name, description, status, source_type, storage_path, is_valid, created_at, updated_at,
+               source_provider, source_repository_url, source_skill_id, source_path, source_version,
+               source_content_hash, source_license, attribution, imported_at, source_updated_at, source_status
         FROM skills
         WHERE {where_sql}
         ORDER BY {sort_sql}
@@ -213,7 +342,18 @@ async def list_skills(
             file_count=file_count,
             is_valid=bool(r["is_valid"]),
             created_at=str(r["created_at"]),
-            updated_at=str(r["updated_at"])
+            updated_at=str(r["updated_at"]),
+            source_provider=r.get("source_provider"),
+            source_repository_url=r.get("source_repository_url"),
+            source_skill_id=r.get("source_skill_id"),
+            source_path=r.get("source_path"),
+            source_version=r.get("source_version"),
+            source_content_hash=r.get("source_content_hash"),
+            source_license=r.get("source_license"),
+            attribution=r.get("attribution"),
+            imported_at=str(r["imported_at"]) if r.get("imported_at") else None,
+            source_updated_at=str(r["source_updated_at"]) if r.get("source_updated_at") else None,
+            source_status=r.get("source_status"),
         ))
 
     return SkillListResponse(items=items, total=total, limit=limit, offset=offset)
@@ -325,6 +465,109 @@ async def create_skill(
     )
 
 
+# ==============================================================================
+# EXTERNAL SKILLS CATALOG ENDPOINTS (Awesome Skills Integration)
+# ==============================================================================
+
+@skills_router.get(
+    "/external/providers",
+    response_model=List[ExternalCatalogProviderResponse],
+    summary="Lấy danh sách các nhà cung cấp Skills bên ngoài và trạng thái đồng bộ"
+)
+async def get_external_providers():
+    return ExternalSkillsService.get_providers_info()
+
+
+@skills_router.get(
+    "/external/awesome/skills",
+    response_model=ExternalCatalogSearchResponse,
+    summary="Tìm kiếm, lọc danh mục và phân trang kỹ năng từ Awesome Skills catalog"
+)
+async def search_awesome_skills(
+    q: Optional[str] = Query(None, description="Từ khóa tìm kiếm theo tên, mô tả hoặc danh mục"),
+    category: Optional[str] = Query(None, description="Lọc theo danh mục"),
+    risk: Optional[str] = Query(None, description="Lọc theo độ rủi ro (safe, standard, sensitive)"),
+    page: int = Query(1, ge=1, description="Số trang (1-indexed)"),
+    limit: int = Query(20, ge=1, le=100, description="Số lượng mục mỗi trang")
+):
+    return await ExternalSkillsService.search_skills(
+        q=q,
+        category=category,
+        risk=risk,
+        page=page,
+        limit=limit
+    )
+
+
+@skills_router.get(
+    "/external/awesome/search",
+    response_model=ExternalCatalogSearchResponse,
+    summary="Alias tìm kiếm catalog ngoài tương thích với đặc tả API"
+)
+async def search_awesome_skills_alias(
+    q: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+    risk: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100)
+):
+    return await ExternalSkillsService.search_skills(
+        q=q,
+        category=category,
+        risk=risk,
+        page=page,
+        limit=limit
+    )
+
+
+@skills_router.post(
+    "/external/awesome/refresh",
+    summary="Làm mới cache catalog Awesome Skills từ kho lưu trữ nguồn"
+)
+async def refresh_awesome_catalog():
+    skills, is_stale, last_synced_at = await ExternalSkillsService.get_or_sync_catalog(force_refresh=True)
+    return {
+        "refreshed": True,
+        "total_skills": len(skills),
+        "is_stale": is_stale,
+        "last_synced_at": last_synced_at
+    }
+
+
+@skills_router.get(
+    "/external/awesome/skills/{source_skill_id:path}",
+    response_model=ExternalSkillDetailResponse,
+    summary="Lấy chi tiết và xem trước nội dung tệp SKILL.md từ catalog ngoài"
+)
+async def get_awesome_skill_detail(
+    source_skill_id: str,
+    current_user: dict = Depends(get_optional_current_user)
+):
+    user_id = current_user.get("id", "guest_user")
+    return await ExternalSkillsService.get_skill_detail(source_skill_id, user_id=user_id)
+
+
+@skills_router.post(
+    "/external/awesome/skills/{source_skill_id:path}/import",
+    response_model=ExternalSkillImportResponse,
+    summary="Nhập kỹ năng từ Awesome Skills vào thư viện AI-Chan"
+)
+async def import_awesome_skill(
+    source_skill_id: str,
+    payload: Optional[ExternalSkillImportRequest] = None,
+    current_user: dict = Depends(get_optional_current_user)
+):
+    user_id = current_user.get("id", "guest_user")
+    conflict_action = payload.conflict_action if payload else None
+    target_name = payload.target_name if payload else None
+    return await ExternalSkillsService.import_skill_to_library(
+        user_id=user_id,
+        source_skill_id=source_skill_id,
+        conflict_action=conflict_action,
+        target_name=target_name
+    )
+
+
 @skills_router.get("/{id}", response_model=SkillDetailResponse)
 async def get_skill_detail(
     id: str,
@@ -385,8 +628,28 @@ async def get_skill_detail(
         attachments=atts,
         validation_report=report,
         created_at=str(row["created_at"]),
-        updated_at=str(row["updated_at"])
+        updated_at=str(row["updated_at"]),
+        source_provider=row.get("source_provider"),
+        source_repository_url=row.get("source_repository_url"),
+        source_skill_id=row.get("source_skill_id"),
+        source_path=row.get("source_path"),
+        source_version=row.get("source_version"),
+        source_content_hash=row.get("source_content_hash"),
+        source_license=row.get("source_license"),
+        attribution=row.get("attribution"),
+        imported_at=str(row["imported_at"]) if row.get("imported_at") else None,
+        source_updated_at=str(row["source_updated_at"]) if row.get("source_updated_at") else None,
+        source_status=row.get("source_status"),
     )
+
+
+@skills_router.get("/{id}/source", response_model=SkillProvenanceResponse, summary="Lấy thông tin nguồn gốc (provenance) của một kỹ năng nội bộ")
+async def get_local_skill_source(
+    id: str,
+    current_user: dict = Depends(get_optional_current_user)
+):
+    user_id = current_user.get("id", "guest_user")
+    return ExternalSkillsService.get_skill_provenance(user_id=user_id, skill_id=id)
 
 
 @skills_router.get("/{id}/attachments", summary="Lấy danh sách tệp tài nguyên đính kèm của Skill")
@@ -705,15 +968,33 @@ async def import_skill_package(
     current_user: dict = Depends(get_optional_current_user)
 ):
     """
-    Nhập gói kỹ năng từ tệp .zip với cơ chế kiểm tra an toàn Zip Slip & Zip Bomb.
+    Nhập kỹ năng từ tệp văn bản (.md, .txt, .json, .yaml...) hoặc gói nén .zip.
     """
     user_id = current_user.get("id", "guest_user")
-    
-    if not file.filename or not file.filename.endswith(".zip"):
-        raise HTTPException(status_code=400, detail="Vui lòng tải lên tệp nén có định dạng .zip.")
+    filename = file.filename or "untitled.txt"
+    ext = TextImportService.get_extension(filename)
 
+    if ext not in ALLOWED_TEXT_EXTENSIONS and not filename.lower().endswith(".zip"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Định dạng tệp không được hỗ trợ. Vui lòng tải lên tệp nén .zip hoặc tệp văn bản: {', '.join(sorted(ALLOWED_TEXT_EXTENSIONS))}."
+        )
+
+    content_bytes = await file.read()
+
+    # Xử lý tệp văn bản trực tiếp
+    if ext in ALLOWED_TEXT_EXTENSIONS:
+        text = TextImportService.validate_and_decode_bytes(filename, content_bytes)
+        res = TextImportService.import_skill(
+            user_id=user_id,
+            filename=filename,
+            content=text,
+            action="ACTIVATE"
+        )
+        return SkillDetailResponse(**res)
+
+    # Xử lý gói tệp nén ZIP
     try:
-        content_bytes = await file.read()
         skill_name, raw_skill_md, final_dest = inspect_and_extract_zip(content_bytes, user_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -783,6 +1064,53 @@ async def import_skill_package(
         created_at=str(created_row["created_at"]),
         updated_at=str(created_row["updated_at"])
     )
+
+
+@skills_router.post("/import-file", response_model=SkillDetailResponse, status_code=status.HTTP_201_CREATED)
+async def import_skill_file(
+    file: UploadFile = File(...),
+    action: Optional[str] = Query("ACTIVATE", description="'ACTIVATE' hoặc 'SAVE_DRAFT'"),
+    current_user: dict = Depends(get_optional_current_user)
+):
+    """
+    Điểm cuối chuyên dụng nhập file văn bản từ local vào Skills Library.
+    """
+    user_id = current_user.get("id", "guest_user")
+    filename = file.filename or "untitled.txt"
+    content_bytes = await file.read()
+    text = TextImportService.validate_and_decode_bytes(filename, content_bytes)
+    res = TextImportService.import_skill(
+        user_id=user_id,
+        filename=filename,
+        content=text,
+        action=action or "ACTIVATE"
+    )
+    return SkillDetailResponse(**res)
+
+
+@skills_router.post("/import-text", response_model=SkillDetailResponse, status_code=status.HTTP_201_CREATED)
+async def import_skill_text(
+    payload: TextFileImportRequest,
+    current_user: dict = Depends(get_optional_current_user)
+):
+    """
+    Điểm cuối nhập Skill từ nội dung văn bản sau khi người dùng đã xem trước (preview) và chỉnh sửa metadata.
+    """
+    user_id = current_user.get("id", "guest_user")
+    text = TextImportService.validate_and_decode_bytes(payload.filename, payload.content.encode("utf-8"))
+    res = TextImportService.import_skill(
+        user_id=user_id,
+        filename=payload.filename,
+        content=text,
+        override_name=payload.name,
+        override_desc=payload.description,
+        action=payload.action or "ACTIVATE",
+        license_val=payload.license,
+        compatibility=payload.compatibility,
+        allowed_tools=payload.allowed_tools,
+        extra_metadata=payload.metadata
+    )
+    return SkillDetailResponse(**res)
 
 
 @skills_router.post("/{id}/resources")

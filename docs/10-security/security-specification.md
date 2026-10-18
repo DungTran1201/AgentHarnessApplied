@@ -159,6 +159,24 @@
    - Bảng `messages` lưu trữ tin nhắn với các khóa ngoại tường minh (`user_id`, `project_id`, `conversation_id`).
    - Bộ nhớ hội thoại nạp vào agent được giới hạn trong phạm vi đúng phiên của người dùng và dự án tương ứng, ngăn chặn rò rỉ dữ liệu xuyên tài khoản (Cross-Tenant Data Leakage).
 
+---
+
+## 12. Kiểm Soát An Ninh Kết Nối Catalog Kỹ Năng Bên Ngoài (External Skills Catalog Security Guard — SEC-020)
+
+1. **Phòng Chống Tấn Công Gửi Yêu Cầu Giả Mạo Phía Máy Chủ (SSRF Prevention)**:
+   - Áp dụng cơ chế **Strict Host & Path Allowlist**: máy chủ chỉ kết nối ra ngoài tới các máy chủ đã được chỉ định (`raw.githubusercontent.com`, `api.github.com`) với tiền tố kho lưu trữ cố định `sickn33/agentic-awesome-skills`.
+   - Tuyệt đối cấm client gửi URL tùy ý để máy chủ tải về (`SEC-020`).
+2. **Ngăn Chặn Leo Thang Đường Dẫn & Tấn Công Hệ Thống Tệp (Anti-Path Traversal)**:
+   - Mọi định danh kỹ năng (`source_skill_id`) và đường dẫn tệp (`path`) đều được chuẩn hóa và kiểm tra biểu thức chính quy `^[a-zA-Z0-9_\-\./]+$`.
+   - Chặn tuyệt đối chuỗi phân cấp `..`, ký tự null byte (`0x00`), và ký tự điều khiển.
+3. **Bộ Quét An Ninh Nội Dung & Phòng Ngừa Prompt Injection**:
+   - Tệp `SKILL.md` trước khi cho phép xem trước hoặc nhập đều trải qua bộ quét tĩnh `scan_content_security()`.
+   - Phát hiện và cảnh báo các mẫu tấn công: thẻ `<script>`, event handlers (`onload`, `onerror`), lệnh shell nguy hiểm (`curl ... | sh`, `rm -rf`), và các cụm từ nghi vấn prompt injection / jailbreak.
+4. **Hiển Thị An Toàn & Bảo Vệ Nội Dung Cục Bộ (Safe Markdown Rendering & Overwrite Guard)**:
+   - Frontend hiển thị xem trước bằng `SafeMarkdownViewer.tsx` ngăn chặn thực thi JavaScript/HTML injection.
+   - So sánh mã băm SHA-256 (`source_content_hash`) để phát hiện chỉnh sửa local và yêu cầu người dùng xác nhận rõ ràng (`RENAME` / `REPLACE` / `SKIP`), ngăn ngừa ghi đè âm thầm.
+
+
 
 
 

@@ -13,12 +13,14 @@ import {
   SystemPromptSummary,
   AvailableBotItem,
   SkillSummary,
-  ToolSummary
+  ToolSummary,
+  Rule
 } from '@/types';
 import { ProjectService } from '@/services/projectService';
 import { SystemPromptService } from '@/services/systemPromptService';
 import { SkillService } from '@/services/skillService';
 import { ToolService } from '@/services/toolService';
+import { RuleService } from '@/services/ruleService';
 import Icon from '@/components/ui/Icon';
 import { getErrorMessage } from '@/lib/errors';
 import FloatingProjectChat from '@/components/chat/FloatingProjectChat';
@@ -56,6 +58,11 @@ export default function ProjectEditorPage() {
   const [loadingTools, setLoadingTools] = useState(false);
   const [toolsError, setToolsError] = useState<string | null>(null);
 
+  // Available rules from rules library
+  const [availableRules, setAvailableRules] = useState<Rule[]>([]);
+  const [loadingRules, setLoadingRules] = useState(false);
+  const [rulesError, setRulesError] = useState<string | null>(null);
+
   // Node Catalog UI state: Collapsible groups, Search & Category Filter
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({
     input: false,
@@ -64,10 +71,11 @@ export default function ProjectEditorPage() {
     output: false,
     bot: false,
     skill: false,
-    tool: false
+    tool: false,
+    rule: false
   });
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterCategory, setFilterCategory] = useState<'all' | 'input' | 'system_prompt' | 'model' | 'output' | 'bot' | 'skill' | 'tool'>('all');
+  const [filterCategory, setFilterCategory] = useState<'all' | 'input' | 'system_prompt' | 'model' | 'output' | 'bot' | 'skill' | 'tool' | 'rule'>('all');
 
   const toggleGroup = (key: string) => {
     setCollapsedGroups(prev => ({ ...prev, [key]: !prev[key] }));
@@ -126,9 +134,11 @@ export default function ProjectEditorPage() {
         setLoadingBots(true);
         setLoadingSkills(true);
         setLoadingTools(true);
+        setLoadingRules(true);
         setToolsError(null);
+        setRulesError(null);
 
-        const [projData, modelsRes, promptsRes, botRes, skillsRes, toolsRes] = await Promise.all([
+        const [projData, modelsRes, promptsRes, botRes, skillsRes, toolsRes, rulesRes] = await Promise.all([
           ProjectService.getProject(projectId),
           fetch('/api/v1/models', { credentials: 'include' }).then(r => r.ok ? r.json() : []).catch(() => []),
           SystemPromptService.getPrompts().then(r => r.items).catch(() => []),
@@ -141,6 +151,10 @@ export default function ProjectEditorPage() {
           ToolService.getTools({ limit: 100 }).then(r => r.items).catch(err => {
             setToolsError(getErrorMessage(err, 'Failed to load tools registry.'));
             return [];
+          }),
+          RuleService.getRules({ status: 'active', limit: 100 }).then(r => r.items).catch(err => {
+            setRulesError(getErrorMessage(err, 'Failed to load rules library.'));
+            return [];
           })
         ]);
 
@@ -151,6 +165,7 @@ export default function ProjectEditorPage() {
         setAvailableBots(botRes.items || []);
         setAvailableSkills(skillsRes || []);
         setAvailableTools(toolsRes || []);
+        setAvailableRules(rulesRes || []);
 
         if (projData.graph_data && projData.graph_data.nodes && projData.graph_data.nodes.length > 0) {
           const defaultPositionsByType: Record<string, { x: number; y: number }> = {
@@ -160,7 +175,8 @@ export default function ProjectEditorPage() {
             output: { x: 800, y: 220 },
             bot: { x: 440, y: 400 },
             skill: { x: 800, y: 380 },
-            tool: { x: 440, y: 550 }
+            tool: { x: 440, y: 550 },
+            rule: { x: 80, y: 480 }
           };
 
           const normalizedNodes: GraphNode[] = projData.graph_data.nodes.map((n: GraphNode, index: number) => {
@@ -224,6 +240,7 @@ export default function ProjectEditorPage() {
         setLoadingBots(false);
         setLoadingSkills(false);
         setLoadingTools(false);
+        setLoadingRules(false);
       }
     };
 
@@ -239,6 +256,7 @@ export default function ProjectEditorPage() {
     const botNodes = nodes.filter(n => n.type === 'bot');
     const skillNodes = nodes.filter(n => n.type === 'skill');
     const toolNodes = nodes.filter(n => n.type === 'tool');
+    const ruleNodes = nodes.filter(n => n.type === 'rule');
 
     if (!inputNode || !modelNode || !outputNode) return false;
     if (promptNodes.length > 1) return false;
@@ -275,7 +293,13 @@ export default function ProjectEditorPage() {
       if (!tNode.data.config?.tool_id) return false;
     }
 
-    const expectedEdgeCount = 2 + (promptNodes.length === 1 ? 1 : 0) + (botNodes.length === 1 ? 1 : 0) + skillNodes.length + toolNodes.length;
+    for (const rNode of ruleNodes) {
+      const hasRuleToModel = edges.some(e => e.source === rNode.id && e.target === modelNode.id);
+      if (!hasRuleToModel) return false;
+      if (!rNode.data.config?.rule_id) return false;
+    }
+
+    const expectedEdgeCount = 2 + (promptNodes.length === 1 ? 1 : 0) + (botNodes.length === 1 ? 1 : 0) + skillNodes.length + toolNodes.length + ruleNodes.length;
     return edges.length === expectedEdgeCount;
   };
 
@@ -343,7 +367,8 @@ export default function ProjectEditorPage() {
       system_prompt: 'System Prompt',
       bot: 'Bot Agent',
       skill: 'Skill Agent',
-      tool: 'Tool Node'
+      tool: 'Tool Node',
+      rule: 'Rule Node'
     };
 
     const defaultConfigs: Record<NodeType, any> = {
@@ -353,7 +378,8 @@ export default function ProjectEditorPage() {
       system_prompt: {},
       bot: { bot_id: '', name: 'Bot Agent' },
       skill: { skill_id: '', name: 'Skill' },
-      tool: { tool_id: '', name: 'Tool', status: 'AVAILABLE', custom_timeout_seconds: 30, is_enabled: true }
+      tool: { tool_id: '', name: 'Tool', status: 'AVAILABLE', custom_timeout_seconds: 30, is_enabled: true },
+      rule: { rule_id: '', name: 'Rule', scope: 'user', status: 'active', priority: 50, activation_mode: 'always_on' }
     };
 
     const posX = type === 'web_input' ? 100 : type === 'model' ? 420 : 740;
@@ -506,6 +532,43 @@ export default function ProjectEditorPage() {
     showToast('success', `Added Tool: "${tool.name}" to canvas.`);
   };
 
+  // Add Rule Node from Rules Library
+  const handleAddRuleNode = (rule: Rule) => {
+    const existingRuleNode = nodes.find(n => n.type === 'rule' && n.data.config?.rule_id === rule.id);
+    if (existingRuleNode) {
+      showToast('error', `Rule "${rule.name}" is already added to the canvas.`);
+      triggerConflictHighlight(null, existingRuleNode.id);
+      return;
+    }
+
+    const ruleIndex = nodes.filter(n => n.type === 'rule').length;
+    const newId = `node_rule_${Date.now()}`;
+    const newNode: GraphNode = {
+      id: newId,
+      type: 'rule',
+      position: { x: 80, y: 460 + (ruleIndex * 90) },
+      data: {
+        label: rule.name,
+        config: {
+          rule_id: rule.id,
+          name: rule.name,
+          description: rule.description,
+          scope: rule.scope,
+          status: rule.status,
+          priority: rule.priority,
+          activation_mode: rule.activation_mode,
+          glob_patterns: rule.glob_patterns,
+          tags: rule.tags
+        }
+      }
+    };
+
+    setNodes(prev => [...prev, newNode]);
+    setHasUnsavedChanges(true);
+    setSelectedNodeId(newId);
+    showToast('success', `Added Rule: "${rule.name}" to canvas.`);
+  };
+
   // Delete node
   const handleDeleteNode = (id: string) => {
     setNodes(prev => prev.filter(n => n.id !== id));
@@ -631,6 +694,16 @@ export default function ProjectEditorPage() {
       setConnectingSourceNodeId(null);
       return;
     }
+    if (srcNode.type === 'model' && tgtNode.type === 'rule') {
+      showToast('error', 'Reverse connection rejected. Connect Rule to Model, not Model to Rule.');
+      setConnectingSourceNodeId(null);
+      return;
+    }
+    if (srcNode.type === 'rule' && tgtNode.type === 'rule') {
+      showToast('error', 'Cannot connect Rule to Rule.');
+      setConnectingSourceNodeId(null);
+      return;
+    }
 
     let isValid = false;
     let edgeType = 'data_flow';
@@ -641,6 +714,9 @@ export default function ProjectEditorPage() {
     } else if (srcNode.type === 'system_prompt' && tgtNode.type === 'model' && targetHandle === 'system_instruction') {
       isValid = true;
       edgeType = 'system_instruction';
+    } else if (srcNode.type === 'rule' && tgtNode.type === 'model' && targetHandle === 'rule_in') {
+      isValid = true;
+      edgeType = 'rule_binding';
     } else if (srcNode.type === 'model' && tgtNode.type === 'output' && targetHandle === 'in') {
       isValid = true;
       edgeType = 'data_flow';
@@ -656,12 +732,14 @@ export default function ProjectEditorPage() {
     }
 
     if (!isValid) {
-      if (srcNode.type === 'system_prompt' && targetHandle !== 'system_instruction') {
+      if (srcNode.type === 'rule' && targetHandle !== 'rule_in') {
+        showToast('error', 'Rule node must connect to the Rules input (purple port) of the Model node.');
+      } else if (srcNode.type === 'system_prompt' && targetHandle !== 'system_instruction') {
         showToast('error', 'System Prompt node must connect to the Instruction input (orange port) of the Model node.');
       } else if (srcNode.type === 'web_input' && targetHandle !== 'in') {
         showToast('error', 'Web Input node must connect to the Data input (blue port) of the Model node.');
       } else {
-        showToast('error', `Cannot connect ${srcNode.type} to ${tgtNode.type}. Valid edges: Web Input -> Model, System Prompt -> Model, Model -> Output, Model -> Bot, Model -> Skill, Model -> Tool.`);
+        showToast('error', `Cannot connect ${srcNode.type} to ${tgtNode.type}. Valid edges: Web Input -> Model, Rule -> Model, System Prompt -> Model, Model -> Output, Model -> Bot, Model -> Skill, Model -> Tool.`);
       }
       setConnectingSourceNodeId(null);
       return;
@@ -676,6 +754,8 @@ export default function ProjectEditorPage() {
         showToast('error', 'This skill is already connected to the model.');
       } else if (tgtNode.type === 'tool') {
         showToast('error', 'This tool is already connected to the model.');
+      } else if (srcNode.type === 'rule') {
+        showToast('error', 'This rule is already connected to the model.');
       } else {
         showToast('error', 'Duplicate connection rejected. This connection already exists.');
       }
@@ -709,6 +789,24 @@ export default function ProjectEditorPage() {
         if (existingSkillEdge) {
           showToast('error', 'This skill is already connected to the model.');
           triggerConflictHighlight(existingSkillEdge.id, existingSkillEdge.target);
+          setConnectingSourceNodeId(null);
+          return;
+        }
+      }
+    }
+
+    // Duplicate rule binding on same Model (1:N allowed, but no duplicate rule_id on same model)
+    if (srcNode.type === 'rule' && tgtNode.type === 'model') {
+      const targetRuleId = srcNode.data.config?.rule_id;
+      if (targetRuleId) {
+        const existingRuleEdge = edges.find(e => {
+          if (e.target !== tgtNode.id) return false;
+          const rNode = nodes.find(n => n.id === e.source);
+          return rNode?.type === 'rule' && rNode.data.config?.rule_id === targetRuleId;
+        });
+        if (existingRuleEdge) {
+          showToast('error', 'This rule is already connected to the model.');
+          triggerConflictHighlight(existingRuleEdge.id, srcNode.id);
           setConnectingSourceNodeId(null);
           return;
         }
@@ -757,6 +855,7 @@ export default function ProjectEditorPage() {
     const newEdges = edges.filter(e => {
       if (srcNode.type === 'web_input' && e.source === srcNode.id) return false;
       if (srcNode.type === 'system_prompt' && e.source === srcNode.id) return false;
+      if (srcNode.type === 'rule' && e.source === srcNode.id) return false;
       if (srcNode.type === 'model' && tgtNode.type === 'output' && e.source === srcNode.id && nodes.find(n => n.id === e.target)?.type === 'output') return false;
       if (tgtNode.type === 'model') {
         if (srcNode.type === 'web_input' && nodes.find(n => n.id === e.source)?.type === 'web_input') return false;
@@ -770,7 +869,7 @@ export default function ProjectEditorPage() {
       id: `edge_${Date.now()}`,
       source: srcNode.id,
       target: tgtNode.id,
-      sourceHandle: srcNode.type === 'system_prompt' ? 'prompt_out' : 'out',
+      sourceHandle: srcNode.type === 'system_prompt' ? 'prompt_out' : srcNode.type === 'rule' ? 'rule_out' : 'out',
       targetHandle: targetHandle,
       type: edgeType
     };
@@ -844,6 +943,17 @@ export default function ProjectEditorPage() {
       (t.description && t.description.toLowerCase().includes(q))
     );
   }, [availableTools, searchQuery]);
+
+  const filteredRules = useMemo(() => {
+    if (!searchQuery.trim()) return availableRules;
+    const q = searchQuery.toLowerCase().trim();
+    return availableRules.filter(r =>
+      r.name.toLowerCase().includes(q) ||
+      r.id.toLowerCase().includes(q) ||
+      r.scope.toLowerCase().includes(q) ||
+      (r.description && r.description.toLowerCase().includes(q))
+    );
+  }, [availableRules, searchQuery]);
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg-base)', color: 'var(--text-primary)', overflow: 'hidden' }}>
@@ -1017,7 +1127,8 @@ export default function ProjectEditorPage() {
               { id: 'output', label: 'Output' },
               { id: 'bot', label: 'Bots' },
               { id: 'skill', label: 'Skills' },
-              { id: 'tool', label: 'Tools' }
+              { id: 'tool', label: 'Tools' },
+              { id: 'rule', label: 'Rules' }
             ].map(f => (
               <button
                 key={f.id}
@@ -1568,12 +1679,112 @@ export default function ProjectEditorPage() {
                 )}
               </div>
             )}
+
+            {/* 8. Rules Group */}
+            {(filterCategory === 'all' || filterCategory === 'rule') && (
+              <div style={{ border: '1px solid var(--border-subtle)', borderRadius: '6px', overflow: 'hidden' }}>
+                <button
+                  onClick={() => toggleGroup('rule')}
+                  style={{
+                    width: '100%',
+                    padding: '6px 8px',
+                    background: 'var(--bg-subtle)',
+                    border: 'none',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    cursor: 'pointer',
+                    color: 'var(--text-secondary)',
+                    fontSize: '0.75rem',
+                    fontWeight: 600
+                  }}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Icon name="rules" size={13} style={{ color: '#a855f7' }} />
+                    Rules ({filteredRules.length})
+                  </span>
+                  <span>{collapsedGroups.rule ? '+' : '−'}</span>
+                </button>
+                {!collapsedGroups.rule && (
+                  <div style={{ padding: '6px', display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '200px', overflowY: 'auto' }}>
+                    {loadingRules ? (
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', padding: '6px' }}>Loading active rules...</div>
+                    ) : rulesError ? (
+                      <div style={{ fontSize: '0.7rem', color: 'var(--danger)', padding: '6px' }}>
+                        <div>{rulesError}</div>
+                      </div>
+                    ) : filteredRules.length === 0 ? (
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', padding: '6px' }}>
+                        {searchQuery ? 'No matching rules found' : 'No active rules in library'}
+                        <div style={{ marginTop: '4px' }}>
+                          <Link href="/rules" style={{ color: '#a855f7', textDecoration: 'none', fontWeight: 600 }}>
+                            + Manage Rules
+                          </Link>
+                        </div>
+                      </div>
+                    ) : (
+                      filteredRules.map(rule => {
+                        const isUsedInCanvas = nodes.some(n => n.type === 'rule' && n.data.config?.rule_id === rule.id);
+                        return (
+                          <div
+                            key={rule.id}
+                            onClick={() => handleAddRuleNode(rule)}
+                            style={{
+                              background: 'var(--bg-surface)',
+                              border: '1px solid var(--border-subtle)',
+                              borderRadius: '4px',
+                              padding: '6px 8px',
+                              cursor: isUsedInCanvas ? 'not-allowed' : 'pointer',
+                              opacity: isUsedInCanvas ? 0.5 : 1
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <span style={{ fontWeight: 600, fontSize: '0.75rem', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                📜 {rule.name}
+                              </span>
+                              {isUsedInCanvas ? (
+                                <span className="badge badge-neutral" style={{ fontSize: '0.65rem' }}>Added</span>
+                              ) : (
+                                <span style={{ fontSize: '0.65rem', color: '#a855f7' }}>+ Add</span>
+                              )}
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.65rem', marginTop: '3px' }}>
+                              <span style={{
+                                padding: '1px 4px',
+                                borderRadius: '3px',
+                                background: 'rgba(168, 85, 247, 0.12)',
+                                color: '#c084fc',
+                                fontWeight: 500
+                              }}>
+                                {rule.scope.toUpperCase()}
+                              </span>
+                              <span style={{ color: 'var(--accent)', fontWeight: 600 }}>
+                                • {rule.status}
+                              </span>
+                              <span style={{ color: 'var(--text-muted)', fontSize: '0.62rem' }}>
+                                Pri: {rule.priority}
+                              </span>
+                            </div>
+                            {rule.description && (
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {rule.description}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div style={{ marginTop: 'auto', padding: '6px 8px', background: 'var(--bg-subtle)', borderRadius: '4px', fontSize: '0.68rem', color: 'var(--text-muted)', lineHeight: '1.4' }}>
             <strong>Wiring Instructions:</strong><br />
             • Blue port (Input) → Top port of Model (User Message)<br />
-            • Orange port (Prompt) → Bottom port of Model (Instruction)<br />
+            • Purple port (Rule) → Middle-left port of Model (Active Rules, 1:N)<br />
+            • Orange port (Prompt) → Bottom-left port of Model (Instruction)<br />
             • Right port of Model → Output port (SSE Stream)<br />
             • Right port of Model → Bot (max 1 Bot connection)<br />
             • Right port of Model → Skills (multiple allowed)<br />
@@ -1645,6 +1856,7 @@ export default function ProjectEditorPage() {
                 if (!srcNode || !tgtNode) return null;
 
                 const isPromptEdge = srcNode.type === 'system_prompt';
+                const isRuleEdge = srcNode.type === 'rule';
                 const isBotEdge = tgtNode.type === 'bot';
                 const isSkillEdge = tgtNode.type === 'skill';
                 const isToolEdge = tgtNode.type === 'tool';
@@ -1662,7 +1874,11 @@ export default function ProjectEditorPage() {
 
                 let endY = tgtPos.y + NODE_HEIGHT / 2;
                 if (tgtNode.type === 'model') {
-                  endY = isPromptEdge ? tgtPos.y + NODE_HEIGHT * 0.72 : tgtPos.y + NODE_HEIGHT * 0.32;
+                  endY = isPromptEdge
+                    ? tgtPos.y + NODE_HEIGHT * 0.72
+                    : isRuleEdge
+                    ? tgtPos.y + NODE_HEIGHT * 0.52
+                    : tgtPos.y + NODE_HEIGHT * 0.32;
                 }
                 const endX = tgtPos.x;
 
@@ -1677,6 +1893,8 @@ export default function ProjectEditorPage() {
                   ? 'var(--danger)'
                   : isPromptEdge
                   ? '#f59e0b'
+                  : isRuleEdge
+                  ? '#a855f7'
                   : isBotEdge
                   ? '#6366f1'
                   : isSkillEdge
@@ -1700,7 +1918,7 @@ export default function ProjectEditorPage() {
                       fill="none"
                       stroke={edgeStroke}
                       strokeWidth={isConflicting ? 4 : isSelected ? 3 : 2}
-                      strokeDasharray={isConflicting ? '6 4' : isPromptEdge ? '4 3' : (isBotEdge || isSkillEdge || isToolEdge) ? '3 3' : '6 4'}
+                      strokeDasharray={isConflicting ? '6 4' : isPromptEdge ? '4 3' : isRuleEdge ? '5 3' : (isBotEdge || isSkillEdge || isToolEdge) ? '3 3' : '6 4'}
                       filter={isConflicting ? 'drop-shadow(0 0 8px rgba(239, 68, 68, 0.9))' : undefined}
                       onClick={() => setSelectedEdgeId(edge.id)}
                       style={{ cursor: 'pointer' }}
@@ -1728,6 +1946,8 @@ export default function ProjectEditorPage() {
 
                 const dragColor = srcNode.type === 'system_prompt'
                   ? '#f59e0b'
+                  : srcNode.type === 'rule'
+                  ? '#a855f7'
                   : srcNode.type === 'model'
                   ? '#a855f7'
                   : '#38bdf8';
@@ -1757,6 +1977,7 @@ export default function ProjectEditorPage() {
               const isSelected = selectedNodeId === node.id;
               const isInput = node.type === 'web_input';
               const isPrompt = node.type === 'system_prompt';
+              const isRule = node.type === 'rule';
               const isModel = node.type === 'model';
               const isOutput = node.type === 'output';
               const isBot = node.type === 'bot';
@@ -1767,6 +1988,8 @@ export default function ProjectEditorPage() {
                 ? '#06b6d4'
                 : isPrompt
                 ? '#f59e0b'
+                : isRule
+                ? '#a855f7'
                 : isModel
                 ? '#a855f7'
                 : isBot
@@ -1781,7 +2004,7 @@ export default function ProjectEditorPage() {
                 ? node.position
                 : { x: 80, y: 180 };
 
-              const hasSourceHandle = isInput || isPrompt || isModel;
+              const hasSourceHandle = isInput || isPrompt || isModel || isRule;
 
               return (
                 <div
@@ -1912,6 +2135,24 @@ export default function ProjectEditorPage() {
                       />
                       <div
                         className="handle-circle"
+                        onMouseUp={e => handleTargetHandleMouseUp(e, node.id, 'rule_in')}
+                        style={{
+                          position: 'absolute',
+                          left: '-7px',
+                          top: '52%',
+                          transform: 'translateY(-50%)',
+                          width: '14px',
+                          height: '14px',
+                          borderRadius: '50%',
+                          background: '#a855f7',
+                          border: '2px solid var(--bg-surface)',
+                          cursor: 'crosshair',
+                          zIndex: 20
+                        }}
+                        title="Rules Port: Active Engineering Rules (In: Connect from Rule Nodes)"
+                      />
+                      <div
+                        className="handle-circle"
                         onMouseUp={e => handleTargetHandleMouseUp(e, node.id, 'system_instruction')}
                         style={{
                           position: 'absolute',
@@ -1956,7 +2197,7 @@ export default function ProjectEditorPage() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                       <Icon
-                        name={isInput ? 'chat' : isPrompt ? 'prompts' : isModel ? 'settings' : isBot ? 'bot' : isSkill ? 'skills' : isTool ? 'tools' : 'check'}
+                        name={isInput ? 'chat' : isPrompt ? 'prompts' : isRule ? 'rules' : isModel ? 'settings' : isBot ? 'bot' : isSkill ? 'skills' : isTool ? 'tools' : 'check'}
                         size={14}
                         style={{ color: accentColor }}
                       />
@@ -1989,6 +2230,25 @@ export default function ProjectEditorPage() {
                         Prompt: <strong style={{ color: '#fbbf24' }}>{node.data.config?.name || 'Linked'}</strong>
                       </div>
                     )}
+                    {isRule && (
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <span style={{ color: '#c084fc', fontWeight: 600 }}>{node.data.config?.scope?.toUpperCase() || 'USER'}</span>
+                          <span style={{
+                            fontSize: '0.62rem',
+                            padding: '1px 4px',
+                            borderRadius: '3px',
+                            background: node.data.config?.status === 'active' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                            color: node.data.config?.status === 'active' ? '#10b981' : '#ef4444'
+                          }}>
+                            {node.data.config?.status || 'active'}
+                          </span>
+                        </div>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.65rem', marginTop: '2px' }}>
+                          Priority: {node.data.config?.priority ?? 50} • {node.data.config?.activation_mode || 'always_on'}
+                        </div>
+                      </div>
+                    )}
                     {isModel && (
                       <div>
                         <div>Model: <strong style={{ color: 'var(--text-primary)' }}>{node.data.config?.model_id || 'Not selected'}</strong></div>
@@ -1997,9 +2257,20 @@ export default function ProjectEditorPage() {
                           const connectedBotNode = connectedBotEdge ? nodes.find(n => n.id === connectedBotEdge.target) : null;
                           const connectedSkillEdges = edges.filter(e => e.source === node.id && nodes.find(n => n.id === e.target)?.type === 'skill');
                           const connectedToolEdges = edges.filter(e => e.source === node.id && nodes.find(n => n.id === e.target)?.type === 'tool');
+                          const connectedRuleEdges = edges.filter(e => e.target === node.id && nodes.find(n => n.id === e.source)?.type === 'rule');
 
                           return (
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px' }}>
+                              <span style={{
+                                fontSize: '0.62rem',
+                                padding: '1px 5px',
+                                borderRadius: '3px',
+                                background: connectedRuleEdges.length > 0 ? 'rgba(168, 85, 247, 0.15)' : 'var(--bg-base)',
+                                border: `1px solid ${connectedRuleEdges.length > 0 ? '#a855f7' : 'var(--border-subtle)'}`,
+                                color: connectedRuleEdges.length > 0 ? '#c084fc' : 'var(--text-muted)'
+                              }}>
+                                Rules: {connectedRuleEdges.length}
+                              </span>
                               <span style={{
                                 fontSize: '0.62rem',
                                 padding: '1px 5px',
@@ -2119,7 +2390,7 @@ export default function ProjectEditorPage() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '0.5rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <Icon
-                  name={selectedNode.type === 'web_input' ? 'chat' : selectedNode.type === 'system_prompt' ? 'prompts' : selectedNode.type === 'model' ? 'settings' : selectedNode.type === 'bot' ? 'bot' : selectedNode.type === 'skill' ? 'skills' : selectedNode.type === 'tool' ? 'tools' : 'check'}
+                  name={selectedNode.type === 'web_input' ? 'chat' : selectedNode.type === 'system_prompt' ? 'prompts' : selectedNode.type === 'rule' ? 'rules' : selectedNode.type === 'model' ? 'settings' : selectedNode.type === 'bot' ? 'bot' : selectedNode.type === 'skill' ? 'skills' : selectedNode.type === 'tool' ? 'tools' : 'check'}
                   size={15}
                   style={{ color: 'var(--accent)' }}
                 />
@@ -2485,6 +2756,65 @@ export default function ProjectEditorPage() {
                     style={{ textAlign: 'center', fontSize: '0.75rem', padding: '6px' }}
                   >
                     Open Tool Details & Test
+                  </Link>
+                )}
+              </div>
+            )}
+
+            {selectedNode.type === 'rule' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <div style={{ background: 'rgba(168, 85, 247, 0.08)', border: '1px solid rgba(168, 85, 247, 0.25)', padding: '10px', borderRadius: '6px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#c084fc' }}>
+                      ENGINEERING RULE
+                    </span>
+                    <span style={{
+                      fontSize: '0.65rem',
+                      background: selectedNode.data.config?.status === 'active' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                      color: selectedNode.data.config?.status === 'active' ? '#10b981' : '#ef4444',
+                      padding: '2px 6px',
+                      borderRadius: '4px',
+                      fontWeight: 600
+                    }}>
+                      {selectedNode.data.config?.status || 'active'}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '2px' }}>
+                    📜 {selectedNode.data.config?.name || selectedNode.data.label}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                    <span>Scope: <strong style={{ color: '#c084fc' }}>{selectedNode.data.config?.scope?.toUpperCase() || 'USER'}</strong></span>
+                    <span>• Priority: <strong style={{ color: '#fbbf24' }}>{selectedNode.data.config?.priority ?? 50}</strong></span>
+                    <span>• Mode: <strong>{selectedNode.data.config?.activation_mode || 'always_on'}</strong></span>
+                  </div>
+                  {selectedNode.data.config?.description && (
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px', lineHeight: '1.4' }}>
+                      {selectedNode.data.config.description}
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', background: 'var(--bg-card)', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-subtle)' }}>
+                  <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '4px' }}>
+                    RULE REFERENCE ID
+                  </div>
+                  <code style={{ fontSize: '0.75rem', color: '#d8b4fe', wordBreak: 'break-all' }}>
+                    {selectedNode.data.config?.rule_id}
+                  </code>
+                </div>
+
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+                  <strong>Dynamic Resolution:</strong> During chat streaming, the runtime resolves the latest content of this rule from the Rules Library, sorts all connected rules deterministically by priority, and enforces them in the model instruction channel.
+                </div>
+
+                {selectedNode.data.config?.rule_id && (
+                  <Link
+                    href={`/rules/${selectedNode.data.config.rule_id}`}
+                    target="_blank"
+                    className="btn btn-secondary"
+                    style={{ textAlign: 'center', fontSize: '0.75rem', padding: '6px' }}
+                  >
+                    Open Rule Editor & Test
                   </Link>
                 )}
               </div>

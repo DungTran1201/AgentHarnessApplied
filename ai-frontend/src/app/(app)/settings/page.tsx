@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { AgentModel, ModelSearchResponse, UserConnectionsResponse } from '@/types';
 import Icon from '@/components/ui/Icon';
 import { useApp } from '@/context/AppContext';
+import ApiKeysTab from '@/components/settings/ApiKeysTab';
 
 interface UserProfile {
   id: string;
@@ -34,13 +35,13 @@ export default function SettingsPage() {
   const searchParams = useSearchParams();
   const { refreshUser } = useApp();
 
-  // Active tab state: 'profile' | 'security' | 'preferences' | 'connections' | 'models'
-  const [activeTab, setActiveTab] = useState<'profile' | 'security' | 'preferences' | 'connections' | 'models'>('profile');
+  // Active tab state: 'profile' | 'security' | 'preferences' | 'connections' | 'models' | 'api-keys'
+  const [activeTab, setActiveTab] = useState<'profile' | 'security' | 'preferences' | 'connections' | 'models' | 'api-keys'>('profile');
 
   // Sync tab from URL ?tab= param
   useEffect(() => {
     const tab = searchParams.get('tab');
-    if (tab && ['profile', 'security', 'preferences', 'connections', 'models'].includes(tab)) {
+    if (tab && ['profile', 'security', 'preferences', 'connections', 'models', 'api-keys'].includes(tab)) {
       setActiveTab(tab as any);
     }
   }, [searchParams]);
@@ -1024,6 +1025,17 @@ export default function SettingsPage() {
           >
             <Icon name="cpu" size={14} />
             <span>AI Models</span>
+          </button>
+
+          <button
+            type="button"
+            id="tab-api-keys"
+            className={`segmented-item ${activeTab === 'api-keys' ? 'active' : ''}`}
+            onClick={() => setActiveTab('api-keys')}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+          >
+            <Icon name="key" size={14} />
+            <span>API Keys</span>
           </button>
         </div>
 
@@ -2373,6 +2385,13 @@ export default function SettingsPage() {
             )}
 
           </div>
+        )}
+
+        {/* ============================================================ */}
+        {/* TAB 6: API KEYS & INTEGRATIONS                                */}
+        {/* ============================================================ */}
+        {activeTab === 'api-keys' && (
+          <ApiKeysTab showToast={showToast} userEmail={user?.email} />
         )}
 
         {/* Modal Re-authentication for Discord Unlink (BR-027, CTRL-010) */}

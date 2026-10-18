@@ -900,6 +900,180 @@
   - `403 Forbidden`: Chưa thiết lập cấu hình bot hoặc chưa liên kết Discord (`BR-031`).
   - `429 Too Many Requests`: Hết hạn ngạch token trong ngày (`BR-032`, `BR-020` - Quota Limit Reached).
 
+---
+
+## 9. Phân Hệ Kết Nối Catalog Kỹ Năng Bên Ngoài (External Skills Catalog Endpoints)
+
+### 9.1 GET /api/v1/skills/external/providers
+- **Mục đích**: Lấy danh sách các nhà cung cấp Skills bên ngoài khả dụng và trạng thái đồng bộ (`FEAT-EXT-SKILLS-CATALOG`).
+- **Bảo mật**: Xác thực người dùng (hỗ trợ JWT Bearer hoặc Cookie phiên).
+- **Responses**:
+  - `200 OK`:
+    ```json
+    [
+      {
+        "id": "awesome-skills",
+        "name": "Awesome Skills (Agentic Community Catalog)",
+        "canonical_url": "https://github.com/sickn33/agentic-awesome-skills",
+        "redirected_from": "https://github.com/sickn33/antigravity-awesome-skills",
+        "status": "connected",
+        "total_skills": 2705,
+        "last_synced_at": "2026-02-28T00:00:00Z",
+        "is_stale": false,
+        "license_policy": "CC-BY-4.0 (Content), MIT (Code)",
+        "attribution_requirement": "Bắt buộc ghi nhận nguồn tác giả cộng đồng Awesome Skills"
+      }
+    ]
+    ```
+
+---
+
+### 9.2 GET /api/v1/skills/external/awesome/skills
+- **Mục đích**: Tìm kiếm, lọc theo danh mục, mức độ rủi ro và phân trang danh mục kỹ năng bên ngoài.
+- **Query Parameters**:
+  - `q` (string, optional): Từ khóa tìm kiếm (tên, mô tả, danh mục, id).
+  - `category` (string, optional): Lọc theo danh mục.
+  - `risk` (string, optional): Lọc theo mức độ rủi ro (`safe`, `standard`, `sensitive`).
+  - `page` (integer, default 1): Số trang.
+  - `limit` (integer, default 20, max 100): Số lượng mục trên mỗi trang.
+- **Responses**:
+  - `200 OK`:
+    ```json
+    {
+      "items": [
+        {
+          "id": "react-best-practices",
+          "path": "skills/react-best-practices",
+          "category": "development",
+          "name": "React Best Practices",
+          "description": "Reviews React code for hooks and state optimization.",
+          "risk": "safe",
+          "source": "community",
+          "date_added": "2025-01-10"
+        }
+      ],
+      "total": 2705,
+      "page": 1,
+      "limit": 20,
+      "total_pages": 136,
+      "categories": [
+        { "name": "development", "count": 420 },
+        { "name": "security", "count": 185 }
+      ],
+      "is_stale": false,
+      "last_synced_at": "2026-02-28T00:00:00Z"
+    }
+    ```
+  - `429 Too Many Requests`: GitHub rate limit khi chưa có bản cache sẵn có.
+  - `503 Service Unavailable`: Nguồn ngoài không thể kết nối và chưa có bản cache.
+
+---
+
+### 9.3 GET /api/v1/skills/external/awesome/skills/{source_skill_id}
+- **Mục đích**: Lấy thông tin chi tiết một kỹ năng, nội dung `SKILL.md` xem trước, mã băm SHA-256 và đánh giá an toàn nội dung.
+- **Bảo mật**: Chặn triệt để Path Traversal (`..`) và SSRF qua allowlist cố định.
+- **Responses**:
+  - `200 OK`:
+    ```json
+    {
+      "source_provider": "awesome-skills",
+      "source_repository_url": "https://github.com/sickn33/agentic-awesome-skills",
+      "source_skill_id": "react-best-practices",
+      "source_path": "skills/react-best-practices",
+      "source_version": "main",
+      "source_content_hash": "a1b2c3d4...",
+      "source_license": "CC-BY-4.0",
+      "attribution": "Tác giả cộng đồng Awesome Skills",
+      "name": "React Best Practices",
+      "description": "Reviews React code for hooks and state optimization.",
+      "category": "development",
+      "risk": "safe",
+      "raw_content": "---\nname: react-best-practices\n---\n# React Best Practices...",
+      "frontmatter": "name: react-best-practices",
+      "markdown_body": "# React Best Practices...",
+      "security_assessment": {
+        "risk_level": "SAFE",
+        "warnings": [],
+        "is_safe_to_preview": true,
+        "has_prompt_injection_warning": false
+      },
+      "is_imported": false,
+      "local_skill_id": null
+    }
+    ```
+  - `400 Bad Request`: Đường dẫn chứa ký tự nguy hiểm hoặc vi phạm SSRF.
+  - `404 Not Found`: Không tìm thấy kỹ năng trong catalog.
+
+---
+
+### 9.4 POST /api/v1/skills/external/awesome/skills/{source_skill_id}/import
+- **Mục đích**: Nhập kỹ năng từ Awesome Skills vào thư viện người dùng (`skills` table và lưu file `SKILL.md`).
+- **Request Body (Tùy chọn)**:
+  ```json
+  {
+    "conflict_action": "RENAME", // "RENAME" | "REPLACE" | "SKIP" | null
+    "target_name": "custom-skill-name"
+  }
+  ```
+- **Responses**:
+  - `200 OK`: Nhập thành công (`imported: true`, `status: "CREATED"` hoặc `"REPLACED"` hoặc `"SKIPPED"`).
+  - `409 Conflict`: Phát hiện trùng lặp kỹ năng khi chưa chỉ định `conflict_action`:
+    ```json
+    {
+      "code": "SKILL_IMPORT_CONFLICT",
+      "message": "Kỹ năng 'react-best-practices' đã tồn tại trong thư viện của bạn.",
+      "conflict_type": "DUPLICATE_SOURCE",
+      "existing_skill_id": "skl_123456789abc",
+      "existing_skill_name": "react-best-practices",
+      "is_locally_modified": true,
+      "supported_actions": ["RENAME", "REPLACE", "SKIP"]
+    }
+    ```
+
+---
+
+### 9.5 POST /api/v1/skills/external/awesome/refresh
+- **Mục đích**: Chủ động làm mới cache catalog từ kho lưu trữ nguồn GitHub.
+- **Responses**:
+  - `200 OK`:
+    ```json
+    {
+      "refreshed": true,
+      "total_skills": 2705,
+      "is_stale": false,
+      "last_synced_at": "2026-10-18T10:00:00Z"
+    }
+    ```
+
+---
+
+### 9.6 GET /api/v1/skills/{id}/source
+- **Mục đích**: Lấy thông tin nguồn gốc (provenance), mã băm SHA-256 và trạng thái chỉnh sửa cục bộ của một kỹ năng nội bộ.
+- **Responses**:
+  - `200 OK`:
+    ```json
+    {
+      "skill_id": "skl_123456789abc",
+      "name": "react-best-practices",
+      "is_imported": true,
+      "source_type": "IMPORTED",
+      "source_provider": "awesome-skills",
+      "source_repository_url": "https://github.com/sickn33/agentic-awesome-skills",
+      "source_skill_id": "react-best-practices",
+      "source_path": "skills/react-best-practices",
+      "source_version": "main",
+      "source_content_hash": "a1b2c3d4...",
+      "current_content_hash": "e5f6g7h8...",
+      "is_locally_modified": true,
+      "source_license": "CC-BY-4.0",
+      "attribution": "Tác giả cộng đồng Awesome Skills",
+      "imported_at": "2026-10-18T10:00:00Z",
+      "source_updated_at": "2026-10-18T10:00:00Z",
+      "source_status": "current"
+    }
+    ```
+  - `404 Not Found`: Không tìm thấy kỹ năng hoặc không thuộc quyền sở hữu của người dùng.
+
 
 
 

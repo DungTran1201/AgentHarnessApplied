@@ -11,27 +11,31 @@ from src.db import query_one, query_all, execute_commit
 
 models_router = APIRouter(prefix="/models", tags=["Model Management"])
 
-def check_provider_api_key(provider: str) -> bool:
-    """Kiểm tra sự hiện diện của API Key hoặc endpoint cho nhà cung cấp trong môi trường (.env)."""
-    p = provider.lower().strip()
-    if p == "google":
-        key = settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-        return bool(key and key.strip())
-    elif p == "openai":
-        key = settings.OPENAI_API_KEY or os.getenv("OPENAI_API_KEY")
-        return bool(key and key.strip())
-    elif p == "anthropic":
-        key = settings.ANTHROPIC_API_KEY or os.getenv("ANTHROPIC_API_KEY")
-        return bool(key and key.strip())
-    elif p == "groq":
-        key = settings.GROQ_API_KEY or os.getenv("GROQ_API_KEY")
-        return bool(key and key.strip())
-    elif p == "ollama":
-        url = settings.OLLAMA_BASE_URL or os.getenv("OLLAMA_BASE_URL")
-        return bool(url and url.strip())
-    return False
+def check_provider_api_key(provider: str, user_id: Optional[str] = None) -> bool:
+    """Kiểm tra sự hiện diện của API Key cho nhà cung cấp (ưu tiên User Personal Key > System .env)."""
+    try:
+        from src.services.credential_service import CredentialService
+        return CredentialService.is_provider_configured(provider, user_id=user_id)
+    except Exception:
+        p = provider.lower().strip()
+        if p in ("google", "gemini"):
+            key = settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+            return bool(key and key.strip())
+        elif p == "openai":
+            key = settings.OPENAI_API_KEY or os.getenv("OPENAI_API_KEY")
+            return bool(key and key.strip())
+        elif p == "anthropic":
+            key = settings.ANTHROPIC_API_KEY or os.getenv("ANTHROPIC_API_KEY")
+            return bool(key and key.strip())
+        elif p == "groq":
+            key = settings.GROQ_API_KEY or os.getenv("GROQ_API_KEY")
+            return bool(key and key.strip())
+        elif p == "ollama":
+            url = settings.OLLAMA_BASE_URL or os.getenv("OLLAMA_BASE_URL")
+            return bool(url and url.strip())
+        return False
 
-def format_model_record(row: Dict[str, Any]) -> Dict[str, Any]:
+def format_model_record(row: Dict[str, Any], user_id: Optional[str] = None) -> Dict[str, Any]:
     """Chuẩn hóa dữ liệu mô hình trả về theo đặc tả API Contract (OP-010, OP-011)."""
     return {
         "id": row["id"],
@@ -42,7 +46,7 @@ def format_model_record(row: Dict[str, Any]) -> Dict[str, Any]:
         "context_window": row["context_window"],
         "max_tokens": row["max_tokens"],
         "supports_streaming": bool(row["supports_streaming"]),
-        "has_api_key": check_provider_api_key(row["provider"]),
+        "has_api_key": check_provider_api_key(row["provider"], user_id=user_id),
         "latency_ms": row["latency_ms"],
         "last_checked_at": row["last_checked_at"],
         "created_at": row.get("created_at"),
@@ -86,7 +90,7 @@ async def list_models(
     else:
         rows = query_all("SELECT * FROM models ORDER BY is_default DESC, status ASC, name ASC")
 
-    return [format_model_record(r) for r in rows]
+    return [format_model_record(r, user_id=current_user.get("id") if isinstance(current_user, dict) else None) for r in rows]
 
 
 # ------------------------------------------------------------------------------
@@ -197,7 +201,7 @@ async def search_models(
         sql += " ORDER BY is_default DESC, name ASC"
 
     rows = query_all(sql, tuple(params))
-    items = [format_model_record(r) for r in rows]
+    items = [format_model_record(r, user_id=current_user.get("id") if isinstance(current_user, dict) else None) for r in rows]
 
     # Lọc tiếp theo has_api_key nếu có
     if has_api_key is not None:
@@ -265,7 +269,7 @@ async def get_model_detail(
             detail=f"Không tìm thấy mô hình '{model_id}'."
         )
 
-    return format_model_record(model)
+    return format_model_record(model, user_id=current_user.get("id") if isinstance(current_user, dict) else None)
 
 
 # ------------------------------------------------------------------------------
@@ -382,38 +386,44 @@ async def test_model_connection(
         )
 
     provider = model["provider"]
-    if not check_provider_api_key(provider):
+    user_id = current_user.get("id") if isinstance(current_user, dict) else None
+    if not check_provider_api_key(provider, user_id=user_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Chưa cấu hình API Key cho nhà cung cấp '{provider}' trong file .env (BR-014)."
+            detail=f"Chưa cấu hình API Key cho nhà cung cấp '{provider}' (BR-014)."
         )
 
     start_time = time.perf_counter()
     tested_at_str = datetime.now(timezone.utc).isoformat()
 
     try:
+        from src.services.credential_service import CredentialService, redact_secrets_from_text
+        effective_key = CredentialService.get_effective_key(user_id, provider)
+
         # Thực hiện ping kết nối thực tế hoặc đo độ trễ tới endpoint
-        if provider == "google":
+        if provider in ("google", "gemini"):
             from langchain_google_genai import ChatGoogleGenerativeAI
-            key = settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
             # Google GenAI yêu cầu deadline tối thiểu 10s -> sử dụng timeout 15.0s
-            llm = ChatGoogleGenerativeAI(model=model_id, google_api_key=key, timeout=15.0)
-            # Thử ping nhẹ với lời gọi test
+            llm = ChatGoogleGenerativeAI(model=model_id, google_api_key=effective_key, timeout=15.0)
             await llm.ainvoke("ping")
         elif provider == "openai":
             from langchain_openai import ChatOpenAI
-            key = settings.OPENAI_API_KEY or os.getenv("OPENAI_API_KEY")
-            llm = ChatOpenAI(model=model_id, api_key=key, timeout=15.0)
+            llm = ChatOpenAI(model=model_id, api_key=effective_key, timeout=15.0)
             await llm.ainvoke("ping")
+        elif provider == "ollama":
+            import httpx
+            endpoint = (effective_key or "http://localhost:11434").rstrip("/") + "/api/tags"
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(endpoint)
+                if resp.status_code != 200:
+                    raise ValueError(f"Ollama trả về HTTP {resp.status_code}")
         else:
-            # Mô phỏng kiểm tra kết nối hợp lệ
             time.sleep(0.05)
 
         latency_ms = max(1, int((time.perf_counter() - start_time) * 1000))
     except Exception as exc:
-        # Nếu gặp lỗi mạng / quota / timeout từ API ngoài
-        err_msg = str(exc)
-        # Nếu lỗi chỉ là timeout/network từ cloud, ghi nhận degraded hoặc báo lỗi 502
+        from src.services.credential_service import redact_secrets_from_text
+        err_msg = redact_secrets_from_text(str(exc))
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Lỗi kết nối tới nhà cung cấp {provider}: {err_msg}"

@@ -226,7 +226,9 @@ async def stream_message_endpoint(
                 prompt=prompt_text,
                 history=context_msgs,
                 model_override=selected_model,
-                attachments=attachment_records if attachment_records else None
+                attachments=attachment_records if attachment_records else None,
+                user_id=current_user["id"],
+                conversation_id=conversation_id
             ):
 
                 if event.get("status") == "streaming":

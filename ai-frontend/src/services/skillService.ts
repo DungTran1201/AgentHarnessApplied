@@ -6,6 +6,14 @@ import {
   SkillUpdateRequest,
   SkillValidationReport,
   FileTreeItem,
+  ExternalCatalogProvider,
+  ExternalSkillSummary,
+  ExternalCatalogSearchResponse,
+  ExternalSkillDetail,
+  ExternalSkillImportRequest,
+  ExternalSkillImportResponse,
+  ExternalSkillConflictDetail,
+  SkillProvenance,
 } from '@/types';
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || '/api/v1';
@@ -190,6 +198,35 @@ export class SkillService {
   }
 
   /**
+   * Import skill from text payload after preview confirmation.
+   */
+  static async importSkillText(payload: {
+    filename: string;
+    content: string;
+    name?: string;
+    description?: string;
+    action?: 'ACTIVATE' | 'SAVE_DRAFT';
+    license?: string;
+    compatibility?: string;
+    allowed_tools?: string;
+    metadata?: Record<string, string>;
+  }): Promise<SkillDetail> {
+    const res = await fetch(`${BASE_URL}/skills/import-text`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      const msg = typeof err.detail === 'object' ? err.detail.message : (err.detail || err.message);
+      throw new Error(msg || 'Failed to import skill.');
+    }
+
+    return res.json();
+  }
+
+  /**
    * Get download URL for a skill .zip archive.
    */
   static getExportUrl(id: string): string {
@@ -256,6 +293,129 @@ export class SkillService {
       throw new Error(msg || 'Failed to delete resource file.');
     }
 
+    return res.json();
+  }
+
+  // ==============================================================================
+  // External Skills Catalog Methods (Awesome Skills Integration)
+  // ==============================================================================
+
+  /**
+   * Get external catalog providers and their connectivity status.
+   */
+  static async getExternalProviders(): Promise<ExternalCatalogProvider[]> {
+    const res = await fetch(`${BASE_URL}/skills/external/providers`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || 'Failed to fetch external providers.');
+    }
+    return res.json();
+  }
+
+  /**
+   * Search and paginate skills from the external catalog.
+   */
+  static async searchExternalSkills(params: {
+    q?: string;
+    category?: string;
+    risk?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<ExternalCatalogSearchResponse> {
+    const searchParams = new URLSearchParams();
+    if (params.q?.trim()) searchParams.append('q', params.q.trim());
+    if (params.category?.trim()) searchParams.append('category', params.category.trim());
+    if (params.risk?.trim()) searchParams.append('risk', params.risk.trim());
+    if (params.page) searchParams.append('page', String(params.page));
+    if (params.limit) searchParams.append('limit', String(params.limit));
+
+    const res = await fetch(`${BASE_URL}/skills/external/awesome/skills?${searchParams.toString()}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      const msg = typeof err.detail === 'object' ? err.detail.message : (err.detail || err.message);
+      throw new Error(msg || 'Failed to search external skills.');
+    }
+    return res.json();
+  }
+
+  /**
+   * Fetch detail and preview of an external skill.
+   */
+  static async getExternalSkillDetail(sourceSkillId: string): Promise<ExternalSkillDetail> {
+    const res = await fetch(`${BASE_URL}/skills/external/awesome/skills/${encodeURIComponent(sourceSkillId)}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      const msg = typeof err.detail === 'object' ? err.detail.message : (err.detail || err.message);
+      throw new Error(msg || 'Failed to fetch external skill details.');
+    }
+    return res.json();
+  }
+
+  /**
+   * Import an external skill into user's local library with duplicate conflict handling.
+   */
+  static async importExternalSkill(
+    sourceSkillId: string,
+    payload?: ExternalSkillImportRequest
+  ): Promise<ExternalSkillImportResponse> {
+    const res = await fetch(`${BASE_URL}/skills/external/awesome/skills/${encodeURIComponent(sourceSkillId)}/import`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload || {}),
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({ detail: res.statusText }));
+      if (res.status === 409 && typeof errData.detail === 'object') {
+        const conflictErr = new Error(errData.detail.message || 'Skill import conflict');
+        (conflictErr as any).conflict = errData.detail as ExternalSkillConflictDetail;
+        throw conflictErr;
+      }
+      const msg = typeof errData.detail === 'object' ? errData.detail.message : (errData.detail || errData.message);
+      throw new Error(msg || 'Failed to import external skill.');
+    }
+
+    return res.json();
+  }
+
+  /**
+   * Force refresh external catalog cache from source repository.
+   */
+  static async refreshExternalCatalog(): Promise<{ refreshed: boolean; total_skills: number; is_stale: boolean; last_synced_at?: string }> {
+    const res = await fetch(`${BASE_URL}/skills/external/awesome/refresh`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      const msg = typeof err.detail === 'object' ? err.detail.message : (err.detail || err.message);
+      throw new Error(msg || 'Failed to refresh external catalog.');
+    }
+    return res.json();
+  }
+
+  /**
+   * Get provenance information for a local skill.
+   */
+  static async getSkillProvenance(id: string): Promise<SkillProvenance> {
+    const res = await fetch(`${BASE_URL}/skills/${encodeURIComponent(id)}/source`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      const msg = typeof err.detail === 'object' ? err.detail.message : (err.detail || err.message);
+      throw new Error(msg || 'Failed to fetch skill provenance.');
+    }
     return res.json();
   }
 }

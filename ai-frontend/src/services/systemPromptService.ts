@@ -137,4 +137,28 @@ export class SystemPromptService {
 
     return res.json();
   }
+
+  /**
+   * Import system prompt from text payload after preview confirmation.
+   */
+  static async importPromptText(payload: {
+    filename: string;
+    content: string;
+    name?: string;
+    description?: string;
+  }): Promise<SystemPromptDetail> {
+    const res = await fetch(`${BASE_URL}/system-prompts/import-text`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      const msg = typeof err.detail === 'object' ? err.detail.message : (err.detail || err.message);
+      throw new Error(msg || 'Failed to import system prompt.');
+    }
+
+    return res.json();
+  }
 }

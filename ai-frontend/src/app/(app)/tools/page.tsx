@@ -318,7 +318,7 @@ export default function ToolLibraryPage() {
                 key={cat.id}
                 role="tab"
                 aria-selected={categoryFilter === cat.id}
-                className={`segmented-control-item ${categoryFilter === cat.id ? 'active' : ''}`}
+                className={`segmented-item ${categoryFilter === cat.id ? 'active' : ''}`}
                 onClick={() => setCategoryFilter(cat.id)}
               >
                 {cat.label}
@@ -327,12 +327,24 @@ export default function ToolLibraryPage() {
           </div>
 
           {/* Search & Status Filters */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <div className="search-input-wrapper" style={{ width: '240px' }}>
-              <Icon name="search" size={14} className="search-icon" />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', flexWrap: 'wrap' }}>
+            <div style={{ position: 'relative', width: '260px' }}>
+              <span
+                style={{
+                  position: 'absolute',
+                  left: '10px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  color: 'var(--text-muted)',
+                  display: 'flex',
+                }}
+              >
+                <Icon name="search" size={14} />
+              </span>
               <input
-                type="text"
-                className="input search-input"
+                type="search"
+                className="input"
+                style={{ paddingLeft: '32px', height: '34px', fontSize: '0.8125rem' }}
                 placeholder="Search tools, tags, IDs..."
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
@@ -340,8 +352,19 @@ export default function ToolLibraryPage() {
               {searchQuery && (
                 <button
                   type="button"
-                  className="search-clear-btn"
                   onClick={() => setSearchQuery('')}
+                  style={{
+                    position: 'absolute',
+                    right: '8px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'transparent',
+                    border: 'none',
+                    color: 'var(--text-muted)',
+                    cursor: 'pointer',
+                    padding: '2px',
+                    display: 'flex',
+                  }}
                   aria-label="Clear search"
                 >
                   <Icon name="close" size={12} />
@@ -350,10 +373,10 @@ export default function ToolLibraryPage() {
             </div>
 
             <select
-              className="input select"
+              className="select"
               value={statusFilter}
               onChange={e => setStatusFilter(e.target.value)}
-              style={{ width: '160px', height: '36px', fontSize: '0.8125rem' }}
+              style={{ height: '34px', padding: '0 0.5rem', fontSize: '0.8125rem', width: 'auto' }}
             >
               <option value="ALL">All Statuses</option>
               <option value="AVAILABLE">Available</option>

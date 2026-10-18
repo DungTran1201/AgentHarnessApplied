@@ -108,9 +108,10 @@ def validate_project_graph(graph_data: Dict[str, Any], user_id: Optional[str] = 
 
     skill_nodes = node_by_type.get("skill", [])
     tool_nodes = node_by_type.get("tool", [])
+    rule_nodes = node_by_type.get("rule", [])
 
     # Kiểm tra loại node không hợp lệ
-    valid_types = {"web_input", "model", "output", "system_prompt", "bot", "skill", "tool"}
+    valid_types = {"web_input", "model", "output", "system_prompt", "bot", "skill", "tool", "rule"}
     for ntype in node_by_type.keys():
         if ntype not in valid_types:
             errors.append(f"Phát hiện loại node không được hỗ trợ: '{ntype}'.")
@@ -134,7 +135,7 @@ def validate_project_graph(graph_data: Dict[str, Any], user_id: Optional[str] = 
     # 2. Kiểm tra các Edge và ràng buộc kết nối
     has_prompt = prompt_node is not None
     has_bot = bot_node is not None
-    expected_edge_count = 2 + (1 if has_prompt else 0) + (1 if has_bot else 0) + len(skill_nodes) + len(tool_nodes)
+    expected_edge_count = 2 + (1 if has_prompt else 0) + (1 if has_bot else 0) + len(skill_nodes) + len(tool_nodes) + len(rule_nodes)
     if len(edges) != expected_edge_count:
         errors.append(f"Graph yêu cầu chính xác {expected_edge_count} cạnh kết nối hợp lệ (hiện tại có {len(edges)} cạnh).")
 
@@ -149,6 +150,7 @@ def validate_project_graph(graph_data: Dict[str, Any], user_id: Optional[str] = 
     model_to_bot_edge = False
     connected_skill_ids: List[str] = []
     connected_tool_ids: List[str] = []
+    connected_rule_ids: List[str] = []
 
     if input_node and model_node and output_node:
         in_id = input_node.get("id")
@@ -158,6 +160,7 @@ def validate_project_graph(graph_data: Dict[str, Any], user_id: Optional[str] = 
         bot_id_node = bot_node.get("id") if bot_node else None
         skill_id_nodes = {s.get("id"): s for s in skill_nodes if s.get("id")}
         tool_id_nodes = {t.get("id"): t for t in tool_nodes if t.get("id")}
+        rule_id_nodes = {r.get("id"): r for r in rule_nodes if r.get("id")}
 
         for e in edges:
             src = e.get("source")
@@ -180,6 +183,14 @@ def validate_project_graph(graph_data: Dict[str, Any], user_id: Optional[str] = 
                 connected_skill_ids.append(tgt)
             elif src == model_id_node and tgt in tool_id_nodes:
                 connected_tool_ids.append(tgt)
+            elif src in rule_id_nodes and tgt == model_id_node:
+                connected_rule_ids.append(src)
+            elif src == model_id_node and tgt in rule_id_nodes:
+                errors.append("Invalid reverse connection: Model cannot connect to Rule. Direction must be Rule -> Model.")
+            elif src in rule_id_nodes and tgt in rule_id_nodes:
+                errors.append("Invalid connection: Rule cannot connect to another Rule.")
+            elif src in rule_id_nodes and tgt != model_id_node:
+                errors.append("Invalid connection: Rule can only connect to Model Node.")
             elif src == bot_id_node and tgt == model_id_node:
                 errors.append("Invalid reverse connection: Bot cannot connect to Model. Direction must be Model -> Bot.")
             elif tgt == model_id_node and src in skill_id_nodes:
@@ -211,6 +222,9 @@ def validate_project_graph(graph_data: Dict[str, Any], user_id: Optional[str] = 
         for tid, tnode in tool_id_nodes.items():
             if tid not in connected_tool_ids:
                 errors.append(f"Tool Node '{tnode.get('data', {}).get('label', tid)}' chưa được kết nối từ Model Node.")
+        for rid, rnode in rule_id_nodes.items():
+            if rid not in connected_rule_ids:
+                errors.append(f"Rule Node '{rnode.get('data', {}).get('label', rid)}' chưa được kết nối vào Model Node.")
 
     # 3. Kiểm tra System Prompt Node cấu hình & tồn tại trong DB
     target_prompt_id = None
@@ -306,6 +320,36 @@ def validate_project_graph(graph_data: Dict[str, Any], user_id: Optional[str] = 
         else:
             valid_tool_ids.append(ref_tool_id)
 
+    # 3.4 Kiểm tra Rule Nodes cấu hình & tồn tại trong DB
+    valid_rule_ids: List[str] = []
+    seen_rule_ids: set = set()
+    for r_node in rule_nodes:
+        r_cfg = r_node.get("data", {}).get("config", {})
+        ref_rule_id = r_cfg.get("rule_id")
+        if not ref_rule_id:
+            errors.append("Rule Node chưa được gắn rule_id hợp lệ.")
+            continue
+        if ref_rule_id in seen_rule_ids:
+            errors.append(f"Phát hiện quy tắc trùng lặp '{ref_rule_id}' được liên kết nhiều lần vào cùng một Model.")
+        seen_rule_ids.add(ref_rule_id)
+
+        if user_id and user_id != 'guest_user':
+            r_rec = query_one(
+                "SELECT id, name, status, scope FROM rules WHERE id = ? AND (user_id = ? OR scope = 'system') AND deleted_at IS NULL",
+                (ref_rule_id, user_id)
+            )
+        else:
+            r_rec = query_one(
+                "SELECT id, name, status, scope FROM rules WHERE id = ? AND deleted_at IS NULL",
+                (ref_rule_id,)
+            )
+        if not r_rec:
+            errors.append(f"Quy tắc tham chiếu '{ref_rule_id}' không tồn tại hoặc đã bị xóa khỏi thư viện.")
+        elif r_rec.get("status") != "active":
+            errors.append(f"Quy tắc '{r_rec.get('name', ref_rule_id)}' hiện không hoạt động (status: {r_rec.get('status')}).")
+        else:
+            valid_rule_ids.append(ref_rule_id)
+
     # 4. Kiểm tra cấu hình Web Input Node
     max_words = 500
     if input_node:
@@ -333,8 +377,8 @@ def validate_project_graph(graph_data: Dict[str, Any], user_id: Optional[str] = 
                     errors.append(f"Mô hình AI '{model_rec.get('name')}' hiện đang tạm ngừng hoạt động (status: {model_rec.get('status')}).")
                 
                 provider = model_rec.get("provider", "")
-                if not check_provider_api_key(provider):
-                    errors.append(f"Nhà cung cấp '{provider}' của mô hình '{model_rec.get('name')}' chưa được cấu hình API Key trên server.")
+                if not check_provider_api_key(provider, user_id=user_id):
+                    errors.append(f"Nhà cung cấp '{provider}' của mô hình '{model_rec.get('name')}' chưa được cấu hình API Key.")
 
                 # Kiểm tra tham số temperature và max_tokens
                 temp = cfg.get("temperature", 0.7)
@@ -362,7 +406,8 @@ def validate_project_graph(graph_data: Dict[str, Any], user_id: Optional[str] = 
         "prompt_id": target_prompt_id,
         "bot_id": target_bot_id if bot_nodes else None,
         "skill_ids": valid_skill_ids,
-        "tool_ids": valid_tool_ids
+        "tool_ids": valid_tool_ids,
+        "rule_ids": valid_rule_ids
     }
 
 # ==============================================================================
@@ -660,6 +705,11 @@ async def save_project_graph(
                 is_enabled=t_cfg.get("is_enabled", True),
                 custom_timeout_seconds=t_cfg.get("custom_timeout_seconds")
             )
+
+        # Synchronize linked rules with project_rules table
+        rule_ids = val_result.get("rule_ids", [])
+        from src.services.rule_service import RuleService
+        RuleService.sync_project_rules(user_id=user_id, project_id=project_id, rule_ids=rule_ids)
     else:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -852,13 +902,15 @@ async def chat_through_project(
             }
         )
 
-    # 2.5. Phân giải System Prompt, Bot, Skills và Tools liên kết nếu có trong graph (DEC-SPN-01, DEC-SPN-03, DEC-SPN-04)
+    # 2.5. Phân giải System Prompt, Bot, Skills, Tools và Rules liên kết nếu có trong graph (DEC-SPN-01, DEC-SPN-03, DEC-SPN-04)
     system_prompt_instruction: Optional[str] = None
     connected_bot_info: Optional[Dict[str, Any]] = None
     connected_skills_info: List[Dict[str, Any]] = []
     connected_tools_info: List[Dict[str, Any]] = []
+    connected_rules_info: List[Dict[str, Any]] = []
     connected_tool_definitions: List[Dict[str, Any]] = []
     skill_instructions: List[str] = []
+    rule_instructions: List[str] = []
 
     if proj.get("graph_data"):
         try:
@@ -1073,13 +1125,101 @@ async def chat_through_project(
                         "output_schema": json.loads(t_rec.get("output_schema") or "{}"),
                         "timeout_seconds": timeout_sec
                     })
+
+            # Phân giải Rules liên kết (Rule -> Model)
+            rule_nodes = [n for n in g_nodes if n.get("type") == "rule"]
+            if rule_nodes and m_node_id:
+                seen_rules: set = set()
+                active_rules: List[Dict[str, Any]] = []
+                for r_node in rule_nodes:
+                    r_node_id = r_node.get("id")
+                    is_rule_connected = any(
+                        e.get("source") == r_node_id and e.get("target") == m_node_id
+                        for e in g_edges
+                    )
+                    if not is_rule_connected:
+                        continue
+                    r_cfg = r_node.get("data", {}).get("config", {})
+                    ref_rule_id = r_cfg.get("rule_id")
+                    if not ref_rule_id or ref_rule_id in seen_rules:
+                        continue
+                    seen_rules.add(ref_rule_id)
+
+                    if user_id and user_id != 'guest_user':
+                        rule_rec = query_one(
+                            "SELECT id, name, description, content, priority, status, scope FROM rules WHERE id = ? AND (user_id = ? OR scope = 'system') AND deleted_at IS NULL",
+                            (ref_rule_id, user_id)
+                        )
+                    else:
+                        rule_rec = query_one(
+                            "SELECT id, name, description, content, priority, status, scope FROM rules WHERE id = ? AND deleted_at IS NULL",
+                            (ref_rule_id,)
+                        )
+
+                    if not rule_rec:
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail={
+                                "error_code": "RULE_UNAVAILABLE",
+                                "message": f"Quy tắc liên kết '{ref_rule_id}' không tồn tại hoặc đã bị xóa khỏi thư viện."
+                            }
+                        )
+                    if rule_rec.get("status") != "active":
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail={
+                                "error_code": "RULE_DISABLED",
+                                "message": f"Quy tắc liên kết '{rule_rec.get('name', ref_rule_id)}' hiện không ở trạng thái kích hoạt (status: {rule_rec.get('status')})."
+                            }
+                        )
+                    active_rules.append(rule_rec)
+
+                # Sắp xếp xác định (deterministic ordering): priority DESC, name ASC, id ASC
+                active_rules.sort(key=lambda r: (-r.get("priority", 50), (r.get("name") or "").lower(), r.get("id") or ""))
+
+                for r in active_rules:
+                    rule_instructions.append(f"### Rule: {r['name']}\n{r['content']}")
+                    connected_rules_info.append({
+                        "id": r["id"],
+                        "name": r["name"],
+                        "scope": r.get("scope", "user"),
+                        "priority": r.get("priority", 50),
+                        "status": r.get("status", "active")
+                    })
         except HTTPException:
             raise
         except Exception as e:
             pass
 
-    # Kết hợp chỉ dẫn: System Prompt + Skills (deterministic)
+    # Fallback to bound rules if graph has no rule nodes connected
+    if not connected_rules_info:
+        bound_rules = query_all(
+            """
+            SELECT r.id, r.name, r.description, r.content, r.priority, r.status, r.scope
+            FROM project_rules pr
+            JOIN rules r ON pr.rule_id = r.id
+            WHERE pr.project_id = ? AND pr.is_enabled = 1 AND r.deleted_at IS NULL AND r.status = 'active'
+            """,
+            (project_id,)
+        )
+        if bound_rules:
+            bound_rules.sort(key=lambda r: (-r.get("priority", 50), (r.get("name") or "").lower(), r.get("id") or ""))
+            for r in bound_rules:
+                rule_instructions.append(f"### Rule: {r['name']}\n{r['content']}")
+                connected_rules_info.append({
+                    "id": r["id"],
+                    "name": r["name"],
+                    "scope": r.get("scope", "user"),
+                    "priority": r.get("priority", 50),
+                    "status": r.get("status", "active")
+                })
+
+    # Kết hợp chỉ dẫn: System Prompt + Rules + Skills + Tools (deterministic)
     combined_instruction = system_prompt_instruction or ""
+    if rule_instructions:
+        rules_block = "\n\n--- ACTIVE ENGINEERING RULES ---\n" + "\n\n".join(rule_instructions) + "\n--- END ACTIVE ENGINEERING RULES ---"
+        combined_instruction = (combined_instruction + rules_block).strip()
+
     if skill_instructions:
         skills_block = "\n\n--- ACTIVE SKILLS INSTRUCTIONS ---\n" + "\n\n".join(skill_instructions) + "\n--- END SKILLS INSTRUCTIONS ---"
         combined_instruction = (combined_instruction + skills_block).strip()
@@ -1219,6 +1359,7 @@ async def chat_through_project(
             connected_bot_info=connected_bot_info,
             connected_skills_info=connected_skills_info,
             connected_tools_info=connected_tools_info,
+            connected_rules_info=connected_rules_info if connected_rules_info else None,
             actual_words=actual_words,
         )
     except RuntimeError as re_err:
@@ -1354,4 +1495,50 @@ async def cancel_project_chat(
         "success": success,
         "message": "Đã hủy lượt sinh thành công." if success else "Không có lượt sinh nào đang chạy để hủy."
     }
+
+
+class ProjectBotBindingPayload(BaseModel):
+    bot_id: Optional[str] = Field(default=None, description="ID của Discord Bot muốn liên kết, hoặc null để gỡ liên kết")
+
+
+@projects_router.put("/{project_id}/bot", summary="Liên kết hoặc gỡ liên kết Discord Bot cho Project (1:1 constraint)")
+async def bind_bot_to_project(
+    project_id: str,
+    payload: ProjectBotBindingPayload,
+    current_user: dict = Depends(get_current_user)
+):
+    """Liên kết Discord Bot với Project hoặc gỡ bỏ liên kết, đảm bảo quan hệ 1:1 nghiêm ngặt."""
+    user_id = current_user["id"]
+    proj = query_one(
+        "SELECT id, name FROM projects WHERE id = ? AND user_id = ? AND status != 'DELETED'",
+        (project_id, user_id)
+    )
+    if not proj:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Project '{project_id}' không tồn tại hoặc bạn không có quyền truy cập."
+        )
+
+    from src.services.bot_service import BotService
+    if payload.bot_id:
+        res = BotService.link_project(user_id, payload.bot_id, project_id)
+        return {
+            "success": True,
+            "project_id": project_id,
+            "bot_id": payload.bot_id,
+            "bot_name": res.name,
+            "message": f"Đã liên kết Bot '{res.name}' với Project '{proj['name']}' thành công."
+        }
+    else:
+        execute_commit(
+            "UPDATE discord_bot_configs SET project_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE project_id = ? AND user_id = ?",
+            (project_id, user_id)
+        )
+        return {
+            "success": True,
+            "project_id": project_id,
+            "bot_id": None,
+            "message": f"Đã gỡ liên kết Discord Bot khỏi Project '{proj['name']}'."
+        }
+
 

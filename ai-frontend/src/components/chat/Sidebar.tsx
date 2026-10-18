@@ -37,6 +37,7 @@ export const NAV_ITEMS: { key: string; label: string; icon: IconName; href: stri
   { key: 'prompts',     label: 'System Prompts',  icon: 'prompts',   href: '/prompts' },
   { key: 'skills',      label: 'Skills',          icon: 'skills',    href: '/skills' },
   { key: 'tools',       label: 'Tools',           icon: 'tools',     href: '/tools' },
+  { key: 'rules',       label: 'Rules',           icon: 'rules',     href: '/rules' },
   { key: 'dashboard',   label: 'Dashboard',       icon: 'dashboard', href: '/dashboard' },
   { key: 'settings',    label: 'Settings',        icon: 'settings',  href: '/settings' },
 ];

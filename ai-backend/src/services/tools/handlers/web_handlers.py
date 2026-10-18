@@ -207,6 +207,14 @@ async def handle_web_search(
 
     provider_clean = (provider or "duckduckgo").lower().strip()
 
+    # If key is not directly provided in tool invocation, resolve from CredentialService / env
+    if not api_key:
+        try:
+            from src.services.credential_service import CredentialService
+            api_key = CredentialService.get_effective_key(None, provider_clean)
+        except Exception:
+            pass
+
     # If Brave / Google / Bing requires API key
     if provider_clean in ("brave", "serpapi", "google", "bing") and not api_key:
         raise ValueError(

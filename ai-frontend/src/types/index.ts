@@ -191,7 +191,7 @@ export interface DiscordBotTestDispatchResponse {
 
 export type ProjectStatus = 'ACTIVE' | 'STOP' | 'DEACTIVE' | 'DELETED';
 
-export type NodeType = 'web_input' | 'system_prompt' | 'model' | 'output' | 'bot' | 'skill' | 'tool';
+export type NodeType = 'web_input' | 'system_prompt' | 'model' | 'output' | 'bot' | 'skill' | 'tool' | 'rule';
 
 export interface WebInputConfig {
   max_words: number;
@@ -242,6 +242,18 @@ export interface ToolNodeConfig {
   is_enabled?: boolean;
 }
 
+export interface RuleNodeConfig {
+  rule_id: string;
+  name?: string;
+  description?: string | null;
+  scope?: string;
+  status?: string;
+  priority?: number;
+  activation_mode?: string;
+  glob_patterns?: string[];
+  tags?: string[];
+}
+
 export interface AvailableBotItem {
   id: string;
   name: string;
@@ -273,6 +285,86 @@ export interface ManagedBotItem {
   trigger_mode: string;
   avatar?: string;
 }
+
+export type BotStatus =
+  | 'NOT_CONFIGURED'
+  | 'DISCONNECTED'
+  | 'CONNECTING'
+  | 'CONNECTED'
+  | 'DEGRADED'
+  | 'INVALID_CREDENTIALS'
+  | 'ERROR';
+
+export interface BotEntity {
+  id: string;
+  user_id: string;
+  name: string;
+  alias: string;
+  token_configured: boolean;
+  token_last4?: string | null;
+  status: BotStatus | string;
+  scope: string;
+  guild_id?: string | null;
+  guild_name?: string | null;
+  channel_id?: string | null;
+  active_model_id?: string | null;
+  project_id?: string | null;
+  project_name?: string | null;
+  trigger_mode: 'MENTION' | 'PREFIX' | 'SLASH_COMMAND' | string;
+  custom_prefix: string;
+  system_prompt: string;
+  max_tokens_per_response: number;
+  is_enabled: boolean;
+  sync_to_web: boolean;
+  last_connected_at?: string | null;
+  last_error_code?: string | null;
+  last_error_summary?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface CreateBotData {
+  name: string;
+  alias: string;
+  token: string;
+  guild_id?: string;
+  guild_name?: string;
+  channel_id?: string;
+  project_id?: string | null;
+  trigger_mode?: 'MENTION' | 'PREFIX' | 'SLASH_COMMAND';
+  custom_prefix?: string;
+  system_prompt?: string;
+  max_tokens_per_response?: number;
+  is_enabled?: boolean;
+  sync_to_web?: boolean;
+}
+
+export interface UpdateBotData {
+  name?: string;
+  alias?: string;
+  token?: string;
+  guild_id?: string;
+  guild_name?: string;
+  channel_id?: string;
+  project_id?: string | null;
+  active_model_id?: string;
+  trigger_mode?: 'MENTION' | 'PREFIX' | 'SLASH_COMMAND';
+  custom_prefix?: string;
+  system_prompt?: string;
+  max_tokens_per_response?: number;
+  is_enabled?: boolean;
+  sync_to_web?: boolean;
+}
+
+export interface TestBotConnectionResponse {
+  success: boolean;
+  status: string;
+  bot_username?: string | null;
+  bot_id?: string | null;
+  message: string;
+  error_code?: string | null;
+}
+
 
 export interface BotProjectBinding {
   is_bound: boolean;
@@ -322,7 +414,7 @@ export interface GraphNode {
   position?: { x: number; y: number };
   data: {
     label: string;
-    config: WebInputConfig | SystemPromptNodeConfig | ModelNodeConfig | OutputNodeConfig | BotNodeConfig | SkillNodeConfig | ToolNodeConfig | any;
+    config: WebInputConfig | SystemPromptNodeConfig | ModelNodeConfig | OutputNodeConfig | BotNodeConfig | SkillNodeConfig | ToolNodeConfig | RuleNodeConfig | any;
   };
 }
 
@@ -459,6 +551,17 @@ export interface SkillSummary {
   is_valid: boolean;
   created_at: string;
   updated_at: string;
+  source_provider?: string | null;
+  source_repository_url?: string | null;
+  source_skill_id?: string | null;
+  source_path?: string | null;
+  source_version?: string | null;
+  source_content_hash?: string | null;
+  source_license?: string | null;
+  attribution?: string | null;
+  imported_at?: string | null;
+  source_updated_at?: string | null;
+  source_status?: string | null;
 }
 
 export type Skill = SkillSummary;
@@ -483,6 +586,17 @@ export interface SkillDetail {
   attachments?: AttachmentItem[];
   created_at: string;
   updated_at: string;
+  source_provider?: string | null;
+  source_repository_url?: string | null;
+  source_skill_id?: string | null;
+  source_path?: string | null;
+  source_version?: string | null;
+  source_content_hash?: string | null;
+  source_license?: string | null;
+  attribution?: string | null;
+  imported_at?: string | null;
+  source_updated_at?: string | null;
+  source_status?: string | null;
 }
 
 export interface SkillListResponse {
@@ -516,5 +630,128 @@ export interface SkillUpdateRequest {
   expected_updated_at?: string | null;
 }
 
+// ==============================================================================
+// External Skills Catalog Types (Awesome Skills Integration)
+// ==============================================================================
+
+export interface ExternalCatalogProvider {
+  id: string;
+  name: string;
+  canonical_url: string;
+  redirected_from?: string | null;
+  status: string;
+  total_skills: number;
+  last_synced_at?: string | null;
+  is_stale: boolean;
+  license_policy: string;
+  attribution_requirement: string;
+}
+
+export interface ExternalSkillSummary {
+  id: string;
+  path: string;
+  category?: string | null;
+  name: string;
+  description?: string | null;
+  risk?: string | null;
+  source?: string | null;
+  date_added?: string | null;
+  plugin?: Record<string, any> | null;
+}
+
+export interface ExternalSkillCategory {
+  name: string;
+  count: number;
+}
+
+export interface ExternalCatalogSearchResponse {
+  items: ExternalSkillSummary[];
+  total: number;
+  page: number;
+  limit: number;
+  total_pages: number;
+  categories: ExternalSkillCategory[];
+  is_stale: boolean;
+  last_synced_at?: string | null;
+}
+
+export interface SecurityAssessment {
+  risk_level: 'SAFE' | 'MEDIUM' | 'HIGH';
+  warnings: string[];
+  is_safe_to_preview: boolean;
+  has_prompt_injection_warning: boolean;
+}
+
+export interface ExternalSkillDetail {
+  source_provider: string;
+  source_repository_url: string;
+  source_skill_id: string;
+  source_path: string;
+  source_version: string;
+  source_content_hash: string;
+  source_license: string;
+  attribution: string;
+  name: string;
+  description: string;
+  category: string;
+  risk: string;
+  date_added?: string | null;
+  plugin?: Record<string, any> | null;
+  raw_content: string;
+  frontmatter: string;
+  markdown_body: string;
+  security_assessment: SecurityAssessment;
+  is_imported: boolean;
+  local_skill_id?: string | null;
+  local_skill_name?: string | null;
+}
+
+export interface ExternalSkillImportRequest {
+  conflict_action?: 'RENAME' | 'REPLACE' | 'SKIP' | null;
+  target_name?: string | null;
+}
+
+export interface ExternalSkillImportResponse {
+  imported: boolean;
+  status: 'CREATED' | 'REPLACED' | 'SKIPPED';
+  message: string;
+  skill_id?: string | null;
+  name?: string | null;
+  is_valid?: boolean | null;
+  validation_report?: Record<string, any> | null;
+}
+
+export interface ExternalSkillConflictDetail {
+  code: string;
+  message: string;
+  conflict_type: 'DUPLICATE_SOURCE' | 'NAME_COLLISION';
+  existing_skill_id: string;
+  existing_skill_name: string;
+  is_locally_modified: boolean;
+  supported_actions: ('RENAME' | 'REPLACE' | 'SKIP')[];
+}
+
+export interface SkillProvenance {
+  skill_id: string;
+  name: string;
+  is_imported: boolean;
+  source_type?: string | null;
+  source_provider?: string | null;
+  source_repository_url?: string | null;
+  source_skill_id?: string | null;
+  source_path?: string | null;
+  source_version?: string | null;
+  source_content_hash?: string | null;
+  current_content_hash?: string | null;
+  is_locally_modified: boolean;
+  source_license?: string | null;
+  attribution?: string | null;
+  imported_at?: string | null;
+  source_updated_at?: string | null;
+  source_status?: string | null;
+}
+
 export * from './tool';
+export * from './rule';
+export * from './apiKey';
 

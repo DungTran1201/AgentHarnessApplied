@@ -9,12 +9,19 @@ import Icon from '@/components/ui/Icon';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import Toast, { ToastMessage } from '@/components/ui/Toast';
 import Pagination from '@/components/ui/Pagination';
+import TextFileImportModal from '@/components/common/TextFileImportModal';
+import ExploreSkillsTab from '@/components/skills/ExploreSkillsTab';
+import SkillProvenanceModal from '@/components/skills/SkillProvenanceModal';
 import { formatErrorMessage } from '@/lib/errors';
 
 export default function SkillsListPage() {
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Top-level Navigation: My Skills vs Explore Skills
+  const [mainTab, setMainTab] = useState<'my_skills' | 'explore_skills'>('my_skills');
+  const [provenanceSkillId, setProvenanceSkillId] = useState<string | null>(null);
 
   // Filters & Search
   const [searchQuery, setSearchQuery] = useState('');
@@ -33,6 +40,7 @@ export default function SkillsListPage() {
   const [skillToDelete, setSkillToDelete] = useState<SkillSummary | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
+  const [showTextImportModal, setShowTextImportModal] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
@@ -147,6 +155,14 @@ export default function SkillsListPage() {
           <button
             type="button"
             className="btn btn-secondary"
+            onClick={() => setShowTextImportModal(true)}
+          >
+            <Icon name="upload" size={14} />
+            <span>Import from file</span>
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
             onClick={() => {
               setImportError(null);
               setImportFile(null);
@@ -162,19 +178,104 @@ export default function SkillsListPage() {
           </Link>
         </PageHeader>
 
-        {/* Stats summary bar */}
+        {/* Top-Level Tab Switcher: My Skills vs Explore Skills */}
         <div
-          className="card"
           style={{
-            marginBottom: '1.5rem',
-            padding: '0.875rem 1.25rem',
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'space-between',
-            flexWrap: 'wrap',
-            gap: '1rem',
+            gap: '1.5rem',
+            borderBottom: '1px solid var(--border-subtle)',
+            marginBottom: '1.5rem',
           }}
         >
+          <button
+            type="button"
+            onClick={() => setMainTab('my_skills')}
+            style={{
+              padding: '0.875rem 0.25rem',
+              fontSize: '0.95rem',
+              fontWeight: 600,
+              background: 'transparent',
+              border: 'none',
+              borderBottom: `2px solid ${mainTab === 'my_skills' ? 'var(--accent, #6366f1)' : 'transparent'}`,
+              color: mainTab === 'my_skills' ? 'var(--text-primary)' : 'var(--text-muted)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <Icon name="skills" size={16} />
+            <span>Thư viện của tôi (My Skills)</span>
+            <span
+              className="badge badge-neutral"
+              style={{ fontSize: '0.7rem' }}
+            >
+              {skills.length}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setMainTab('explore_skills')}
+            style={{
+              padding: '0.875rem 0.25rem',
+              fontSize: '0.95rem',
+              fontWeight: 600,
+              background: 'transparent',
+              border: 'none',
+              borderBottom: `2px solid ${mainTab === 'explore_skills' ? 'var(--accent, #6366f1)' : 'transparent'}`,
+              color: mainTab === 'explore_skills' ? 'var(--text-primary)' : 'var(--text-muted)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <Icon name="sparkles" size={16} style={{ color: '#818cf8' }} />
+            <span>Khám phá Catalog ngoài (Explore Skills)</span>
+            <span
+              className="badge badge-active"
+              style={{
+                fontSize: '0.7rem',
+                background: 'rgba(99, 102, 241, 0.15)',
+                color: '#818cf8',
+              }}
+            >
+              Awesome Skills
+            </span>
+          </button>
+        </div>
+
+        {mainTab === 'explore_skills' ? (
+          <ExploreSkillsTab
+            onImportSuccess={(id, name) => {
+              showToast('success', `Đã nhập thành công kỹ năng "${name}" vào thư viện!`);
+              loadSkills();
+              setMainTab('my_skills');
+            }}
+            onOpenLocalSkill={(id) => {
+              loadSkills();
+              setMainTab('my_skills');
+            }}
+          />
+        ) : (
+          <>
+            {/* Stats summary bar */}
+            <div
+              className="card"
+              style={{
+                marginBottom: '1.5rem',
+                padding: '0.875rem 1.25rem',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: '1rem',
+              }}
+            >
           <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Total Skills:</span>
@@ -417,14 +518,40 @@ export default function SkillsListPage() {
                         >
                           {isValid ? 'Valid' : isDraft ? 'Draft' : 'Invalid'}
                         </span>
-                        {skill.source_type === 'IMPORTED' && (
+                        {skill.source_provider === 'awesome-skills' ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setProvenanceSkillId(skill.id);
+                            }}
+                            title="Xem chi tiết nguồn gốc từ Awesome Skills"
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              padding: '2px 6px',
+                              borderRadius: '4px',
+                              fontSize: '0.65rem',
+                              fontWeight: 600,
+                              border: '1px solid rgba(99, 102, 241, 0.3)',
+                              background: 'rgba(99, 102, 241, 0.1)',
+                              color: '#818cf8',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            <Icon name="sparkles" size={10} />
+                            <span>Awesome Skills</span>
+                          </button>
+                        ) : skill.source_type === 'IMPORTED' ? (
                           <span
                             className="badge badge-neutral"
                             style={{ fontSize: '0.625rem' }}
                           >
                             ZIP
                           </span>
-                        )}
+                        ) : null}
                       </div>
                     </div>
 
@@ -529,6 +656,8 @@ export default function SkillsListPage() {
             itemLabel="skills"
           />
         )}
+          </>
+        )}
       </div>
 
       {/* Import Modal */}
@@ -627,6 +756,18 @@ export default function SkillsListPage() {
         </div>
       )}
 
+      {/* Text File Import Modal */}
+      <TextFileImportModal
+        isOpen={showTextImportModal}
+        target="skills"
+        existingNames={skills.map(s => s.name)}
+        onClose={() => setShowTextImportModal(false)}
+        onSuccess={(imported) => {
+          showToast('success', `Đã nhập thành công kỹ năng "${imported.name}"`);
+          loadSkills();
+        }}
+      />
+
       {/* Delete Confirmation Modal */}
       <ConfirmDialog
         isOpen={Boolean(skillToDelete)}
@@ -645,6 +786,15 @@ export default function SkillsListPage() {
         onConfirm={handleDeleteConfirm}
         onCancel={() => setSkillToDelete(null)}
       />
+
+      {/* Skill Provenance Details Modal */}
+      {provenanceSkillId && (
+        <SkillProvenanceModal
+          skillId={provenanceSkillId}
+          isOpen={Boolean(provenanceSkillId)}
+          onClose={() => setProvenanceSkillId(null)}
+        />
+      )}
     </div>
   );
 }

@@ -74,6 +74,10 @@ class AskCog(commands.Cog, name="AI-Chan AI"):
                 metadata["guild_id"] = str(interaction.guild_id)
             if self.bot.user:
                 metadata["bot_id"] = str(self.bot.user.id)
+            if getattr(self.bot, "bot_config_id", None):
+                metadata["bot_config_id"] = str(self.bot.bot_config_id)
+            if getattr(self.bot, "bot_alias", None):
+                metadata["bot_alias"] = str(self.bot.bot_alias)
 
             req = PromptRequest(
                 prompt=prompt,
@@ -190,6 +194,10 @@ class AskCog(commands.Cog, name="AI-Chan AI"):
                     metadata["guild_id"] = str(message.guild.id)
                 if self.bot.user:
                     metadata["bot_id"] = str(self.bot.user.id)
+                if getattr(self.bot, "bot_config_id", None):
+                    metadata["bot_config_id"] = str(self.bot.bot_config_id)
+                if getattr(self.bot, "bot_alias", None):
+                    metadata["bot_alias"] = str(self.bot.bot_alias)
 
                 req = PromptRequest(
                     prompt=cleaned_prompt,

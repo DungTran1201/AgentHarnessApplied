@@ -203,9 +203,62 @@ def run_migration():
             conn.commit()
             print(f"Applied 016 migration successfully to {db_path.name}.")
 
+        # 15. Apply 017_rules_management_system.sql (Rules, Activation Metadata, Project Bindings)
+        migration_017_file = MIGRATIONS_DIR / "017_rules_management_system.sql"
+        if migration_017_file.exists():
+            print(f"Executing {migration_017_file.name} on {db_path.name}...")
+            with open(migration_017_file, "r", encoding="utf-8") as f:
+                cur.executescript(f.read())
+            conn.commit()
+            print(f"Applied 017 migration successfully to {db_path.name}.")
+
+        # 16. Apply 018_multi_discord_bot_management.sql (Multi-Bot Registry, Encrypted Tokens, Project Binding)
+        migration_018_file = MIGRATIONS_DIR / "018_multi_discord_bot_management.sql"
+        if migration_018_file.exists():
+            print(f"Executing {migration_018_file.name} on {db_path.name}...")
+            with open(migration_018_file, "r", encoding="utf-8") as f:
+                cur.executescript(f.read())
+            conn.commit()
+            print(f"Applied 018 migration successfully to {db_path.name}.")
+
+        # 17. Apply 019_user_api_keys_management.sql (User Personal API Keys Vault)
+        migration_019_file = MIGRATIONS_DIR / "019_user_api_keys_management.sql"
+        if migration_019_file.exists():
+            print(f"Executing {migration_019_file.name} on {db_path.name}...")
+            with open(migration_019_file, "r", encoding="utf-8") as f:
+                cur.executescript(f.read())
+            conn.commit()
+            print(f"Applied 019 migration successfully to {db_path.name}.")
+
+        # 18. Apply 020_external_skills_catalog_provenance.sql (External Skills Catalog Provenance)
+        skill_cols = [c[1] for c in cur.execute("PRAGMA table_info(skills)").fetchall()]
+        skill_columns_to_add = [
+            ("source_provider", "VARCHAR(50)"),
+            ("source_repository_url", "VARCHAR(500)"),
+            ("source_skill_id", "VARCHAR(100)"),
+            ("source_path", "VARCHAR(500)"),
+            ("source_version", "VARCHAR(100)"),
+            ("source_content_hash", "VARCHAR(64)"),
+            ("source_license", "VARCHAR(100)"),
+            ("attribution", "VARCHAR(500)"),
+            ("imported_at", "TIMESTAMP"),
+            ("source_updated_at", "TIMESTAMP"),
+            ("source_status", "VARCHAR(50) DEFAULT 'current'"),
+        ]
+        for col_name, col_def in skill_columns_to_add:
+            if col_name not in skill_cols:
+                print(f"Adding column {col_name} to skills in {db_path.name}...")
+                cur.execute(f"ALTER TABLE skills ADD COLUMN {col_name} {col_def}")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_skills_source_skill_id ON skills(user_id, source_provider, source_skill_id)")
+        conn.commit()
+        print(f"Applied 020 migration successfully to {db_path.name}.")
+
         # Verify active tables
         tables = [r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
         print(f"Tables in {db_path.name}: {tables}")
+        if "user_api_keys" in tables:
+            keys_count = cur.execute("SELECT COUNT(*) FROM user_api_keys").fetchone()[0]
+            print(f"Total user API keys in {db_path.name}: {keys_count}")
         if "api_metric_logs" in tables and "user_quotas" in tables:
             quota_count = cur.execute("SELECT COUNT(*) FROM user_quotas").fetchone()[0]
             print(f"Total user quotas in {db_path.name}: {quota_count}")
@@ -221,6 +274,12 @@ def run_migration():
         if "skills" in tables:
             skill_count = cur.execute("SELECT COUNT(*) FROM skills").fetchone()[0]
             print(f"Total skills in {db_path.name}: {skill_count}")
+        if "rules" in tables:
+            rule_count = cur.execute("SELECT COUNT(*) FROM rules").fetchone()[0]
+            print(f"Total rules in {db_path.name}: {rule_count}")
+        if "project_rules" in tables:
+            pr_count = cur.execute("SELECT COUNT(*) FROM project_rules").fetchone()[0]
+            print(f"Total project rules bindings in {db_path.name}: {pr_count}")
             
         conn.close()
 

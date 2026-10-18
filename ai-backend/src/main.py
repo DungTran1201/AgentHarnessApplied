@@ -41,6 +41,20 @@ async def startup_event():
     except Exception as e:
         print(f"Startup chat reconciliation warning: {e}")
 
+    try:
+        from src.services.bot_service import BotService
+        BotService.bootstrap_legacy_env_bot()
+    except Exception as e:
+        print(f"Legacy Discord Bot bootstrap notice: {e}")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    try:
+        from src.discord_bot.manager import multi_bot_manager
+        await multi_bot_manager.stop_all()
+    except Exception as e:
+        print(f"Shutdown bot cleanup notice: {e}")
+
 from src.api.v1.bot import HealthResponse
 
 @app.get("/")

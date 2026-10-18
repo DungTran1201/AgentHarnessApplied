@@ -5,6 +5,7 @@ import logging
 import signal
 import sys
 from pathlib import Path
+from typing import Optional, Dict, Any, List
 
 import discord
 from discord import app_commands
@@ -20,7 +21,12 @@ logger = logging.getLogger("src.discord_bot.main")
 class AIChanDiscordBot(commands.Bot):
     """Custom Discord Bot client integrating AI-Chan AI orchestration service."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        bot_config_id: Optional[str] = None,
+        bot_alias: Optional[str] = None,
+    ) -> None:
         intents = discord.Intents.default()
         intents.message_content = True
 
@@ -30,6 +36,8 @@ class AIChanDiscordBot(commands.Bot):
             help_command=None,
         )
         self.settings: Settings = settings
+        self.bot_config_id: Optional[str] = bot_config_id
+        self.bot_alias: Optional[str] = bot_alias
 
         # AI-Chan HTTP Service client
         self.aichan_client: AIChanClient = AIChanClient(
@@ -103,6 +111,27 @@ class AIChanDiscordBot(commands.Bot):
         logger.info("Logging Level             : %s", self.settings.LOG_LEVEL)
         logger.info("Backend API Base URL      : %s", self.settings.DISCORD_BOT_API_BASE_URL)
         logger.info("==================================================")
+
+        if self.bot_config_id:
+            try:
+                from src.db import execute_commit
+                app_id = str(user_id) if user_id else None
+                execute_commit(
+                    """
+                    UPDATE discord_bot_configs
+                    SET status = 'CONNECTED',
+                        last_connected_at = CURRENT_TIMESTAMP,
+                        discord_application_id = COALESCE(?, discord_application_id),
+                        client_id = COALESCE(?, client_id),
+                        last_error_code = NULL,
+                        last_error_summary = NULL
+                    WHERE id = ?
+                    """,
+                    (app_id, app_id, self.bot_config_id)
+                )
+                logger.info("Updated status to CONNECTED in database for Bot ID: %s", self.bot_config_id)
+            except Exception as e:
+                logger.warning("Could not sync status for bot %s on ready: %s", self.bot_config_id, e)
 
     async def close(self) -> None:
         """Gracefully shutdown bot, closing HTTP client and Gateway connections."""

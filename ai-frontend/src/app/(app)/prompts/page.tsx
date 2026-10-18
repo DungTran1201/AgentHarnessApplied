@@ -9,6 +9,7 @@ import Icon from '@/components/ui/Icon';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import Toast, { ToastMessage } from '@/components/ui/Toast';
 import Pagination from '@/components/ui/Pagination';
+import TextFileImportModal from '@/components/common/TextFileImportModal';
 import { formatErrorMessage } from '@/lib/errors';
 
 export default function SystemPromptsListPage() {
@@ -26,6 +27,7 @@ export default function SystemPromptsListPage() {
   // Modals & Feedback
   const [promptToDelete, setPromptToDelete] = useState<SystemPromptSummary | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [showTextImportModal, setShowTextImportModal] = useState(false);
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [cloningId, setCloningId] = useState<string | null>(null);
@@ -131,6 +133,14 @@ export default function SystemPromptsListPage() {
           title="System Prompts"
           description="Create, manage, and reuse system instructions across AI models and project workflows."
         >
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => setShowTextImportModal(true)}
+          >
+            <Icon name="upload" size={14} />
+            <span>Import from file</span>
+          </button>
           <Link href="/prompts/new" className="btn btn-primary" style={{ textDecoration: 'none' }}>
             <Icon name="plus" size={14} />
             <span>New System Prompt</span>
@@ -463,6 +473,18 @@ export default function SystemPromptsListPage() {
           />
         )}
       </div>
+
+      {/* Text File Import Modal */}
+      <TextFileImportModal
+        isOpen={showTextImportModal}
+        target="prompts"
+        existingNames={prompts.map(p => p.name)}
+        onClose={() => setShowTextImportModal(false)}
+        onSuccess={(imported) => {
+          showToast('success', `Đã nhập thành công System Prompt "${imported.name}"`);
+          loadPrompts();
+        }}
+      />
 
       {/* Delete Confirmation Modal */}
       <ConfirmDialog

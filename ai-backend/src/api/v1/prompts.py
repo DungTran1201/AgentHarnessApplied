@@ -1,11 +1,15 @@
 import uuid
 import logging
 from typing import Optional, List, Dict, Any
-from fastapi import APIRouter, HTTPException, status, Depends, Query, Request
+from fastapi import APIRouter, HTTPException, status, Depends, Query, Request, UploadFile, File
 from pydantic import BaseModel, Field, field_validator
 
 from src.db import query_one, query_all, execute_commit
 from src.api.v1.projects import get_optional_current_user
+from src.services.text_import_service import (
+    TextImportService,
+    TextFileImportRequest
+)
 
 logger = logging.getLogger("system_prompts")
 
@@ -246,6 +250,42 @@ async def create_system_prompt(
         created_at=str(row.get("created_at")),
         updated_at=str(row.get("updated_at"))
     )
+
+
+@prompts_router.post("/import-file", response_model=SystemPromptDetailResponse, status_code=status.HTTP_201_CREATED)
+async def import_system_prompt_file(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_optional_current_user)
+):
+    """
+    Nhập System Prompt từ tệp văn bản tải lên từ máy tính cá nhân.
+    """
+    user_id = current_user.get("id", "guest_user")
+    filename = file.filename or "untitled.txt"
+    content_bytes = await file.read()
+    text = TextImportService.validate_and_decode_bytes(filename, content_bytes)
+    res = TextImportService.import_system_prompt(user_id=user_id, filename=filename, content=text)
+    return SystemPromptDetailResponse(**res)
+
+
+@prompts_router.post("/import-text", response_model=SystemPromptDetailResponse, status_code=status.HTTP_201_CREATED)
+async def import_system_prompt_text(
+    req: TextFileImportRequest,
+    current_user: dict = Depends(get_optional_current_user)
+):
+    """
+    Nhập System Prompt từ nội dung văn bản sau khi người dùng đã xem trước và tùy chỉnh.
+    """
+    user_id = current_user.get("id", "guest_user")
+    text = TextImportService.validate_and_decode_bytes(req.filename, req.content.encode("utf-8"))
+    res = TextImportService.import_system_prompt(
+        user_id=user_id,
+        filename=req.filename,
+        content=text,
+        override_name=req.name,
+        override_desc=req.description
+    )
+    return SystemPromptDetailResponse(**res)
 
 
 @prompts_router.get("/{id}", response_model=SystemPromptDetailResponse)
