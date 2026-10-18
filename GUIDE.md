@@ -9,10 +9,10 @@ Welcome to **AI-Chan**! This guide explains how to install, configure, and use A
 1. [About AI-Chan & Local Website Mode](#1-about-ai-chan--local-website-mode)
 2. [Downloading & Installing AI-Chan](#2-downloading--installing-ai-chan)
 3. [First Launch & Initial Setup](#3-first-launch--initial-setup)
-4. [Configuring AI Providers & API Keys](#4-configuring-ai-providers--api-keys)
+4. [Configuring AI Providers & Models](#4-configuring-ai-providers--models)
 5. [Starting, Stopping, & Exiting AI-Chan](#5-starting-stopping--exiting-ai-chan)
-6. [Core Features & How to Use Them](#6-core-features--how-to-use-them)
-   - [Chat & 3D Companion](#chat--3d-companion)
+6. [Core Features & Step-by-Step Workflows](#6-core-features--step-by-step-workflows)
+   - [Interactive Chat Interface](#interactive-chat-interface)
    - [Projects & Visual Node Canvas](#projects--visual-node-canvas)
    - [System Prompts Library](#system-prompts-library)
    - [Agent Skills & External Catalog](#agent-skills--external-catalog)
@@ -35,7 +35,7 @@ AI-Chan is an AI assistant and agent workspace that runs entirely on your own Wi
 Unlike typical cloud-only software or bulky Electron apps, AI-Chan uses a **Local Website Mode**:
 - When you launch AI-Chan, a lightweight supervisor process starts two local services in the background:
   1. The **Backend API service** (handles data, SQLite database, and AI communication).
-  2. The **Frontend Web service** (renders the user interface and 3D companion).
+  2. The **Frontend Web service** (renders the user interface, dashboards, and interactive chat).
 - Once both services are verified healthy, AI-Chan automatically opens the application interface inside your preferred web browser (e.g. Chrome, Edge, Firefox).
 - All services bind strictly to loopback (`127.0.0.1`), meaning they are never exposed to other devices on your local Wi-Fi or local area network.
 - You do **not** need to open a command prompt, install Python, Node.js, or Docker.
@@ -63,30 +63,49 @@ When AI-Chan launches for the first time:
    ```text
    http://127.0.0.1:3000
    ```
-3. You will see the AI-Chan interface with a navigation sidebar on the left and the interactive 3D VRM companion on the right.
+3. You will see the AI-Chan interface with a navigation sidebar on the left and the primary telemetry dashboard or workspace landing view.
+
+![AI-Chan First Launch and Main Dashboard](assets/guide/first-launch.png)
+*Figure 1: The AI-Chan main interface displaying system telemetry, latency tracking, and navigation sidebar.*
+
 4. By default, you can explore the application as a guest or create an account for personalized settings.
+5. Review the sidebar navigation options on the left:
+   - **Chat**: Open conversations and multi-turn discussions.
+   - **Projects**: Build and orchestrate multi-node AI workflows.
+   - **Bot**: Configure Discord bot gateways.
+   - **System Prompts**: Manage persona templates and instructions.
+   - **Skills**: Manage modular agent capability packages.
+   - **Tools**: View sandbox execution capabilities.
+   - **Rules**: Enforce security and architectural standards.
+   - **Dashboard**: Monitor system metrics and token usage.
+   - **Settings**: Configure AI models, API keys, and account preferences.
 
 ---
 
-## 4. Configuring AI Providers & API Keys
+## 4. Configuring AI Providers & Models
 
-To enable chat, agent reasoning, and interactive answers, you need to connect at least one AI provider. AI-Chan supports:
+To enable chat, agent reasoning, and interactive answers, AI-Chan supports both commercial cloud AI providers and local offline models:
 - **Google Gemini** (Recommended for speed and generous free tiers)
 - **OpenAI** (GPT-4o, GPT-4o-mini)
 - **Anthropic** (Claude 3.5 Sonnet, Claude 3.7 Sonnet)
 - **Groq** (High-speed Llama 3 models)
 - **Ollama** (Completely offline, locally-hosted models)
 
-### Adding an API Key:
+### How to Configure AI Models and API Keys:
+
 1. In the left navigation menu, click **Settings**.
-2. Select the **API Keys & Integrations** tab.
-3. Locate your preferred provider (e.g., Google Gemini).
-4. Enter your API key obtained from the provider's developer console:
+2. Select the **AI Models** tab to browse available models, context window limits, and provider capabilities.
+3. To view or add provider keys, navigate to the **API Keys** tab.
+4. Locate your preferred provider (e.g., Google Gemini, OpenAI, or Anthropic).
+5. Enter your API key obtained from the provider's developer console:
    - For Gemini: [Google AI Studio](https://aistudio.google.com/)
    - For OpenAI: [OpenAI Platform](https://platform.openai.com/api-keys)
    - For Anthropic: [Anthropic Console](https://console.anthropic.com/)
-5. Click **Test Connection** to verify that your key is valid and can reach the provider.
-6. Click **Save Key**. Your key is immediately encrypted and saved into your local database. It is never displayed in cleartext again.
+6. Click **Test Connection** to verify that your key is valid and can reach the provider.
+7. Click **Save Key**. Your key is immediately encrypted using AES-256-GCM and saved into your local database. It is never displayed in cleartext again.
+
+![Configuring AI Models and Providers in Settings](assets/guide/model-settings.png)
+*Figure 2: The AI Models catalog in Settings displaying provider mappings, context windows, and active model status.*
 
 > [!TIP]
 > If you have [Ollama](https://ollama.com/) running on your computer, AI-Chan can communicate with it locally at `http://localhost:11434` without needing any API key or Internet connection!
@@ -102,7 +121,7 @@ To enable chat, agent reasoning, and interactive answers, you need to connect at
 ### System Tray Management:
 When AI-Chan is active, a small icon appears in your **Windows System Tray** (near the clock in the bottom-right corner of your taskbar). Right-clicking this icon opens a quick menu:
 - **Open AI-Chan Web**: Opens your active AI-Chan session in your browser.
-- **Open Logs Folder**: Opens the Windows File Explorer directly to your diagnostic logs.
+- **Open Logs Folder**: Opens Windows File Explorer directly to your diagnostic logs.
 - **Open User Data Folder**: Opens your personal data and database folder.
 - **Exit AI-Chan**: Safely shuts down all background services and removes temporary locks.
 
@@ -114,39 +133,124 @@ If you prefer keyboard shortcuts or scripts, you can cleanly stop all running AI
 
 ---
 
-## 6. Core Features & How to Use Them
+## 6. Core Features & Step-by-Step Workflows
 
-### Chat & 3D Companion
-- Click **Chat** in the sidebar.
-- Type any question or instruction into the message input.
-- Watch your 3D VRM companion react with real-time expressions and animations as AI-Chan responds.
-- You can attach images, text documents, or code files by clicking the upload paperclip icon.
+### Interactive Chat Interface
+
+The Chat interface allows you to communicate with AI models directly, ask questions, write code, and analyze content.
+
+#### How to start a conversation:
+1. In the left navigation sidebar, click **Chat**.
+2. You will see prompt suggestion cards (e.g., *Write code*, *Analyze data*, *Draft content*, *Learn & research*).
+3. The model selector badge in the bottom right corner shows your currently active model (e.g., `gemini-1.5-flash`).
+4. Type your message into the input box at the bottom of the screen.
+5. (Optional) Click the paperclip icon to attach text, code files, or images.
+6. Press **Enter** or click the **Send** button to receive a streaming response.
+
+![Interactive Chat Interface in AI-Chan](assets/guide/chat-interface.png)
+*Figure 3: The Chat workspace featuring quick action prompts, model selector, and message input.*
+
+---
 
 ### Projects & Visual Node Canvas
-- Click **Projects** to create organized multi-turn workspaces.
-- In the **Project Editor**, you can drag and connect nodes on an interactive visual canvas:
-  - **Model Node**: Select which LLM provider and model to use.
-  - **Prompt Node**: Attach custom system instructions or persona definitions.
-  - **Skill Nodes**: Connect specialized capabilities (e.g., code reviewer, web researcher).
-  - **Tool Nodes**: Bind executable capabilities like calculators or file parsers.
-  - **Rule Nodes**: Enforce operational constraints or style requirements.
+
+Projects allow you to build customized, multi-step AI agent workflows with visual drag-and-drop node orchestration.
+
+#### How to view and create projects:
+1. In the left navigation sidebar, click **Projects**.
+2. The **Projects** page displays your existing workflows, status badges (*ACTIVE*, *STOPPED*, *DRAFT*), and active quota metrics.
+3. To start a new workspace, click the green **+ New Project** button in the top right corner.
+4. Enter a project name and brief description, then click **Create**.
+
+![Project Management and Workspace Overview](assets/guide/project-list.png)
+*Figure 4: The Projects dashboard showing active workflows, pipeline validation indicators, and node counts.*
+
+#### How to build workflows in the Project Editor:
+1. On any project card, click **Open Editor**.
+2. The interactive node canvas will open, displaying your configured workflow components:
+   - **Web Input Node**: Captures user input and sets word limits.
+   - **System Prompt Node**: Binds expert personas or formatting rules.
+   - **Model LLM Node**: Specifies the reasoning engine and provider.
+   - **Web Output Node**: Manages streaming output delivery.
+   - **Skill & Tool Nodes**: Attaches specialized capabilities like code reviewers, calculators, or web search.
+3. Click and drag connectors between node ports to define data flow.
+4. Click **Save Graph** in the top right corner to persist and activate your pipeline.
+5. Click **Project Chat** at the bottom right to test your live workflow immediately inside the editor.
+
+![Visual Node Canvas in Project Editor](assets/guide/project-editor.png)
+*Figure 5: The Project Editor canvas with connected input, prompt, model, skill, and output nodes.*
+
+---
 
 ### System Prompts Library
-- Click **Prompts** to manage custom personas, formatting templates, and domain-specific guidance.
-- AI-Chan includes built-in expert prompts (e.g. Senior Python Architect, IT Business Analyst) and allows importing your own markdown prompt files.
+
+System Prompts define the persona, behavior, constraints, and tone of your AI assistants.
+
+#### How to manage system prompts:
+1. In the left navigation sidebar, click **System Prompts**.
+2. Browse the built-in system prompt cards (e.g., *Senior Business Analyst (IT)*, *Software Architect*).
+3. To add your own prompt, click **+ New System Prompt** or click **Import from file** to upload a Markdown prompt file.
+4. Each card provides quick actions:
+   - **Copy**: Copies the prompt instructions to your clipboard.
+   - **Clone**: Duplicates an existing prompt to customize without altering the original.
+   - **Edit**: Updates the prompt title, instructions, and target tags.
+
+![System Prompts Library in AI-Chan](assets/guide/system-prompts.png)
+*Figure 6: The System Prompts library displaying available expert personas and prompt management actions.*
+
+---
 
 ### Agent Skills & External Catalog
-- Click **Skills** to manage modular task instructions.
-- Skills follow standard markdown structure (`SKILL.md`) with frontmatter metadata.
-- Use the **External Skills Catalog** to browse, search, and import verified skills from community repositories directly into your local library.
+
+Agent Skills are modular instruction packages (`SKILL.md`) that extend an agent's abilities for specialized tasks.
+
+#### How to browse and import skills:
+1. In the left navigation sidebar, click **Skills**.
+2. The **Thư viện của tôi (My Skills)** tab displays your installed skills (e.g., *3d-ui*, *code-review-assistant*, *ponytail*).
+3. Each skill displays validation badges (*VALID*, *DRAFT*) and file counters.
+4. Click **Khám phá Catalog ngoài (Explore Skills)** to browse community skill repositories and import verified skills with one click.
+5. You can also import local skills using **Import from file** or **Import Package (.zip)**.
+
+![Agent Skills Management Library](assets/guide/skills-library.png)
+*Figure 7: The Agent Skills library showing installed skills, validation status, and external catalog access.*
+
+---
 
 ### Rules Management
-- Click **Rules** to define strict operational constraints (e.g., path traversal protections, privacy boundaries, formatting standards).
-- Rules can be bound to specific projects or applied globally.
+
+Rules enforce architectural standards, privacy constraints, and security policies across your conversations and projects.
+
+#### How to manage rules:
+1. In the left navigation sidebar, click **Rules**.
+2. The **Rules Library** displays active constraints such as:
+   - **Tiêu Chuẩn Mã Nguồn Sạch (Clean Code Standard)**: Enforces clean architecture and eliminates dead code.
+   - **Quy Ước An Ninh Ứng Dụng (Application Security)**: Guardrails against SQL injection, secret leakage, and IDOR.
+   - **Hướng Dẫn Cú Pháp TypeScript (Frontend Strict)**: Enforces strict typing and forbids untyped constructs.
+3. Filter rules by Scope (*Tất cả Scope*, *Hệ thống (System)*, *Cá nhân (User)*) or status.
+4. Toggle rules active or inactive, or click **+ Tạo Quy Tắc Mới** to author custom organizational guidelines.
+
+![Rules Management and Operational Constraints](assets/guide/rules-management.png)
+*Figure 8: The Rules Library showing enforced application security, clean code, and syntax guidelines.*
+
+---
 
 ### Tools & Capabilities
-- Click **Tools** to view available capabilities.
-- Tools execute securely inside a local sandbox with strict SSRF (Server-Side Request Forgery) protection to prevent unauthorized local network scans.
+
+Tools provide executable actions (e.g., unit conversion, arithmetic, diff generation, regex extraction) within a secure local sandbox.
+
+#### How to view and configure tools:
+1. In the left navigation sidebar, click **Tools**.
+2. The **Tool Library** shows the complete catalog of executable tools and their risk classifications (*LOW RISK*, *AVAILABLE*).
+3. Filter tools by category using the category pills:
+   - **File & Docs**: Document comparison and text parsing.
+   - **Data & Math**: Safe AST calculators and JSON transform tools.
+   - **Web & Search**: Search tools and network fetchers with strict SSRF protections.
+   - **Utility**: Date/time info, unit conversion, and regex validators.
+4. Click **Test** on any tool card to verify its functionality with sample input data.
+5. Click **Configure** to adjust parameters, default arguments, or project bindings.
+
+![Executable Tools and Capabilities Library](assets/guide/tools-library.png)
+*Figure 9: The Tool Library showcasing sandbox tools, risk levels, and configuration options.*
 
 ---
 
@@ -158,12 +262,17 @@ AI-Chan includes an optional Discord Gateway that allows you to chat with your c
 - You must create a Bot application in the official [Discord Developer Portal](https://discord.com/developers/applications).
 - You must generate a Bot Token and invite the bot to your Discord server with message permissions.
 
-### Connecting Discord:
-1. In the sidebar, navigate to **Bot Management**.
-2. Click **Add Bot Config**.
-3. Paste your official Bot Token.
-4. Select which AI-Chan project the bot should route messages to.
-5. Save and start the bot.
+### How to configure a Discord Bot:
+1. In the left navigation sidebar, click **Bot** (navigates to `/bot/discord`).
+2. The **Discord Bot Management** screen displays your connected operator account and registered bots.
+3. Click **+ Register New Bot**.
+4. Enter a bot name, alias, and your official Discord Bot Token.
+5. Under **Linked Project**, select which AI-Chan project the bot should route messages to (e.g., *AI Research Assistant*).
+6. Set the **Trigger Mode** (e.g., *MENTION* or custom prefix like `!ai`).
+7. Click **Connect** to start the bot.
+
+![Discord Bot Management and Multi-Bot Registry](assets/guide/discord-settings.png)
+*Figure 10: The Discord Bot Management interface showing registered bot runtimes and project routing.*
 
 > [!WARNING]
 > Never share your Discord Bot Token with anyone. AI-Chan encrypts the token at rest using an AES-256-GCM vault on your local machine.
@@ -243,7 +352,7 @@ If you wish to remove AI-Chan from your computer:
 
 ### 3. AI provider returns "Invalid API Key" or "Quota Exceeded"
 - **Cause**: The key was typed incorrectly, lacks active billing, or has expired.
-- **Solution**: Go to **Settings** > **API Keys & Integrations**, click **Test Connection**, and check your credit balance or permissions on the provider's developer console.
+- **Solution**: Go to **Settings** > **API Keys**, click **Test Connection**, and check your credit balance or permissions on the provider's developer console.
 
 ### 4. Discord bot stays offline
 - **Cause**: The Discord token is invalid, or the required Gateway Privileged Intents (Message Content Intent) are not enabled in the Discord Developer Portal.
@@ -263,6 +372,6 @@ If you wish to remove AI-Chan from your computer:
 
 ## 13. Privacy & Third-Party AI Services
 
-- **Local Processing**: AI-Chan's interface, companion animations, database, and file storage run 100% locally on your machine.
+- **Local Processing**: AI-Chan's interface, database, tools sandbox, and file storage run 100% locally on your machine.
 - **Remote Providers**: When using remote AI providers (Google, OpenAI, Anthropic, Groq), the prompt text and attachments you send are transmitted over encrypted HTTPS directly to that provider's API. Those interactions are governed by each provider's individual privacy policy and terms of service.
 - **No Telemetry / No Tracking**: AI-Chan does not transmit your personal data, queries, or telemetry to external tracking servers.
