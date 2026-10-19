@@ -213,4 +213,60 @@ describe('Settings API Keys & Integrations Specification (FR-SETTINGS-KEYS, SEC-
     // Personal keys apply runtime without requiring restart
     assert.strictEqual(provider.requires_restart, false);
   });
+
+  test('7. fetchApiKeys uses same-origin relative path /api/v1 and sends Bearer token if present', async () => {
+    const originalFetch = global.fetch;
+    const originalLocalStorage = global.localStorage;
+
+    try {
+      let capturedUrl = '';
+      let capturedHeaders: any = null;
+
+      (global as any).localStorage = {
+        getItem: (key: string) => (key === 'ai_chan_token' ? 'test-jwt-token-123' : null),
+      };
+
+      global.fetch = async (url: any, opts: any) => {
+        capturedUrl = String(url);
+        capturedHeaders = opts?.headers;
+        return {
+          ok: true,
+          json: async () => [],
+        } as any;
+      };
+
+      await ApiKeyService.fetchApiKeys();
+      assert.strictEqual(capturedUrl, '/api/v1/settings/api-keys');
+      assert.strictEqual(capturedHeaders['Authorization'], 'Bearer test-jwt-token-123');
+    } finally {
+      global.fetch = originalFetch;
+      global.localStorage = originalLocalStorage;
+    }
+  });
+
+  test('8. fetchApiKeys propagates HTTP 401 status on error object for UI classification', async () => {
+    const originalFetch = global.fetch;
+
+    try {
+      global.fetch = async () => ({
+        ok: false,
+        status: 401,
+        statusText: 'Unauthorized',
+        json: async () => ({ detail: 'Chưa xác thực: Vui lòng đăng nhập để tiếp tục.' }),
+      } as any);
+
+      await assert.rejects(
+        async () => {
+          await ApiKeyService.fetchApiKeys();
+        },
+        (err: any) => {
+          assert.strictEqual(err.status, 401);
+          assert.strictEqual(err.message, 'Chưa xác thực: Vui lòng đăng nhập để tiếp tục.');
+          return true;
+        }
+      );
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
 });

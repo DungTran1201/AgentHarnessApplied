@@ -1,6 +1,0 @@
-version: "1.0"
-test_model:
-  id: TESTMODEL-001
-  source_refs: []
-  scenarios: []
-  test_cases: []

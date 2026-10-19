@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import Link from 'next/link';
 import { ProviderKeyStatus, ApiKeyCategory } from '@/types/apiKey';
 import { ApiKeyService } from '@/services/apiKeyService';
 import Icon from '@/components/ui/Icon';
@@ -13,7 +14,14 @@ interface ApiKeysTabProps {
 export default function ApiKeysTab({ showToast, userEmail }: ApiKeysTabProps) {
   const [keys, setKeys] = useState<ProviderKeyStatus[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<{
+    type: 'auth' | 'forbidden' | 'network' | 'server';
+    message: string;
+  } | null>(null);
   const [activeCategory, setActiveCategory] = useState<'ALL' | 'LLM' | 'SEARCH'>('ALL');
+
+  const inFlightRef = useRef<boolean>(false);
+  const isMountedRef = useRef<boolean>(true);
 
   // Input states per provider for editing/entering keys
   const [inputValues, setInputValues] = useState<Record<string, string>>({});
@@ -39,19 +47,54 @@ export default function ApiKeysTab({ showToast, userEmail }: ApiKeysTabProps) {
   );
 
   const loadKeys = useCallback(async () => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    setLoading(true);
+    setError(null);
     try {
-      setLoading(true);
       const data = await ApiKeyService.fetchApiKeys();
-      setKeys(data);
+      if (isMountedRef.current) {
+        setKeys(data);
+        setError(null);
+      }
     } catch (err: any) {
-      showToast('error', err.message || 'Không thể tải danh sách API Keys.');
+      if (!isMountedRef.current) return;
+      const status = err.status;
+      if (status === 401) {
+        setError({
+          type: 'auth',
+          message: err.message || 'Chưa xác thực: Vui lòng đăng nhập lại để xem và quản lý danh sách API Keys.'
+        });
+      } else if (status === 403) {
+        setError({
+          type: 'forbidden',
+          message: err.message || 'Bạn không có quyền truy cập hoặc cấu hình danh mục API Keys này.'
+        });
+      } else if (status >= 500) {
+        setError({
+          type: 'server',
+          message: err.message || 'Máy chủ AI-Chan gặp sự cố nội bộ. Vui lòng kiểm tra nhật ký backend.'
+        });
+      } else {
+        setError({
+          type: 'network',
+          message: 'Không thể kết nối đến máy chủ AI-Chan backend (Failed to fetch). Vui lòng đảm bảo tiến trình backend đang hoạt động.'
+        });
+      }
     } finally {
-      setLoading(false);
+      inFlightRef.current = false;
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
-  }, [showToast]);
+  }, []);
 
   useEffect(() => {
+    isMountedRef.current = true;
     loadKeys();
+    return () => {
+      isMountedRef.current = false;
+    };
   }, [loadKeys]);
 
   const handleInputChange = (provider: string, value: string) => {
@@ -231,11 +274,66 @@ export default function ApiKeysTab({ showToast, userEmail }: ApiKeysTabProps) {
         </button>
       </div>
 
-      {/* Provider List */}
+      {/* Provider List / Error / Loading States */}
       {loading ? (
         <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
           <Icon name="refresh" size={24} className="spin" style={{ marginBottom: '0.5rem' }} />
           <div>Đang nạp danh mục cấu hình API keys...</div>
+        </div>
+      ) : error ? (
+        <div
+          className="card"
+          style={{
+            padding: '1.5rem',
+            background: error.type === 'auth' ? 'rgba(245, 158, 11, 0.08)' : 'rgba(239, 68, 68, 0.08)',
+            border: error.type === 'auth' ? '1px solid rgba(245, 158, 11, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)',
+            borderRadius: '10px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '1rem',
+            alignItems: 'flex-start'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <Icon
+              name={error.type === 'auth' ? 'shield' : 'alert'}
+              size={22}
+              style={{ color: error.type === 'auth' ? '#f59e0b' : '#ef4444' }}
+            />
+            <h3 style={{ fontSize: '1.05rem', fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
+              {error.type === 'auth'
+                ? 'Yêu cầu đăng nhập xác thực'
+                : error.type === 'network'
+                ? 'Lỗi kết nối máy chủ backend'
+                : 'Lỗi nạp cấu hình API Keys'}
+            </h3>
+          </div>
+
+          <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+            {error.message}
+          </p>
+
+          <div style={{ display: 'flex', gap: '10px', marginTop: '0.25rem' }}>
+            {error.type === 'auth' ? (
+              <Link
+                href="/login"
+                className="btn btn-primary"
+                style={{ fontSize: '0.85rem', padding: '0.5rem 1.25rem', textDecoration: 'none' }}
+              >
+                Đăng nhập lại
+              </Link>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={loadKeys}
+                style={{ fontSize: '0.85rem', padding: '0.5rem 1.25rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+              >
+                <Icon name="refresh" size={14} />
+                <span>Thử lại kết nối</span>
+              </button>
+            )}
+          </div>
         </div>
       ) : filteredKeys.length === 0 ? (
         <div className="card" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>

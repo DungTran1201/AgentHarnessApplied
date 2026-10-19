@@ -225,6 +225,36 @@ class TestUserApiKeysAPI(unittest.TestCase):
         self.assertEqual(res.status_code, 400)
         self.assertIn("không nằm trong danh mục", res.json()["detail"])
 
+    def test_list_api_keys_authenticated_via_bearer_header(self):
+        """Authenticated requests with Authorization Bearer header succeed with HTTP 200."""
+        headers = {"Authorization": f"Bearer {self.user_a_token}"}
+        res = self.client.get("/api/v1/settings/api-keys", headers=headers)
+        self.assertEqual(res.status_code, 200)
+        self.assertIsInstance(res.json(), list)
+
+    def test_list_api_keys_invalid_or_expired_cookie_rejected(self):
+        """Malformed or invalid cookie must be rejected with HTTP 401."""
+        res = self.client.get("/api/v1/settings/api-keys", cookies={"access_token": "invalid.jwt.token"})
+        self.assertEqual(res.status_code, 401)
+        self.assertIn("không hợp lệ", res.json()["detail"].lower())
+
+    def test_login_and_logout_cookie_lifecycle(self):
+        """Login sets HttpOnly cookie and logout clears the access_token cookie."""
+        login_res = self.client.post(
+            "/api/v1/auth/login",
+            json={"email": self.user_a_email, "password": "ValidPassword123!"}
+        )
+        self.assertEqual(login_res.status_code, 200)
+        self.assertIn("access_token", login_res.cookies)
+        self.assertIn("token", login_res.json())
+
+        # Now logout
+        logout_res = self.client.post("/api/v1/auth/logout", cookies={"access_token": login_res.cookies["access_token"]})
+        self.assertEqual(logout_res.status_code, 200)
+        # Check cookie deleted or expired
+        set_cookie_header = logout_res.headers.get("set-cookie", "")
+        self.assertTrue("access_token=" in set_cookie_header or "Max-Age=0" in set_cookie_header or "expires=" in set_cookie_header.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

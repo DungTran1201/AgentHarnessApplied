@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AgentModel, ModelSearchResponse, UserConnectionsResponse } from '@/types';
@@ -129,10 +129,10 @@ export default function SettingsPage() {
   const [confirmArchiveModel, setConfirmArchiveModel] = useState<AgentModel | null>(null);
   const [archivingModelId, setArchivingModelId] = useState<string | null>(null);
 
-  const showToast = (type: 'success' | 'error', message: string) => {
+  const showToast = useCallback((type: 'success' | 'error', message: string) => {
     setToast({ type, message });
     setTimeout(() => setToast(null), 4000);
-  };
+  }, []);
 
   // Fetch initial profile & stats
   useEffect(() => {

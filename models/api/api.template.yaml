@@ -1,6 +1,0 @@
-version: "1.0"
-api:
-  id: API-001
-  title: ""
-  base_path: ""
-  operations: []
