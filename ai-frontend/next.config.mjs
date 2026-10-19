@@ -9,14 +9,6 @@ const nextConfig = {
   reactStrictMode: true,
   output: 'standalone',
   outputFileTracingRoot: path.resolve(__dirname),
-  async rewrites() {
-    return [
-      {
-        source: '/api/:path*',
-        destination: process.env.INTERNAL_BACKEND_URL || 'http://127.0.0.1:8000/api/:path*',
-      },
-    ];
-  },
 };
 
 export default nextConfig;

@@ -207,6 +207,30 @@ def seed_user_directories(user_data_dir: Path, app_dir: Path, logger: logging.Lo
                 break
 
 
+def get_or_create_secret_key(data_dir: Path, logger: logging.Logger) -> str:
+    """
+    Ensures a stable, persistent SECRET_KEY is stored in user data directory.
+    Reused across app restarts and updates to prevent session and key invalidation.
+    """
+    key_file = data_dir / ".secret_key"
+    if key_file.exists():
+        try:
+            key = key_file.read_text(encoding="utf-8").strip()
+            if key and len(key) >= 32:
+                return key
+        except Exception as e:
+            logger.warning(f"Error reading existing secret key: {e}")
+
+    import secrets
+    new_key = secrets.token_hex(32)
+    try:
+        key_file.write_text(new_key, encoding="utf-8")
+        logger.info("Generated and stored stable persistent application SECRET_KEY.")
+    except Exception as e:
+        logger.warning(f"Could not persist secret key to {key_file}: {e}")
+    return new_key
+
+
 def kill_process_tree(pid: int, logger: logging.Logger):
     """Gracefully terminates process tree by PID."""
     try:
@@ -385,11 +409,13 @@ def run_launcher():
 
     try:
         # 1. Start Backend Subprocess
+        secret_key = get_or_create_secret_key(data_dir, logger)
         backend_log = open(str(log_dir / "backend.log"), "a", encoding="utf-8")
         backend_env = os.environ.copy()
         backend_env.update({
             "HOST": "127.0.0.1",
             "PORT": str(backend_port),
+            "SECRET_KEY": secret_key,
             "AI_CHAN_DB_PATH": str(db_path),
             "UPLOAD_DIR": str(user_data_dir / "uploads"),
             "AI_CHAN_SKILLS_DIR": str(user_data_dir / "skills"),
@@ -441,7 +467,7 @@ def run_launcher():
             "PORT": str(frontend_port),
             "HOSTNAME": "127.0.0.1",
             "INTERNAL_BACKEND_URL": f"http://127.0.0.1:{backend_port}/api/",
-            "NEXT_PUBLIC_API_BASE_URL": f"http://127.0.0.1:{backend_port}/api/v1",
+            "NEXT_PUBLIC_API_BASE_URL": "/api/v1",
         })
 
         if frontend_dir and node_exe:

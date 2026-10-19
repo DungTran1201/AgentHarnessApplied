@@ -358,7 +358,11 @@ If you wish to remove AI-Chan from your computer:
 - **Cause**: The Discord token is invalid, or the required Gateway Privileged Intents (Message Content Intent) are not enabled in the Discord Developer Portal.
 - **Solution**: Open the Discord Developer Portal, navigate to your Bot settings, ensure **Message Content Intent** is toggled ON, and regenerate your bot token.
 
-### 5. Where can I find diagnostic logs?
+### 5. Settings → API Keys shows "Please log in to authenticate", flickers, or displays "Failed to fetch"
+- **Cause**: In older packaged releases prior to v0.1.1, when port 8000 was in use by another program, the background launcher moved the backend to a dynamic port (e.g., 8001), while the client bundle attempted direct cross-origin calls to port 8000. This caused "Failed to fetch" and cross-origin cookie separation.
+- **Solution in v0.1.1+**: Upgrading to version 0.1.1 or later completely resolves this issue. The application now uses dynamic runtime same-origin reverse proxying (`/api/v1/...`) and stable session encryption. If upgrading from an older version, simply download and run the latest `AI-Chan-Setup.exe`. Your saved conversations, projects, and encrypted keys will be automatically preserved.
+
+### 6. Where can I find diagnostic logs?
 - Press `Win + R`, paste:
   ```text
   %LOCALAPPDATA%\AI-Chan\logs
