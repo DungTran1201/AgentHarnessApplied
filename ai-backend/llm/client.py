@@ -4,48 +4,71 @@ from .providers.base import BaseLLMProvider
 from .providers.gemini_provider import GeminiProvider
 from .providers.openai_provider import OpenAIProvider
 
+
 class LLMManager:
     """Central LLM Management Engine.
     
-    Orchestrates provider selection, API key authentication,
-    load balancing, fallback upon quota/timeout, and token accounting.
+    Orchestrates provider selection, API key authentication via CredentialService
+    (PERSONAL > SYSTEM > NONE), load balancing, fallback upon quota/timeout, and token accounting.
+    Constructs providers per request so newly saved keys take effect immediately without stale cache.
     """
 
     def __init__(self):
         self.providers: Dict[str, BaseLLMProvider] = {}
         self._init_providers()
 
+    def _resolve_key(self, provider_name: str, user_id: Optional[str] = None) -> str:
+        canon = "google" if provider_name in ("gemini", "google") else provider_name
+        try:
+            from src.services.credential_service import CredentialService
+            key = CredentialService.get_effective_key(user_id, canon)
+            if key is not None:
+                return key
+        except Exception:
+            pass
+        env_var = "GEMINI_API_KEY" if canon == "google" else "OPENAI_API_KEY"
+        return os.getenv(env_var, "")
+
     def _init_providers(self):
-        gemini_key = os.getenv("GEMINI_API_KEY", "")
-        openai_key = os.getenv("OPENAI_API_KEY", "")
+        self.providers["gemini"] = GeminiProvider(api_key=self._resolve_key("gemini"))
+        self.providers["openai"] = OpenAIProvider(api_key=self._resolve_key("openai"))
 
-        self.providers["gemini"] = GeminiProvider(api_key=gemini_key)
-        self.providers["openai"] = OpenAIProvider(api_key=openai_key)
-
-    def get_provider(self, name: Optional[str] = None) -> BaseLLMProvider:
+    def get_provider(self, name: Optional[str] = None, user_id: Optional[str] = None) -> BaseLLMProvider:
         default_name = os.getenv("DEFAULT_LLM_PROVIDER", "gemini").lower()
-        selected = (name or default_name).lower()
+        selected = (name or default_name).lower().strip()
+        if selected == "google":
+            selected = "gemini"
 
-        if selected in self.providers:
-            return self.providers[selected]
-        
-        # Fallback to gemini or first available provider
-        return self.providers.get("gemini") or list(self.providers.values())[0]
+        if selected == "openai":
+            key = self._resolve_key("openai", user_id=user_id)
+            provider = OpenAIProvider(api_key=key)
+            if not user_id:
+                self.providers["openai"] = provider
+            return provider
+
+        key = self._resolve_key("gemini", user_id=user_id)
+        provider = GeminiProvider(api_key=key)
+        if not user_id:
+            self.providers["gemini"] = provider
+        return provider
 
     async def generate_response(
         self,
         prompt: str,
         provider_name: Optional[str] = None,
         model_name: Optional[str] = None,
+        user_id: Optional[str] = None,
         **kwargs
     ) -> Dict[str, Any]:
-        provider = self.get_provider(provider_name)
+        provider = self.get_provider(provider_name, user_id=user_id)
         try:
             return await provider.generate(prompt=prompt, model=model_name, **kwargs)
-        except Exception as primary_error:
-            # Automatic fallback to secondary provider
-            fallback_provider_name = "openai" if provider_name == "gemini" else "gemini"
-            fallback = self.get_provider(fallback_provider_name)
+        except Exception:
+            # Automatic fallback to secondary provider with fresh credential resolution
+            norm = (provider_name or "gemini").lower().strip()
+            fallback_provider_name = "openai" if norm in ("gemini", "google") else "gemini"
+            fallback = self.get_provider(fallback_provider_name, user_id=user_id)
             return await fallback.generate(prompt=prompt, **kwargs)
+
 
 llm_manager = LLMManager()

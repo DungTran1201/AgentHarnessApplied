@@ -87,7 +87,8 @@ class ToolRegistryService:
     def compute_dynamic_status(
         cls,
         tool_row: Dict[str, Any],
-        config_row: Optional[Dict[str, Any]] = None
+        config_row: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None
     ) -> Tuple[ToolStatus, Optional[str]]:
         """
         Dynamically calculates the availability status based on runtime dependencies
@@ -120,13 +121,21 @@ class ToolRegistryService:
             except ImportError:
                 return ToolStatus.DEPENDENCY_MISSING, "Missing optional packages 'faiss-cpu' and 'numpy'. Install via pip."
 
-        # 2. Configuration checks
+        # 2. Configuration checks (integrates with CredentialService for Brave / SerpAPI)
         if tool_id == "web_search":
             secrets = decrypt_secrets(config_row.get("encrypted_secrets")) if config_row else {}
             params = json.loads(config_row.get("parameters", "{}")) if config_row else {}
-            provider = params.get("provider", "duckduckgo")
-            if provider in ("brave", "google", "bing") and not secrets.get("api_key"):
-                return ToolStatus.NEEDS_CONFIGURATION, f"Provider '{provider}' requires an API key in configuration."
+            provider = (params.get("provider") or "duckduckgo").lower().strip()
+            if provider in ("brave", "serpapi", "google", "bing") and not secrets.get("api_key"):
+                has_cred = False
+                try:
+                    from src.services.credential_service import CredentialService
+                    lookup_prov = "serpapi" if provider == "google" else provider
+                    has_cred = CredentialService.is_provider_configured(lookup_prov, user_id=user_id)
+                except Exception:
+                    has_cred = False
+                if not has_cred:
+                    return ToolStatus.NEEDS_CONFIGURATION, f"Provider '{provider}' requires an API key in Settings -> API Keys or tool configuration."
 
         return ToolStatus.AVAILABLE, None
 
@@ -139,7 +148,8 @@ class ToolRegistryService:
         risk_level: Optional[str] = None,
         page: int = 1,
         limit: int = 10,
-        project_id: Optional[str] = None
+        project_id: Optional[str] = None,
+        user_id: Optional[str] = None
     ) -> ToolListResponse:
         """Lists tools with search, filtering, category counts, and pagination."""
         cls.seed_tools()
@@ -163,7 +173,7 @@ class ToolRegistryService:
             category_counts[cat] = category_counts.get(cat, 0) + 1
 
             cfg = config_map.get(row["id"])
-            dyn_status, dep_msg = cls.compute_dynamic_status(row, cfg)
+            dyn_status, dep_msg = cls.compute_dynamic_status(row, cfg, user_id=user_id)
 
             # Check matches
             if cat_filter and cat != cat_filter:
@@ -234,7 +244,7 @@ class ToolRegistryService:
             (tool_id, project_id)
         )
 
-        dyn_status, dep_msg = cls.compute_dynamic_status(row, cfg_row)
+        dyn_status, dep_msg = cls.compute_dynamic_status(row, cfg_row, user_id=user_id)
 
         current_cfg = {}
         if cfg_row:
@@ -299,7 +309,6 @@ class ToolRegistryService:
         if not row:
             raise KeyError(f"Tool '{tool_id}' not found.")
 
-        # If secrets dict provided, merge with existing secrets if some are masked/unchanged
         existing_cfg = query_one(
             "SELECT id, encrypted_secrets FROM tool_configurations WHERE tool_id = ? AND (project_id = ? OR (project_id IS NULL AND ? IS NULL))",
             (tool_id, project_id, project_id)
@@ -307,7 +316,7 @@ class ToolRegistryService:
 
         existing_secrets = decrypt_secrets(existing_cfg["encrypted_secrets"]) if existing_cfg else {}
         for k, v in secrets.items():
-            if v and not v.startswith("***"):  # If not masked placeholder, update
+            if v and not v.startswith("***"):
                 existing_secrets[k] = v
 
         enc_str = encrypt_secrets(existing_secrets) if existing_secrets else None
@@ -357,7 +366,6 @@ class ToolRegistryService:
             if tool.status == ToolStatus.NEEDS_CONFIGURATION:
                 raise ValueError(tool.dependency_status or "Tool requires configuration before use.")
 
-            # Perform minimal execution based on tool type
             if tool_id == "calculator":
                 from src.services.tools.handlers.data_handlers import handle_calculator
                 expr = parameters.get("expression", "2 + 2")
@@ -390,7 +398,6 @@ class ToolRegistryService:
 
         elapsed_ms = int((time.time() - start_time) * 1000)
 
-        # Record test result in tool_configurations
         now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         execute_commit(
             """

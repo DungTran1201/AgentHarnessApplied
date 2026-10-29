@@ -1,13 +1,14 @@
 """
 Web and Retrieval Tool Handlers
 Includes SSRF-safe page fetch, content extractor, metadata extractor, sitemap parser,
-and project document search.
+project document search, and provider-aware external web search (Brave, SerpAPI, DuckDuckGo).
 """
 
 import html
+import inspect
 import re
 import xml.etree.ElementTree as ET
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Callable
 
 from src.services.tools.ssrf_guard import SSRFGuardEngine, SSRFValidationError
 from src.db import query_all
@@ -22,7 +23,6 @@ async def handle_fetch_webpage(url: str, timeout: float = 15.0) -> Dict[str, Any
     response = await SSRFGuardEngine.safe_fetch(url, timeout=timeout)
     content_type = response.headers.get("content-type", "")
 
-    # Convert content to text
     text_content = response.text
 
     return {
@@ -48,19 +48,10 @@ def handle_extract_web_content(html_content: str, max_chars: int = 20000) -> Dic
     if not html_content or not isinstance(html_content, str):
         return {"text": "", "char_count": 0}
 
-    # Remove scripts, styles, navigations
     cleaned = _STRIP_TAGS_REGEX.sub(" ", html_content)
-
-    # Convert block elements to newlines
     cleaned = re.sub(r"<(p|br|div|li|h[1-6])[^>]*>", "\n", cleaned, flags=re.IGNORECASE)
-
-    # Strip remaining HTML tags
     raw_text = _HTML_TAG_REGEX.sub("", cleaned)
-
-    # Decode HTML entities
     unescaped = html.unescape(raw_text)
-
-    # Normalize whitespace
     normalized = _MULTIPLE_NEWLINES.sub("\n\n", unescaped).strip()
 
     truncated = normalized[:max_chars]
@@ -94,7 +85,6 @@ def handle_extract_web_metadata(html_content: str) -> Dict[str, Any]:
     metadata = {}
     for meta in _META_TAG_REGEX.finditer(html_content):
         tag_str = meta.group(1)
-        # Extract name/property and content
         name_m = re.search(r'(?:name|property)=["\']([^"\']+)["\']', tag_str, re.IGNORECASE)
         content_m = re.search(r'content=["\']([^"\']+)["\']', tag_str, re.IGNORECASE)
         if name_m and content_m:
@@ -125,7 +115,6 @@ async def handle_parse_sitemap(sitemap_url: str, max_urls: int = 100) -> Dict[st
     except ET.ParseError as e:
         raise ValueError(f"Failed to parse sitemap XML: {e}") from e
 
-    # Handle XML namespaces, e.g. {http://www.sitemaps.org/schemas/sitemap/0.9}loc
     urls = []
     for elem in root.iter():
         if elem.tag.endswith("loc") and elem.text:
@@ -189,46 +178,137 @@ def handle_search_project_documents(
 
 
 # ==============================================================================
-# 6. EXTERNAL WEB SEARCH (NEEDS CONFIGURATION ADAPTER)
+# 6. EXTERNAL WEB SEARCH (BRAVE / SERPAPI / DUCKDUCKGO ADAPTER)
 # ==============================================================================
+
+# Optional injectable adapter hook for unit/regression testing of search credentials
+_custom_search_adapters: Dict[str, Callable[[str, str, int, Optional[str]], Any]] = {}
+
+
+def register_search_provider_adapter(
+    provider: str,
+    adapter: Callable[[str, str, int, Optional[str]], Any]
+) -> None:
+    """Registers an injectable search adapter for deterministic testing without live network calls."""
+    _custom_search_adapters[provider.lower().strip()] = adapter
+
+
+def clear_search_provider_adapters() -> None:
+    """Clears all registered custom search adapters."""
+    _custom_search_adapters.clear()
+
 
 async def handle_web_search(
     query: str,
     api_key: Optional[str] = None,
     provider: str = "duckduckgo",
-    max_results: int = 5
+    max_results: int = 5,
+    user_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Adapter for external web search.
-    If external API key is required but missing, raises NEEDS_CONFIGURATION error.
+    Adapter for external web search (Brave Search, SerpAPI, DuckDuckGo).
+    Resolves user-scoped and system credentials via CredentialService (PERSONAL > SYSTEM > NONE).
+    If an external API key is required but missing, raises NEEDS_CONFIGURATION error.
     """
     if not query or not query.strip():
         raise ValueError("Search query cannot be empty.")
 
     provider_clean = (provider or "duckduckgo").lower().strip()
+    if provider_clean == "brave_search":
+        provider_clean = "brave"
 
-    # If key is not directly provided in tool invocation, resolve from CredentialService / env
-    if not api_key:
+    # Resolve effective key via CredentialService for the authenticated user_id
+    if not api_key and provider_clean in ("brave", "serpapi", "google", "bing"):
         try:
             from src.services.credential_service import CredentialService
-            api_key = CredentialService.get_effective_key(None, provider_clean)
+            lookup_prov = "serpapi" if provider_clean == "google" else provider_clean
+            api_key = CredentialService.get_effective_key(user_id, lookup_prov, raise_on_decryption_error=True)
+        except ValueError as dec_err:
+            raise ValueError(f"NEEDS_CONFIGURATION: {dec_err}") from dec_err
         except Exception:
             pass
 
-    # If Brave / Google / Bing requires API key
     if provider_clean in ("brave", "serpapi", "google", "bing") and not api_key:
         raise ValueError(
-            f"NEEDS_CONFIGURATION: Provider '{provider_clean}' requires an API Key. Configure via tool settings."
+            f"NEEDS_CONFIGURATION: Provider '{provider_clean}' requires an API Key. Configure via Settings -> API Keys."
         )
 
-    # For DuckDuckGo HTML / public search fallback
-    # In sandbox/demo, if no key is provided and duckduckgo requested:
-    # Use DuckDuckGo HTML lite search
+    # Check injectable test adapter first
+    if provider_clean in _custom_search_adapters:
+        adapter_fn = _custom_search_adapters[provider_clean]
+        res = adapter_fn(query, api_key or "", max_results, user_id)
+        if inspect.isawaitable(res):
+            res = await res
+        return res
+
     try:
+        if provider_clean == "brave":
+            import httpx
+            headers = {
+                "Accept": "application/json",
+                "X-Subscription-Token": api_key or "",
+            }
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    "https://api.search.brave.com/res/v1/web/search",
+                    params={"q": query, "count": max(1, min(20, max_results))},
+                    headers=headers,
+                )
+                if resp.status_code in (401, 403):
+                    raise ValueError(f"Brave Search API rejected credential (HTTP {resp.status_code}).")
+                resp.raise_for_status()
+                payload = resp.json()
+                web_items = payload.get("web", {}).get("results", [])
+                results = [
+                    {
+                        "title": item.get("title", ""),
+                        "url": item.get("url", ""),
+                        "snippet": item.get("description", ""),
+                    }
+                    for item in web_items[:max_results]
+                ]
+                return {
+                    "query": query,
+                    "provider": "brave",
+                    "result_count": len(results),
+                    "results": results,
+                }
+
+        elif provider_clean in ("serpapi", "google"):
+            import httpx
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    "https://serpapi.com/search.json",
+                    params={
+                        "q": query,
+                        "api_key": api_key or "",
+                        "num": max(1, min(20, max_results)),
+                    },
+                )
+                if resp.status_code in (401, 403):
+                    raise ValueError(f"SerpAPI rejected credential (HTTP {resp.status_code}).")
+                resp.raise_for_status()
+                payload = resp.json()
+                organic = payload.get("organic_results", [])
+                results = [
+                    {
+                        "title": item.get("title", ""),
+                        "url": item.get("link", ""),
+                        "snippet": item.get("snippet", ""),
+                    }
+                    for item in organic[:max_results]
+                ]
+                return {
+                    "query": query,
+                    "provider": "serpapi",
+                    "result_count": len(results),
+                    "results": results,
+                }
+
+        # Default: DuckDuckGo HTML lite search
         search_url = f"https://html.duckduckgo.com/html/?q={html.escape(query)}"
         response = await SSRFGuardEngine.safe_fetch(search_url, timeout=10.0)
 
-        # Extract search result links from HTML
         results = []
         pattern = re.compile(r'<a class="result__url"[^>]+href="([^"]+)"[^>]*>(.*?)</a>', re.IGNORECASE)
         for m in pattern.finditer(response.text):
@@ -245,4 +325,9 @@ async def handle_web_search(
             "results": results
         }
     except Exception as e:
-        raise RuntimeError(f"Web search execution failed: {e}") from e
+        try:
+            from src.services.credential_service import redact_secrets_from_text
+            clean_err = redact_secrets_from_text(str(e), [api_key])
+        except Exception:
+            clean_err = str(e)
+        raise RuntimeError(f"Web search execution failed: {clean_err}") from e

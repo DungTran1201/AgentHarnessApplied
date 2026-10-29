@@ -112,11 +112,14 @@ class ToolExecutorService:
     ) -> ToolExecutionResponse:
         """
         Executes a registered tool within policy gate validation, timeout bounds,
-        and audit logging.
+        and audit logging. Propagates user_id to user-credential-aware handlers.
         """
         exec_id = f"exec_{uuid.uuid4().hex[:16]}"
         start_time = time.time()
-        input_sanitized = json.dumps(arguments or {})
+        safe_args = dict(arguments or {})
+        if "api_key" in safe_args:
+            safe_args["api_key"] = "[REDACTED]"
+        input_sanitized = json.dumps(safe_args)
 
         # Record initial status safely (fallback with NULL foreign keys if transient/mock context)
         try:
@@ -178,26 +181,37 @@ class ToolExecutorService:
                 error=err
             )
 
-        # 2. Execution with Timeout
+        # 2. Execution with Timeout & user_id injection if supported by handler signature
         result = None
         error_msg = None
         final_status = ToolExecutionStatus.SUCCEEDED
 
+        call_kwargs = dict(arguments or {})
         try:
-            # Check if handler is coroutine
+            sig = inspect.signature(handler)
+            if "user_id" in sig.parameters and "user_id" not in call_kwargs:
+                call_kwargs["user_id"] = user_id
+        except Exception:
+            pass
+
+        try:
             if inspect.iscoroutinefunction(handler):
-                result = await asyncio.wait_for(handler(**arguments), timeout=timeout_limit)
+                result = await asyncio.wait_for(handler(**call_kwargs), timeout=timeout_limit)
             else:
                 loop = asyncio.get_running_loop()
-                result = await asyncio.wait_for(loop.run_in_executor(None, lambda: handler(**arguments)), timeout=timeout_limit)
+                result = await asyncio.wait_for(loop.run_in_executor(None, lambda: handler(**call_kwargs)), timeout=timeout_limit)
         except asyncio.TimeoutError:
             final_status = ToolExecutionStatus.TIMED_OUT
             error_msg = f"Tool execution timed out after {timeout_limit} seconds."
             logger.warning(f"Tool '{tool_id}' timed out ({exec_id})")
         except Exception as e:
             final_status = ToolExecutionStatus.FAILED
-            error_msg = str(e)
-            logger.error(f"Tool '{tool_id}' failed with exception: {e}")
+            try:
+                from src.services.credential_service import redact_secrets_from_text
+                error_msg = redact_secrets_from_text(str(e))
+            except Exception:
+                error_msg = str(e)
+            logger.error(f"Tool '{tool_id}' failed with exception: {error_msg}")
 
         elapsed_ms = int((time.time() - start_time) * 1000)
 

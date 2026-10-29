@@ -1,9 +1,10 @@
-const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v1';
+const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || '/api/v1';
 
 export class ApiClient {
   static async post<T>(endpoint: string, body: any): Promise<T> {
     const res = await fetch(`${BASE_URL}${endpoint}`, {
       method: 'POST',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
       },
@@ -12,7 +13,7 @@ export class ApiClient {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ message: res.statusText }));
-      throw new Error(err.message || 'API request failed');
+      throw new Error(err.detail || err.message || 'API request failed');
     }
 
     return res.json();
@@ -28,6 +29,7 @@ export class ApiClient {
     try {
       const res = await fetch(`${BASE_URL}${endpoint}`, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });

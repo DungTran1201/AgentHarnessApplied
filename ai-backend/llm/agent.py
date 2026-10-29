@@ -6,11 +6,12 @@ import uuid
 import asyncio
 import logging
 import base64
-from typing import TypedDict, Sequence, Optional, List, Dict, Any, AsyncGenerator
+from typing import TypedDict, Sequence, Optional, List, Dict, Any, AsyncGenerator, Callable
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langgraph.graph import StateGraph, END
 
 logger = logging.getLogger("ai_chan.agent")
+
 
 def extract_text_content(content: Any) -> str:
     """Safely normalizes response content from string, list of blocks, or AIMessage."""
@@ -26,34 +27,36 @@ def extract_text_content(content: Any) -> str:
         return "".join(parts)
     return str(content) if content is not None else ""
 
+
 class EnvKeyLoader:
-    """Dynamically loads and validates LLM provider keys and configurations from .env."""
-    
+    """Dynamically loads and validates LLM provider keys and configurations via CredentialService."""
+
     @staticmethod
-    def get_config() -> Dict[str, Any]:
+    def get_config(user_id: Optional[str] = None) -> Dict[str, Any]:
+        default_prov = "gemini"
+        default_mod = "gemini-3.5-flash-lite"
         try:
             from src.core.config import settings
-            gemini_key = (settings.GEMINI_API_KEY or "").strip()
-            openai_key = (settings.OPENAI_API_KEY or "").strip()
-            anthropic_key = (settings.ANTHROPIC_API_KEY or "").strip()
-            groq_key = (settings.GROQ_API_KEY or "").strip()
-            ollama_url = (settings.OLLAMA_BASE_URL or "http://localhost:11434").strip()
-            default_prov = (settings.DEFAULT_LLM_PROVIDER or "gemini").lower().strip()
-            default_mod = (settings.DEFAULT_LLM_MODEL or "gemini-3.5-flash-lite").strip()
+            default_prov = (os.getenv("DEFAULT_LLM_PROVIDER") or settings.DEFAULT_LLM_PROVIDER or "gemini").lower().strip()
+            default_mod = (os.getenv("DEFAULT_LLM_MODEL") or settings.DEFAULT_LLM_MODEL or "gemini-3.5-flash-lite").strip()
+        except Exception:
+            default_prov = os.getenv("DEFAULT_LLM_PROVIDER", "gemini").lower().strip()
+            default_mod = os.getenv("DEFAULT_LLM_MODEL", "gemini-3.5-flash-lite").strip()
+
+        try:
+            from src.services.credential_service import CredentialService
+            gemini_key = CredentialService.get_effective_key(user_id, "google") or ""
+            openai_key = CredentialService.get_effective_key(user_id, "openai") or ""
+            anthropic_key = CredentialService.get_effective_key(user_id, "anthropic") or ""
+            groq_key = CredentialService.get_effective_key(user_id, "groq") or ""
+            ollama_url = CredentialService.get_effective_key(user_id, "ollama") or "http://localhost:11434"
         except Exception:
             gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
             openai_key = os.getenv("OPENAI_API_KEY", "").strip()
             anthropic_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
             groq_key = os.getenv("GROQ_API_KEY", "").strip()
             ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").strip()
-            default_prov = os.getenv("DEFAULT_LLM_PROVIDER", "gemini").lower().strip()
-            default_mod = os.getenv("DEFAULT_LLM_MODEL", "gemini-3.5-flash-lite").strip()
 
-        # Fallback to os.getenv if empty
-        gemini_key = gemini_key or os.getenv("GEMINI_API_KEY", "").strip()
-        openai_key = openai_key or os.getenv("OPENAI_API_KEY", "").strip()
-
-        # Modern Gemini model alias upgrade
         if default_mod in ["gemini-1.5-flash", "gemini-2.5-flash"]:
             default_mod = "gemini-3.5-flash-lite"
 
@@ -64,12 +67,12 @@ class EnvKeyLoader:
             "groq_api_key": groq_key,
             "ollama_base_url": ollama_url,
             "default_provider": default_prov,
-            "default_model": default_mod
+            "default_model": default_mod,
         }
 
     @classmethod
-    def get_available_providers(cls) -> List[str]:
-        cfg = cls.get_config()
+    def get_available_providers(cls, user_id: Optional[str] = None) -> List[str]:
+        cfg = cls.get_config(user_id=user_id)
         available = []
         if cfg["gemini_api_key"]:
             available.append("gemini")
@@ -79,7 +82,10 @@ class EnvKeyLoader:
             available.append("anthropic")
         if cfg["groq_api_key"]:
             available.append("groq")
+        if cfg["ollama_base_url"]:
+            available.append("ollama")
         return available
+
 
 class AgentChatState(TypedDict):
     """LangGraph state representation for chat message workflow."""
@@ -88,10 +94,12 @@ class AgentChatState(TypedDict):
     history: List[Dict[str, Any]]
     target_model: str
     active_provider: str
+    user_id: Optional[str]
     response_text: str
     error: Optional[str]
     failover_triggered: bool
     final_model: str
+
 
 class ModelQuotaTracker:
     """Tracks rate limits and 429 RESOURCE_EXHAUSTED cooldowns per model."""
@@ -106,6 +114,14 @@ class ModelQuotaTracker:
             f"[CircuitBreaker] Model '{model_name}' marked as quota exhausted (429 RESOURCE_EXHAUSTED). "
             f"Cooldown active for {int(retry_delay_seconds)}s."
         )
+
+    @classmethod
+    def clear_cooldowns(cls, model_name: Optional[str] = None) -> None:
+        """Clears quota cooldown state when an API key is replaced or reset."""
+        if model_name:
+            cls._cooldowns.pop(model_name, None)
+        else:
+            cls._cooldowns.clear()
 
     @classmethod
     def is_available(cls, model_name: str) -> bool:
@@ -130,105 +146,332 @@ class ModelQuotaTracker:
             return float(hours * 3600 + minutes * 60)
         return default_seconds
 
+
+class _HttpAnthropicChatModel:
+    """Lightweight LangChain-compatible Anthropic messages adapter when langchain_anthropic is not installed."""
+
+    def __init__(self, model: str, api_key: str, temperature: float = 0.7, timeout: float = 30.0):
+        self.model_name = model
+        self.model = model
+        self.api_key = api_key
+        self.temperature = temperature
+        self.timeout = timeout
+
+    def _format_payload(self, messages: Sequence[BaseMessage]) -> Dict[str, Any]:
+        sys_parts: List[str] = []
+        chat_msgs: List[Dict[str, Any]] = []
+        for m in messages:
+            content_str = extract_text_content(getattr(m, "content", ""))
+            if isinstance(m, SystemMessage):
+                if content_str:
+                    sys_parts.append(content_str)
+            elif isinstance(m, AIMessage):
+                chat_msgs.append({"role": "assistant", "content": content_str or "..."})
+            else:
+                chat_msgs.append({"role": "user", "content": content_str or "..."})
+        if not chat_msgs:
+            chat_msgs.append({"role": "user", "content": "Hello"})
+        payload: Dict[str, Any] = {
+            "model": self.model_name,
+            "max_tokens": 4096,
+            "temperature": self.temperature,
+            "messages": chat_msgs,
+        }
+        if sys_parts:
+            payload["system"] = "\n\n".join(sys_parts)
+        return payload
+
+    def invoke(self, messages: Sequence[BaseMessage]) -> AIMessage:
+        import httpx
+        headers = {
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+        payload = self._format_payload(messages)
+        with httpx.Client(timeout=self.timeout) as client:
+            resp = client.post("https://api.anthropic.com/v1/messages", headers=headers, json=payload)
+            if resp.status_code >= 400:
+                raise RuntimeError(f"Anthropic API error HTTP {resp.status_code}: {resp.text}")
+            data = resp.json()
+            text = extract_text_content(data.get("content", ""))
+            return AIMessage(content=text)
+
+    async def astream(self, messages: Sequence[BaseMessage]):
+        import httpx
+        headers = {
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+        payload = self._format_payload(messages)
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.post("https://api.anthropic.com/v1/messages", headers=headers, json=payload)
+            if resp.status_code >= 400:
+                raise RuntimeError(f"Anthropic API error HTTP {resp.status_code}: {resp.text}")
+            data = resp.json()
+            text = extract_text_content(data.get("content", ""))
+            yield AIMessage(content=text)
+
+
 class LangChainModelFactory:
-    """Factory creating LangChain Chat Model instances based on .env configuration."""
-    
+    """Factory creating LangChain Chat Model instances resolved per-request via CredentialService."""
+
+    # Optional dependency-injection hooks for capturing (model_name, api_key, user_id) in tests
+    _custom_constructors: Dict[str, Callable[[str, str, Optional[str]], Any]] = {}
+
+    @classmethod
+    def register_provider_constructor(
+        cls,
+        provider: str,
+        constructor: Callable[[str, str, Optional[str]], Any]
+    ) -> None:
+        """Registers a custom model constructor for a provider (for dependency injection in tests)."""
+        norm = cls.canonicalize_llm_provider(provider)
+        cls._custom_constructors[norm] = constructor
+
+    @classmethod
+    def clear_provider_constructors(cls) -> None:
+        """Clears all custom provider constructors."""
+        cls._custom_constructors.clear()
+
     @staticmethod
-    def get_candidate_models(provider: str, target_model: Optional[str] = None) -> List[str]:
-        provider = provider.lower().strip()
-        if provider == "gemini":
+    def canonicalize_llm_provider(provider: Optional[str]) -> str:
+        """Normalizes LLM provider aliases ('google'/'gemini' -> 'gemini', 'claude' -> 'anthropic')."""
+        if not provider:
+            return "gemini"
+        p = provider.lower().strip()
+        if p in ("google", "gemini"):
+            return "gemini"
+        if p in ("anthropic", "claude"):
+            return "anthropic"
+        if p in ("openai", "groq", "ollama"):
+            return p
+        return "gemini"
+
+    @classmethod
+    def infer_provider_from_model_id(cls, model_name: Optional[str]) -> Optional[str]:
+        """Infers the LLM provider from a model identifier or database record."""
+        if not model_name or not model_name.strip():
+            return None
+        m_clean = model_name.strip()
+
+        # 1. Check canonical models catalog in SQLite if available
+        try:
+            from src.db import query_one
+            row = query_one("SELECT provider FROM models WHERE id = ?", (m_clean,))
+            if row and row.get("provider"):
+                return cls.canonicalize_llm_provider(row["provider"])
+        except Exception:
+            pass
+
+        # 2. Prefix / family pattern matching
+        m_low = m_clean.lower()
+        if m_low.startswith("gemini"):
+            return "gemini"
+        if m_low.startswith(("gpt-", "o1", "o3", "o4", "chatgpt", "text-embedding")):
+            return "openai"
+        if m_low.startswith("claude"):
+            return "anthropic"
+        if any(m_low.startswith(p) for p in ("llama-3.3", "llama-3.1", "mixtral", "gemma2", "deepseek-r1-distill")):
+            return "groq"
+        if any(m_low.startswith(p) for p in ("llama3", "llama2", "mistral", "qwen", "phi", "codellama", "nomic")):
+            return "ollama"
+        return None
+
+    @classmethod
+    def resolve_provider_for_model(
+        cls,
+        model_name: Optional[str],
+        default_provider: Optional[str] = None
+    ) -> str:
+        """Resolves the provider responsible for executing target_model."""
+        inferred = cls.infer_provider_from_model_id(model_name)
+        if inferred:
+            return inferred
+        return cls.canonicalize_llm_provider(default_provider or "gemini")
+
+    @classmethod
+    def get_candidate_models(cls, provider: str, target_model: Optional[str] = None) -> List[str]:
+        norm_prov = cls.canonicalize_llm_provider(provider)
+
+        # Only include target_model in pool if it belongs to this provider (or has no conflicting provider)
+        target_prov = cls.infer_provider_from_model_id(target_model)
+        compatible_target = target_model if (target_model and (target_prov is None or target_prov == norm_prov)) else None
+
+        if norm_prov == "gemini":
             pool = [
-                target_model,
+                compatible_target,
                 "gemini-3.5-flash-lite",
                 "gemini-flash-lite-latest",
                 "gemini-3.5-flash",
-                "gemini-3.8-flash"
+                "gemini-3.8-flash",
             ]
-            candidates = []
-            for m in pool:
-                if m and m not in candidates and ModelQuotaTracker.is_available(m):
-                    candidates.append(m)
-            if not candidates and target_model:
-                candidates.append(target_model)
-            return candidates
-        elif provider == "openai":
-            pool = [target_model, "gpt-4o-mini", "gpt-4o"]
-            candidates = []
-            for m in pool:
-                if m and m not in candidates and ModelQuotaTracker.is_available(m):
-                    candidates.append(m)
-            return candidates
-        return [target_model] if target_model else []
+        elif norm_prov == "openai":
+            pool = [compatible_target, "gpt-4o-mini", "gpt-4o"]
+        elif norm_prov == "anthropic":
+            pool = [compatible_target, "claude-3-7-sonnet", "claude-3-5-sonnet-latest"]
+        elif norm_prov == "groq":
+            pool = [compatible_target, "llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+        elif norm_prov == "ollama":
+            pool = [compatible_target, "llama3"]
+        else:
+            pool = [compatible_target] if compatible_target else []
 
-    @staticmethod
-    def create_model(provider: str, model_name: Optional[str] = None, user_id: Optional[str] = None):
-        cfg = EnvKeyLoader.get_config()
-        provider = provider.lower()
-        if provider == "google":
-            provider = "gemini"
+        candidates = []
+        for m in pool:
+            if m and m not in candidates and ModelQuotaTracker.is_available(m):
+                candidates.append(m)
+        if not candidates and compatible_target:
+            candidates.append(compatible_target)
+        return candidates
 
-        # Resolve effective key: User Personal Key > System .env Default
-        effective_key = None
+    @classmethod
+    def create_model(
+        cls,
+        provider: str,
+        model_name: Optional[str] = None,
+        user_id: Optional[str] = None
+    ):
+        norm_prov = cls.canonicalize_llm_provider(provider)
+        cred_prov = "google" if norm_prov == "gemini" else norm_prov
+
+        # Resolve effective key strictly via CredentialService (PERSONAL > SYSTEM > NONE)
+        effective_key: Optional[str] = None
+        cred_service_loaded = False
         try:
             from src.services.credential_service import CredentialService
-            effective_key = CredentialService.get_effective_key(user_id, provider)
-        except Exception:
-            pass
-        
-        if provider == "gemini":
-            key = effective_key or cfg["gemini_api_key"]
-            if key:
-                from langchain_google_genai import ChatGoogleGenerativeAI
-                target = model_name or cfg["default_model"] or "gemini-3.5-flash-lite"
-                if target in ["gemini-1.5-flash", "gemini-2.5-flash"]:
-                    target = "gemini-3.5-flash-lite"
-                return ChatGoogleGenerativeAI(
-                    model=target,
-                    google_api_key=key,
-                    temperature=0.7,
-                    timeout=12.0,
-                    max_retries=1
-                )
-        elif provider == "openai":
-            key = effective_key or cfg["openai_api_key"]
-            if key:
-                from langchain_openai import ChatOpenAI
-                target = model_name or "gpt-4o-mini"
-                return ChatOpenAI(
+            cred_service_loaded = True
+            effective_key = CredentialService.get_effective_key(user_id, cred_prov)
+        except Exception as err:
+            logger.warning(f"CredentialService lookup failed for {cred_prov}: {err}")
+
+        if not cred_service_loaded:
+            cfg = EnvKeyLoader.get_config(user_id=user_id)
+            key_map = {
+                "gemini": cfg["gemini_api_key"],
+                "openai": cfg["openai_api_key"],
+                "anthropic": cfg["anthropic_api_key"],
+                "groq": cfg["groq_api_key"],
+                "ollama": cfg["ollama_base_url"],
+            }
+            effective_key = key_map.get(norm_prov)
+
+        key = (effective_key or "").strip()
+        if not key:
+            return None
+
+        # Determine target model name
+        default_models = {
+            "gemini": "gemini-3.5-flash-lite",
+            "openai": "gpt-4o-mini",
+            "anthropic": "claude-3-7-sonnet",
+            "groq": "llama-3.3-70b-versatile",
+            "ollama": "llama3",
+        }
+        target = (model_name or default_models.get(norm_prov, "gemini-3.5-flash-lite")).strip()
+        if norm_prov == "gemini" and target in ["gemini-1.5-flash", "gemini-2.5-flash"]:
+            target = "gemini-3.5-flash-lite"
+
+        # Check injectable constructor hook first (used by automated regression tests)
+        if norm_prov in cls._custom_constructors:
+            return cls._custom_constructors[norm_prov](target, key, user_id)
+
+        if norm_prov == "gemini":
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            return ChatGoogleGenerativeAI(
+                model=target,
+                google_api_key=key,
+                temperature=0.7,
+                timeout=12.0,
+                max_retries=1,
+            )
+
+        elif norm_prov == "openai":
+            from langchain_openai import ChatOpenAI
+            return ChatOpenAI(
+                model=target,
+                api_key=key,
+                temperature=0.7,
+                timeout=30.0,
+            )
+
+        elif norm_prov == "anthropic":
+            try:
+                from langchain_anthropic import ChatAnthropic
+                return ChatAnthropic(
                     model=target,
                     api_key=key,
                     temperature=0.7,
-                    timeout=30.0
+                    timeout=30.0,
                 )
-        elif provider == "anthropic":
-            key = effective_key or cfg["anthropic_api_key"]
-            if key:
+            except ImportError:
+                return _HttpAnthropicChatModel(
+                    model=target,
+                    api_key=key,
+                    temperature=0.7,
+                    timeout=30.0,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to initialize ChatAnthropic: {e}")
+                return None
+
+        elif norm_prov == "groq":
+            try:
+                from langchain_groq import ChatGroq
+                return ChatGroq(
+                    model=target,
+                    api_key=key,
+                    temperature=0.7,
+                    timeout=30.0,
+                )
+            except ImportError:
                 try:
-                    from langchain_anthropic import ChatAnthropic
-                    target = model_name or "claude-3-7-sonnet"
-                    return ChatAnthropic(
+                    from langchain_openai import ChatOpenAI
+                    return ChatOpenAI(
                         model=target,
                         api_key=key,
+                        base_url="https://api.groq.com/openai/v1",
                         temperature=0.7,
-                        timeout=30.0
+                        timeout=30.0,
                     )
                 except Exception as e:
-                    logger.warning(f"Failed to initialize ChatAnthropic: {e}")
-        elif provider == "groq":
-            key = effective_key or cfg["groq_api_key"]
-            if key:
+                    logger.warning(f"Failed to initialize Groq OpenAI-compatible model: {e}")
+                    return None
+            except Exception as e:
+                logger.warning(f"Failed to initialize ChatGroq: {e}")
+                return None
+
+        elif norm_prov == "ollama":
+            try:
+                from langchain_ollama import ChatOllama
+                return ChatOllama(
+                    model=target,
+                    base_url=key,
+                    temperature=0.7,
+                )
+            except ImportError:
                 try:
-                    from langchain_groq import ChatGroq
-                    target = model_name or "llama-3.3-70b-versatile"
-                    return ChatGroq(
+                    from langchain_openai import ChatOpenAI
+                    base_v1 = key.rstrip("/")
+                    if not base_v1.endswith("/v1"):
+                        base_v1 = base_v1 + "/v1"
+                    return ChatOpenAI(
                         model=target,
-                        api_key=key,
+                        api_key="ollama",
+                        base_url=base_v1,
                         temperature=0.7,
-                        timeout=30.0
+                        timeout=30.0,
                     )
                 except Exception as e:
-                    logger.warning(f"Failed to initialize ChatGroq: {e}")
+                    logger.warning(f"Failed to initialize Ollama model: {e}")
+                    return None
+            except Exception as e:
+                logger.warning(f"Failed to initialize ChatOllama: {e}")
+                return None
+
         return None
+
 
 def build_langchain_messages(
     prompt: str,
@@ -364,7 +607,7 @@ class ChatAgentOrchestrator:
         self.workflow = self._build_graph()
 
     def _build_graph(self):
-        """Constructs the LangGraph StateGraph workflow with failover routing."""
+        """Constructs the LangGraph StateGraph workflow with provider-aware routing and failover."""
         builder = StateGraph(AgentChatState)
 
         def context_node(state: AgentChatState) -> Dict[str, Any]:
@@ -372,10 +615,13 @@ class ChatAgentOrchestrator:
             return {"messages": msgs, "error": None, "failover_triggered": False}
 
         def primary_node(state: AgentChatState) -> Dict[str, Any]:
-            cfg = EnvKeyLoader.get_config()
-            primary_prov = cfg["default_provider"] if cfg["default_provider"] in ["gemini", "openai"] else "gemini"
-            target_model = state.get("target_model")
             user_id = state.get("user_id")
+            cfg = EnvKeyLoader.get_config(user_id=user_id)
+            target_model = state.get("target_model") or cfg["default_model"]
+            primary_prov = LangChainModelFactory.resolve_provider_for_model(
+                target_model,
+                default_provider=cfg["default_provider"]
+            )
             candidates = LangChainModelFactory.get_candidate_models(primary_prov, target_model)
             for cand_model in candidates:
                 model = LangChainModelFactory.create_model(primary_prov, cand_model, user_id=user_id)
@@ -398,13 +644,14 @@ class ChatAgentOrchestrator:
                         ModelQuotaTracker.record_quota_exhausted(cand_model, delay)
                     continue
             return {
+                "active_provider": primary_prov,
                 "error": f"All models for provider {primary_prov} failed.",
                 "failover_triggered": True
             }
 
         def fallback_node(state: AgentChatState) -> Dict[str, Any]:
-            # Failover logic: if gemini failed, try openai, or vice-versa (BR-005)
-            fallback_prov = "openai" if state.get("active_provider") == "gemini" else "gemini"
+            active_prov = state.get("active_provider") or "gemini"
+            fallback_prov = "openai" if active_prov == "gemini" else "gemini"
             fallback_candidates = LangChainModelFactory.get_candidate_models(fallback_prov)
             user_id = state.get("user_id")
             for fb_cand in fallback_candidates:
@@ -459,12 +706,28 @@ class ChatAgentOrchestrator:
         user_id: Optional[str] = None,
         conversation_id: Optional[str] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        """Asynchronously streams token chunks with automatic failover (SSE compatible), custom system instruction, multimodal attachments, and dynamic tool calling."""
-        cfg = EnvKeyLoader.get_config()
+        """Asynchronously streams token chunks with model-aware provider routing, automatic failover, and dynamic tool calling."""
+        cfg = EnvKeyLoader.get_config(user_id=user_id)
         messages = build_langchain_messages(prompt, history, system_instruction=system_instruction, attachments=attachments)
         
-        primary_prov = cfg["default_provider"] if cfg["default_provider"] in ["gemini", "openai"] else "gemini"
         target_model = model_override or cfg["default_model"]
+        primary_prov = LangChainModelFactory.resolve_provider_for_model(
+            target_model,
+            default_provider=cfg["default_provider"]
+        )
+
+        # Check if the user has a corrupted personal key for primary_prov so we don't silently mask decryption failure
+        try:
+            from src.services.credential_service import CredentialService
+            cred_prov = "google" if primary_prov == "gemini" else primary_prov
+            key_info = CredentialService.get_effective_key_info(user_id, cred_prov)
+            if key_info.get("decryption_error"):
+                err_msg = key_info.get("error_message") or "Lỗi giải mã khóa API cá nhân."
+                yield {"token": f"⚠️ {err_msg}", "status": "streaming"}
+                yield {"status": "done", "model": target_model, "provider": primary_prov}
+                return
+        except Exception:
+            pass
 
         # Format tools for LangChain function calling if provided
         formatted_tools = []
@@ -479,7 +742,7 @@ class ChatAgentOrchestrator:
                     }
                 })
 
-        # 1. Thử truyền luồng từ Primary Provider với intra-provider model failover (BR-005)
+        # 1. Stream from Primary Provider associated with target_model (with intra-provider failover)
         primary_candidates = LangChainModelFactory.get_candidate_models(primary_prov, target_model)
         for cand_model in primary_candidates:
             primary_model = LangChainModelFactory.create_model(primary_prov, cand_model, user_id=user_id)
@@ -583,7 +846,6 @@ class ChatAgentOrchestrator:
                     return
                 
                 if stream_started:
-                    # Stream hoàn tất thành công qua Primary
                     yield {
                         "status": "done",
                         "model": final_model_name,
@@ -599,136 +861,135 @@ class ChatAgentOrchestrator:
                 if stream_started:
                     yield {"status": "error", "message": f"Stream gián đoạn: {primary_exc}"}
                     return
-                # Thử model tiếp theo trong cùng provider
 
-        # 2. Kích hoạt Fallback Provider nếu Primary provider không khả dụng (BR-005, ADR-003, ADR-005)
-        fallback_prov = "openai" if primary_prov == "gemini" else "gemini"
-        fallback_candidates = LangChainModelFactory.get_candidate_models(fallback_prov)
-        for fb_cand in fallback_candidates:
-            fallback_model = LangChainModelFactory.create_model(fallback_prov, fb_cand, user_id=user_id)
-            if not fallback_model:
-                continue
-            if formatted_tools and hasattr(fallback_model, "bind_tools"):
+        # 2. Cross-provider failover only when no explicit provider-locked model override was forced or when primary failed
+        if not model_override:
+            fallback_prov = "openai" if primary_prov == "gemini" else "gemini"
+            fallback_candidates = LangChainModelFactory.get_candidate_models(fallback_prov)
+            for fb_cand in fallback_candidates:
+                fallback_model = LangChainModelFactory.create_model(fallback_prov, fb_cand, user_id=user_id)
+                if not fallback_model:
+                    continue
+                if formatted_tools and hasattr(fallback_model, "bind_tools"):
+                    try:
+                        fallback_model = fallback_model.bind_tools(formatted_tools)
+                    except Exception as b_err:
+                        logger.warning(f"Could not bind tools to fallback {fb_cand}: {b_err}")
+                stream_started = False
+                tool_calls_requested = []
                 try:
-                    fallback_model = fallback_model.bind_tools(formatted_tools)
-                except Exception as b_err:
-                    logger.warning(f"Could not bind tools to fallback {fb_cand}: {b_err}")
-            stream_started = False
-            tool_calls_requested = []
-            try:
-                fallback_model_name = getattr(fallback_model, "model_name", fb_cand)
-                logger.info(f"Kích hoạt chuyển vùng dự phòng LangGraph sang {fallback_prov} ({fallback_model_name})")
-                async for chunk in fallback_model.astream(messages):
-                    raw_content = chunk.content if hasattr(chunk, "content") else str(chunk)
-                    token_str = extract_text_content(raw_content)
-                    if token_str:
-                        stream_started = True
-                        yield {"token": token_str, "status": "streaming"}
+                    fallback_model_name = getattr(fallback_model, "model_name", fb_cand)
+                    logger.info(f"Kích hoạt chuyển vùng dự phòng LangGraph sang {fallback_prov} ({fallback_model_name})")
+                    async for chunk in fallback_model.astream(messages):
+                        raw_content = chunk.content if hasattr(chunk, "content") else str(chunk)
+                        token_str = extract_text_content(raw_content)
+                        if token_str:
+                            stream_started = True
+                            yield {"token": token_str, "status": "streaming"}
 
-                    if hasattr(chunk, "tool_calls") and chunk.tool_calls:
-                        for tc in chunk.tool_calls:
-                            if tc not in tool_calls_requested:
-                                tool_calls_requested.append(tc)
-                    elif hasattr(chunk, "additional_kwargs") and "function_call" in chunk.additional_kwargs:
-                        fc = chunk.additional_kwargs["function_call"]
-                        try:
-                            f_args = json.loads(fc.get("arguments", "{}"))
-                        except Exception:
-                            f_args = {}
-                        tool_calls_requested.append({
-                            "name": fc.get("name"),
-                            "args": f_args,
-                            "id": f"call_{uuid.uuid4().hex[:8]}"
-                        })
-
-                if tool_calls_requested:
-                    stream_started = True
-                    from src.services.tools.executor import ToolExecutorService
-                    from src.services.tools.models import ToolExecutionStatus
-                    from langchain_core.messages import ToolMessage, AIMessage
-
-                    for tc in tool_calls_requested:
-                        t_name = tc.get("name")
-                        t_args = tc.get("args") or {}
-                        if isinstance(t_args, str):
+                        if hasattr(chunk, "tool_calls") and chunk.tool_calls:
+                            for tc in chunk.tool_calls:
+                                if tc not in tool_calls_requested:
+                                    tool_calls_requested.append(tc)
+                        elif hasattr(chunk, "additional_kwargs") and "function_call" in chunk.additional_kwargs:
+                            fc = chunk.additional_kwargs["function_call"]
                             try:
-                                t_args = json.loads(t_args)
+                                f_args = json.loads(fc.get("arguments", "{}"))
                             except Exception:
-                                t_args = {}
+                                f_args = {}
+                            tool_calls_requested.append({
+                                "name": fc.get("name"),
+                                "args": f_args,
+                                "id": f"call_{uuid.uuid4().hex[:8]}"
+                            })
 
-                        exec_res = await ToolExecutorService.execute_tool(
-                            t_name,
-                            t_args,
-                            project_id=project_id,
-                            user_id=user_id,
-                            conversation_id=conversation_id
-                        )
+                    if tool_calls_requested:
+                        stream_started = True
+                        from src.services.tools.executor import ToolExecutorService
+                        from src.services.tools.models import ToolExecutionStatus
+                        from langchain_core.messages import ToolMessage, AIMessage
 
-                        tool_res_str = ""
-                        if exec_res.status == ToolExecutionStatus.SUCCEEDED and exec_res.result:
-                            tool_res_str = json.dumps(exec_res.result, ensure_ascii=False)
-                        else:
-                            tool_res_str = json.dumps({"error": exec_res.error or "Lỗi thực thi công cụ"}, ensure_ascii=False)
+                        for tc in tool_calls_requested:
+                            t_name = tc.get("name")
+                            t_args = tc.get("args") or {}
+                            if isinstance(t_args, str):
+                                try:
+                                    t_args = json.loads(t_args)
+                                except Exception:
+                                    t_args = {}
 
-                        followup_success = False
-                        try:
-                            followup_msgs = list(messages) + [
-                                AIMessage(content="", tool_calls=[tc]),
-                                ToolMessage(content=tool_res_str, tool_call_id=tc.get("id") or f"call_{t_name}")
-                            ]
-                            async for follow_chunk in fallback_model.astream(followup_msgs):
-                                f_raw = follow_chunk.content if hasattr(follow_chunk, "content") else str(follow_chunk)
-                                f_token = extract_text_content(f_raw)
-                                if f_token:
-                                    followup_success = True
-                                    yield {"token": f_token, "status": "streaming"}
-                        except Exception as f_err:
-                            logger.warning(f"Followup stream from fallback {fb_cand} failed: {f_err}")
+                            exec_res = await ToolExecutorService.execute_tool(
+                                t_name,
+                                t_args,
+                                project_id=project_id,
+                                user_id=user_id,
+                                conversation_id=conversation_id
+                            )
 
-                        if not followup_success:
+                            tool_res_str = ""
                             if exec_res.status == ToolExecutionStatus.SUCCEEDED and exec_res.result:
-                                r = exec_res.result
-                                if t_name == "calculator":
-                                    yield {"token": f"Kết quả phép tính: **{r.get('result')}**", "status": "streaming"}
-                                elif t_name == "date_time_info":
-                                    yield {"token": f"Thời gian hiện tại: `{r.get('formatted') or r.get('iso')}` ({r.get('timezone', 'UTC')})", "status": "streaming"}
-                                elif t_name == "convert_units":
-                                    yield {"token": f"Chuyển đổi thành công: **{r.get('converted_value')} {r.get('to_unit')}**", "status": "streaming"}
-                                else:
-                                    yield {"token": f"Kết quả từ công cụ `{t_name}`:\n```json\n{tool_res_str}\n```", "status": "streaming"}
+                                tool_res_str = json.dumps(exec_res.result, ensure_ascii=False)
                             else:
-                                yield {"token": f"Lỗi thực thi công cụ `{t_name}`: {exec_res.error or 'Không xác định'}", "status": "streaming"}
+                                tool_res_str = json.dumps({"error": exec_res.error or "Lỗi thực thi công cụ"}, ensure_ascii=False)
 
-                    yield {
-                        "status": "done",
-                        "model": fallback_model_name,
-                        "provider": fallback_prov,
-                        "failover": True
-                    }
-                    return
+                            followup_success = False
+                            try:
+                                followup_msgs = list(messages) + [
+                                    AIMessage(content="", tool_calls=[tc]),
+                                    ToolMessage(content=tool_res_str, tool_call_id=tc.get("id") or f"call_{t_name}")
+                                ]
+                                async for follow_chunk in fallback_model.astream(followup_msgs):
+                                    f_raw = follow_chunk.content if hasattr(follow_chunk, "content") else str(follow_chunk)
+                                    f_token = extract_text_content(f_raw)
+                                    if f_token:
+                                        followup_success = True
+                                        yield {"token": f_token, "status": "streaming"}
+                            except Exception as f_err:
+                                logger.warning(f"Followup stream from fallback {fb_cand} failed: {f_err}")
 
-                if stream_started:
-                    yield {
-                        "status": "done",
-                        "model": fallback_model_name,
-                        "provider": fallback_prov,
-                        "failover": True
-                    }
-                    return
-            except Exception as fb_exc:
-                err_str = str(fb_exc)
-                logger.error(f"Fallback model '{fb_cand}' ({fallback_prov}) thất bại: {fb_exc}")
-                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "Too Many Requests" in err_str:
-                    delay = ModelQuotaTracker.parse_retry_delay(err_str)
-                    ModelQuotaTracker.record_quota_exhausted(fb_cand, delay)
-                if stream_started:
-                    yield {"status": "error", "message": f"Stream gián đoạn: {fb_exc}"}
-                    return
+                            if not followup_success:
+                                if exec_res.status == ToolExecutionStatus.SUCCEEDED and exec_res.result:
+                                    r = exec_res.result
+                                    if t_name == "calculator":
+                                        yield {"token": f"Kết quả phép tính: **{r.get('result')}**", "status": "streaming"}
+                                    elif t_name == "date_time_info":
+                                        yield {"token": f"Thời gian hiện tại: `{r.get('formatted') or r.get('iso')}` ({r.get('timezone', 'UTC')})", "status": "streaming"}
+                                    elif t_name == "convert_units":
+                                        yield {"token": f"Chuyển đổi thành công: **{r.get('converted_value')} {r.get('to_unit')}**", "status": "streaming"}
+                                    else:
+                                        yield {"token": f"Kết quả từ công cụ `{t_name}`:\n```json\n{tool_res_str}\n```", "status": "streaming"}
+                                else:
+                                    yield {"token": f"Lỗi thực thi công cụ `{t_name}`: {exec_res.error or 'Không xác định'}", "status": "streaming"}
 
-        # 3. Fallback High-Quality Local/Mock Generator (khi chưa cấu hình API Key trong .env hoặc toàn bộ Cloud Provider bị sự cố)
+                        yield {
+                            "status": "done",
+                            "model": fallback_model_name,
+                            "provider": fallback_prov,
+                            "failover": True
+                        }
+                        return
+
+                    if stream_started:
+                        yield {
+                            "status": "done",
+                            "model": fallback_model_name,
+                            "provider": fallback_prov,
+                            "failover": True
+                        }
+                        return
+                except Exception as fb_exc:
+                    err_str = str(fb_exc)
+                    logger.error(f"Fallback model '{fb_cand}' ({fallback_prov}) thất bại: {fb_exc}")
+                    if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "Too Many Requests" in err_str:
+                        delay = ModelQuotaTracker.parse_retry_delay(err_str)
+                        ModelQuotaTracker.record_quota_exhausted(fb_cand, delay)
+                    if stream_started:
+                        yield {"status": "error", "message": f"Stream gián đoạn: {fb_exc}"}
+                        return
+
+        # 3. Fallback High-Quality Local/Mock Generator (khi chưa cấu hình API Key hoặc toàn bộ Cloud Provider bị sự cố)
         logger.info("Toàn bộ Cloud Provider không khả dụng -> Kích hoạt Local Agent Simulator thích ứng ngữ cảnh.")
         
-        # Phân tích System Prompt để xác định vai trò chuyên môn (Persona)
         persona_role = "Trợ lý Trí tuệ Nhân tạo AI-Chan"
         if system_instruction and system_instruction.strip():
             si_clean = system_instruction.strip()
@@ -906,6 +1167,7 @@ class ChatAgentOrchestrator:
             "model": "agent-simulator",
             "provider": "langgraph-local"
         }
+
 
 # Global singleton instance
 chat_agent = ChatAgentOrchestrator()

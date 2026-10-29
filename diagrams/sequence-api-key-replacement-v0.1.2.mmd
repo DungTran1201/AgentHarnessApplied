@@ -1,0 +1,47 @@
+sequenceDiagram
+    autonumber
+    actor User as Authenticated User (Browser)
+    participant UI as ApiKeysTab.tsx / ApiKeyService
+    participant Proxy as Next.js Route Proxy (/api/[[...path]])
+    participant API as FastAPI (api_keys.py / chat.py)
+    participant CS as CredentialService (credential_service.py)
+    participant Vault as SecretVault (AES-256-GCM)
+    participant DB as SQLite (user_api_keys / models)
+    participant Factory as LangChainModelFactory & ChatAgentOrchestrator
+    participant Adapter as Provider Adapter (Gemini/OpenAI/Anthropic/Groq/Ollama/Search)
+
+    rect rgb(235, 245, 255)
+        Note over User,DB: Stage 1-4: Personal API Key Replacement (OLD_TEST_CREDENTIAL -> NEW_TEST_CREDENTIAL)
+        User->>UI: Enter NEW_TEST_CREDENTIAL & click "Lưu khóa thay thế"
+        UI->>Proxy: PUT /api/v1/settings/api-keys/{provider} {api_key} (Cookie / Bearer JWT)
+        Proxy->>API: Forward PUT /api/v1/settings/api-keys/{provider}
+        API->>CS: set_user_key(user_id, canonical_provider, raw_key)
+        CS->>Vault: encrypt_secret(key_clean) + get_secret_fingerprint(key_clean)
+        Vault-->>CS: ciphertext_b64, key_last4, key_fingerprint (8-char SHA-256)
+        CS->>DB: UPDATE user_api_keys SET key_ciphertext=?, key_last4=?, key_fingerprint=?, validation_status='NOT_TESTED' WHERE user_id=? AND provider=?
+        CS->>Factory: ModelQuotaTracker.clear_cooldowns()
+        CS-->>API: {masked_hint, key_fingerprint, validation_status: "NOT_TESTED", updated_at}
+        API-->>UI: 200 OK (Sanitized metadata, zero plaintext)
+        UI->>Proxy: GET /api/v1/settings/api-keys
+        Proxy->>API: Forward GET /api/v1/settings/api-keys
+        API->>CS: get_user_keys_status(user_id)
+        CS->>DB: SELECT * FROM user_api_keys WHERE user_id=?
+        CS->>Vault: Verify decrypt_secret(key_ciphertext)
+        CS-->>UI: Updated ProviderKeyStatus[] (source="PERSONAL", masked_hint="****2222", key_fingerprint)
+    end
+
+    rect rgb(240, 255, 240)
+        Note over User,Adapter: Stage 5-7: Immediate Runtime Credential Resolution & Provider Routing
+        User->>UI: Send chat message with selected model (e.g. gpt-4o-mini / claude-3-7-sonnet / llama-3.3-70b-versatile)
+        UI->>Proxy: POST /api/v1/conversations/{id}/messages/stream
+        Proxy->>API: Forward SSE chat stream request (authenticated user_id)
+        API->>Factory: chat_agent.astream_agent(prompt, model_override, user_id)
+        Factory->>DB: resolve_provider_for_model(target_model) -> canonical provider
+        Factory->>CS: get_effective_key_info(user_id, provider) [Precedence: PERSONAL > SYSTEM > NONE]
+        CS->>DB: SELECT key_ciphertext FROM user_api_keys WHERE user_id=? AND provider=? AND is_active=1
+        CS->>Vault: decrypt_secret(key_ciphertext)
+        Vault-->>CS: NEW_TEST_CREDENTIAL
+        CS-->>Factory: NEW_TEST_CREDENTIAL (source="PERSONAL")
+        Factory->>Adapter: Construct request-scoped client with NEW_TEST_CREDENTIAL
+        Adapter-->>UI: Stream response tokens via SSE
+    end

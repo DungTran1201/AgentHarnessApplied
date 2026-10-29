@@ -11,10 +11,11 @@ import re
 import time
 import uuid
 import shutil
+import inspect
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Callable
 
 from src.core.config import settings
 from src.core.secret_vault import (
@@ -166,45 +167,96 @@ def redact_secrets_from_text(text: str, secrets: List[Optional[str]] = None) -> 
 class CredentialService:
     """Manages user-scoped credentials with fallback to system .env."""
 
+    # Optional injectable connection validators for deterministic offline tests
+    _custom_validators: Dict[str, Callable[[str], Any]] = {}
+
+    @classmethod
+    def register_connection_validator(cls, provider: str, validator: Callable[[str], Any]) -> None:
+        """Registers a custom connection validator for a canonical provider (used in tests/mocks)."""
+        canon = canonicalize_provider(provider)
+        if canon:
+            cls._custom_validators[canon] = validator
+
+    @classmethod
+    def clear_connection_validators(cls) -> None:
+        """Clears all registered custom connection validators."""
+        cls._custom_validators.clear()
+
+    @staticmethod
+    def _clear_runtime_quota_cooldowns() -> None:
+        """Clears model quota circuit-breaker cooldowns when credentials change."""
+        try:
+            from llm.agent import ModelQuotaTracker
+            ModelQuotaTracker.clear_cooldowns()
+        except Exception:
+            pass
+
     @staticmethod
     def get_system_key(provider: str) -> Optional[str]:
-        """Reads system-level default configuration for a provider from settings/.env."""
+        """Reads system-level default configuration for a provider from os.environ or settings/.env."""
         canon = canonicalize_provider(provider)
         if not canon or canon not in SUPPORTED_PROVIDERS:
             return None
         meta = SUPPORTED_PROVIDERS[canon]
         env_var = meta["env_var"]
 
-        # Check settings attribute first
+        # 1. If explicitly present in os.environ, respect it immediately (including empty override)
+        if env_var in os.environ:
+            env_val = (os.environ.get(env_var) or "").strip()
+            if env_val:
+                return env_val
+            if canon == "google" and "GOOGLE_API_KEY" in os.environ:
+                alt_env = (os.environ.get("GOOGLE_API_KEY") or "").strip()
+                if alt_env:
+                    return alt_env
+            return None
+
+        # 2. Check fallback alias in os.environ for google
+        if canon == "google" and "GOOGLE_API_KEY" in os.environ:
+            alt = (os.environ.get("GOOGLE_API_KEY") or "").strip()
+            if alt:
+                return alt
+
+        # 3. Fallback to settings attribute loaded from .env
         val = getattr(settings, env_var, None)
         if val and str(val).strip():
             return str(val).strip()
 
-        # Check os.environ / os.getenv
-        env_val = os.getenv(env_var, "")
-        if env_val and env_val.strip():
-            return env_val.strip()
-
-        # Fallback aliases
-        if canon == "google":
-            alt = os.getenv("GOOGLE_API_KEY", "").strip()
-            if alt:
-                return alt
-
         return None
 
     @classmethod
-    def get_effective_key(cls, user_id: Optional[str], provider: str) -> Optional[str]:
-        """Resolves active key with strict precedence: User Personal Key > System .env Default."""
+    def get_effective_key_info(cls, user_id: Optional[str], provider: str) -> Dict[str, Any]:
+        """
+        Resolves full credential metadata and plaintext key with strict precedence:
+        PERSONAL > SYSTEM > NONE.
+        Never silently falls back to SYSTEM when an active PERSONAL key fails decryption.
+        """
         canon = canonicalize_provider(provider)
-        if not canon:
-            return None
+        if not canon or canon not in SUPPORTED_PROVIDERS:
+            return {
+                "provider": provider,
+                "key": None,
+                "source": "NONE",
+                "has_personal_key": False,
+                "has_system_key": False,
+                "key_fingerprint": "",
+                "masked_hint": "",
+                "decryption_error": False,
+                "error_message": f"Nhà cung cấp '{provider}' không được hỗ trợ.",
+                "updated_at": None,
+            }
 
-        # 1. User-scoped personal credential (highest precedence)
+        meta = SUPPORTED_PROVIDERS[canon]
+        system_key = cls.get_system_key(canon)
+        has_system = bool(system_key and system_key.strip())
+
+        # 1. User-scoped personal credential (highest precedence: PERSONAL > SYSTEM > NONE)
         if user_id:
             row = query_one(
                 """
-                SELECT key_ciphertext, is_active FROM user_api_keys
+                SELECT id, key_ciphertext, key_last4, key_fingerprint, validation_status,
+                       last_validated_at, last_error_summary, is_active, updated_at
+                FROM user_api_keys
                 WHERE user_id = ? AND provider = ? AND is_active = 1
                 """,
                 (user_id, canon)
@@ -213,27 +265,107 @@ class CredentialService:
                 try:
                     decrypted = decrypt_secret(row["key_ciphertext"])
                     if decrypted and decrypted.strip():
-                        return decrypted.strip()
+                        clean_key = decrypted.strip()
+                        fp = row.get("key_fingerprint") or get_secret_fingerprint(clean_key)
+                        hint = (
+                            f"****{row['key_last4']}"
+                            if (row.get("key_last4") and meta["is_secret"])
+                            else (mask_secret(clean_key) if meta["is_secret"] else clean_key)
+                        )
+                        return {
+                            "provider": canon,
+                            "key": clean_key,
+                            "source": "PERSONAL",
+                            "has_personal_key": True,
+                            "has_system_key": has_system,
+                            "key_fingerprint": fp,
+                            "masked_hint": hint,
+                            "decryption_error": False,
+                            "error_message": None,
+                            "updated_at": row.get("updated_at"),
+                        }
                 except Exception as err:
-                    logger.error(f"Failed to decrypt personal key for user {user_id}, provider {canon}: {err}")
+                    logger.error(
+                        f"Failed to decrypt personal key for user {user_id}, provider {canon}: {err}"
+                    )
+                    return {
+                        "provider": canon,
+                        "key": None,
+                        "source": "PERSONAL",
+                        "has_personal_key": True,
+                        "has_system_key": has_system,
+                        "key_fingerprint": row.get("key_fingerprint") or "",
+                        "masked_hint": f"****{row['key_last4']}" if row.get("key_last4") else "****",
+                        "decryption_error": True,
+                        "error_message": (
+                            "Không thể giải mã khóa API cá nhân đã lưu (SECRET_KEY đã thay đổi hoặc dữ liệu lỗi). "
+                            "Vui lòng nhập lại khóa mới hoặc xóa khóa cá nhân để dùng cấu hình mặc định."
+                        ),
+                        "updated_at": row.get("updated_at"),
+                    }
 
         # 2. System default fallback
-        return cls.get_system_key(canon)
+        if has_system and system_key:
+            clean_sys = system_key.strip()
+            return {
+                "provider": canon,
+                "key": clean_sys,
+                "source": "SYSTEM",
+                "has_personal_key": False,
+                "has_system_key": True,
+                "key_fingerprint": get_secret_fingerprint(clean_sys),
+                "masked_hint": mask_secret(clean_sys) if meta["is_secret"] else clean_sys,
+                "decryption_error": False,
+                "error_message": None,
+                "updated_at": None,
+            }
+
+        # 3. Unconfigured
+        return {
+            "provider": canon,
+            "key": None,
+            "source": "NONE",
+            "has_personal_key": False,
+            "has_system_key": False,
+            "key_fingerprint": "",
+            "masked_hint": "",
+            "decryption_error": False,
+            "error_message": None,
+            "updated_at": None,
+        }
+
+    @classmethod
+    def get_effective_key(
+        cls,
+        user_id: Optional[str],
+        provider: str,
+        raise_on_decryption_error: bool = False
+    ) -> Optional[str]:
+        """
+        Resolves active key with strict precedence: PERSONAL > SYSTEM > NONE.
+        If a stored personal key exists but cannot be decrypted, does NOT silently fall back
+        to the system key.
+        """
+        info = cls.get_effective_key_info(user_id, provider)
+        if info.get("decryption_error"):
+            if raise_on_decryption_error:
+                raise ValueError(info.get("error_message") or "Decryption failed for stored personal key.")
+            return None
+        return info.get("key")
 
     @classmethod
     def is_provider_configured(cls, provider: str, user_id: Optional[str] = None) -> bool:
-        """Checks if a provider has a valid key configured either by user or system."""
+        """Checks if a provider has a valid decryptable key configured either by user or system."""
         key = cls.get_effective_key(user_id, provider)
         return bool(key and key.strip())
 
     @classmethod
     def get_user_keys_status(cls, user_id: str) -> List[Dict[str, Any]]:
         """Returns non-sensitive metadata and configuration status for all supported providers."""
-        # Query all personal keys for this user in one query
         personal_rows = query_all(
             """
-            SELECT provider, key_last4, validation_status, last_validated_at,
-                   last_error_summary, is_active, updated_at
+            SELECT provider, key_ciphertext, key_last4, key_fingerprint, validation_status,
+                   last_validated_at, last_error_summary, is_active, updated_at
             FROM user_api_keys WHERE user_id = ?
             """,
             (user_id,)
@@ -246,19 +378,42 @@ class CredentialService:
             has_system = bool(system_key and system_key.strip())
             personal_row = personal_by_prov.get(p_id)
             has_personal = bool(personal_row and personal_row.get("is_active"))
+            decryption_error = False
+            key_fingerprint = ""
 
-            if has_personal:
+            if has_personal and personal_row:
                 source = "PERSONAL"
-                is_configured = True
-                masked_hint = f"****{personal_row['key_last4']}" if personal_row.get("key_last4") else "Configured"
-                val_status = personal_row.get("validation_status") or "NOT_TESTED"
-                last_tested = personal_row.get("last_validated_at")
-                last_error = personal_row.get("last_error_summary")
                 updated_at = personal_row.get("updated_at")
-            elif has_system:
+                last_tested = personal_row.get("last_validated_at")
+                try:
+                    decrypted = decrypt_secret(personal_row["key_ciphertext"])
+                    if not decrypted or not decrypted.strip():
+                        raise ValueError("Empty decrypted secret")
+                    clean_dec = decrypted.strip()
+                    is_configured = True
+                    masked_hint = (
+                        f"****{personal_row['key_last4']}"
+                        if (personal_row.get("key_last4") and meta["is_secret"])
+                        else (mask_secret(clean_dec) if meta["is_secret"] else clean_dec)
+                    )
+                    key_fingerprint = personal_row.get("key_fingerprint") or get_secret_fingerprint(clean_dec)
+                    val_status = personal_row.get("validation_status") or "NOT_TESTED"
+                    last_error = personal_row.get("last_error_summary")
+                except Exception:
+                    decryption_error = True
+                    is_configured = False
+                    masked_hint = f"****{personal_row['key_last4']}" if personal_row.get("key_last4") else "****"
+                    key_fingerprint = personal_row.get("key_fingerprint") or ""
+                    val_status = "INVALID"
+                    last_error = (
+                        "Không thể giải mã khóa API cá nhân đã lưu (SECRET_KEY đã thay đổi hoặc dữ liệu lỗi). "
+                        "Vui lòng lưu lại khóa mới hoặc xóa khóa cá nhân để khôi phục."
+                    )
+            elif has_system and system_key:
                 source = "SYSTEM"
                 is_configured = True
                 masked_hint = mask_secret(system_key) if meta["is_secret"] else system_key
+                key_fingerprint = get_secret_fingerprint(system_key)
                 val_status = "NOT_TESTED"
                 last_tested = None
                 last_error = None
@@ -267,6 +422,7 @@ class CredentialService:
                 source = "NONE"
                 is_configured = False
                 masked_hint = ""
+                key_fingerprint = ""
                 val_status = "NOT_TESTED"
                 last_tested = None
                 last_error = None
@@ -283,17 +439,49 @@ class CredentialService:
                 "is_secret": meta["is_secret"],
                 "is_configured": is_configured,
                 "source": source,
+                "effective_source": source,
                 "masked_hint": masked_hint,
+                "key_fingerprint": key_fingerprint,
                 "has_personal_key": has_personal,
                 "has_system_key": has_system,
+                "decryption_error": decryption_error,
                 "validation_status": val_status,
                 "last_validated_at": last_tested,
                 "last_error_summary": last_error,
                 "updated_at": updated_at,
                 "requires_restart": False,
+                "routing_supported": True,
             })
 
         return results
+
+    @classmethod
+    def get_provider_diagnostics(cls, user_id: Optional[str], provider: str) -> Dict[str, Any]:
+        """Returns non-sensitive credential resolution diagnostics for a provider."""
+        canon = canonicalize_provider(provider)
+        if not canon or canon not in SUPPORTED_PROVIDERS:
+            raise ValueError(f"Nhà cung cấp '{provider}' không được hỗ trợ trong danh mục allowlist.")
+
+        meta = SUPPORTED_PROVIDERS[canon]
+        info = cls.get_effective_key_info(user_id, canon)
+        return {
+            "provider": canon,
+            "name": meta["name"],
+            "category": meta["category"],
+            "env_var": meta["env_var"],
+            "effective_source": info["source"],
+            "is_configured": bool(info.get("key")) and not info.get("decryption_error"),
+            "has_personal_key": info["has_personal_key"],
+            "has_system_key": info["has_system_key"],
+            "masked_hint": info["masked_hint"],
+            "key_fingerprint": info["key_fingerprint"],
+            "decryption_error": info["decryption_error"],
+            "error_message": info["error_message"],
+            "updated_at": info["updated_at"],
+            "routing_supported": True,
+            "default_model": meta.get("default_model"),
+            "precedence_contract": "PERSONAL > SYSTEM > NONE",
+        }
 
     @classmethod
     def set_user_key(cls, user_id: str, provider: str, raw_key: str) -> Dict[str, Any]:
@@ -311,10 +499,12 @@ class CredentialService:
         if len(key_clean) > 500:
             raise ValueError("Độ dài khóa API vượt quá giới hạn an toàn (tối đa 500 ký tự).")
 
+        meta = SUPPORTED_PROVIDERS[canon]
         # Encrypt at rest with AES-256-GCM
         ciphertext = encrypt_secret(key_clean)
         last4 = key_clean[-4:] if len(key_clean) >= 4 else key_clean
         fingerprint = get_secret_fingerprint(key_clean)
+        masked_hint = f"****{last4}" if meta["is_secret"] else key_clean
 
         existing = query_one(
             "SELECT id FROM user_api_keys WHERE user_id = ? AND provider = ?",
@@ -328,10 +518,10 @@ class CredentialService:
                 UPDATE user_api_keys
                 SET key_ciphertext = ?, key_last4 = ?, key_fingerprint = ?,
                     validation_status = 'NOT_TESTED', last_error_summary = NULL,
-                    is_active = 1, updated_at = CURRENT_TIMESTAMP
+                    is_active = 1, updated_at = ?
                 WHERE user_id = ? AND provider = ?
                 """,
-                (ciphertext, last4, fingerprint, user_id, canon)
+                (ciphertext, last4, fingerprint, now_iso, user_id, canon)
             )
             key_id = existing["id"]
         else:
@@ -341,19 +531,27 @@ class CredentialService:
                 INSERT INTO user_api_keys (
                     id, user_id, provider, key_ciphertext, key_last4, key_fingerprint,
                     validation_status, is_active, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 'NOT_TESTED', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ) VALUES (?, ?, ?, ?, ?, ?, 'NOT_TESTED', 1, ?, ?)
                 """,
-                (key_id, user_id, canon, ciphertext, last4, fingerprint)
+                (key_id, user_id, canon, ciphertext, last4, fingerprint, now_iso, now_iso)
             )
 
-        logger.info(f"User {user_id} successfully stored encrypted credential for provider {canon}.")
+        # Clear any rate-limit/quota cooldowns from the previous key so the new key is used immediately
+        cls._clear_runtime_quota_cooldowns()
+
+        logger.info(
+            f"User {user_id} successfully stored encrypted credential for provider {canon} (fp={fingerprint})."
+        )
         return {
             "provider": canon,
             "is_configured": True,
             "source": "PERSONAL",
-            "masked_hint": f"****{last4}",
+            "effective_source": "PERSONAL",
+            "masked_hint": masked_hint,
+            "key_fingerprint": fingerprint,
+            "decryption_error": False,
             "validation_status": "NOT_TESTED",
-            "updated_at": now_iso
+            "updated_at": now_iso,
         }
 
     @classmethod
@@ -368,18 +566,24 @@ class CredentialService:
             (user_id, canon)
         )
 
+        # Clear any rate-limit/quota cooldowns from the removed personal key
+        cls._clear_runtime_quota_cooldowns()
+
         system_key = cls.get_system_key(canon)
         has_system = bool(system_key and system_key.strip())
         meta = SUPPORTED_PROVIDERS[canon]
+        sys_fp = get_secret_fingerprint(system_key) if (has_system and system_key) else ""
 
         logger.info(f"User {user_id} removed personal credential for provider {canon}.")
         return {
             "provider": canon,
             "is_configured": has_system,
             "source": "SYSTEM" if has_system else "NONE",
+            "effective_source": "SYSTEM" if has_system else "NONE",
             "masked_hint": mask_secret(system_key) if (has_system and meta["is_secret"]) else (system_key if has_system else ""),
+            "key_fingerprint": sys_fp,
             "has_system_key": has_system,
-            "validation_status": "NOT_TESTED"
+            "validation_status": "NOT_TESTED",
         }
 
     @classmethod
@@ -391,17 +595,33 @@ class CredentialService:
     ) -> Dict[str, Any]:
         """
         Validates API key connectivity with the target provider.
-        Performs lightweight ping without consuming unnecessary quota.
+        Distinguishes between testing an unsaved candidate_key vs testing the saved effective credential.
         Redacts all secrets from exceptions and responses.
         """
         canon = canonicalize_provider(provider)
         if not canon or canon not in SUPPORTED_PROVIDERS:
             raise ValueError(f"Nhà cung cấp '{provider}' không được hỗ trợ trong danh mục allowlist.")
 
-        # Determine effective key to validate
-        effective_key = (candidate_key or "").strip()
-        if not effective_key:
-            effective_key = cls.get_effective_key(user_id, canon) or ""
+        is_candidate = bool(candidate_key and candidate_key.strip())
+        if is_candidate:
+            effective_key = (candidate_key or "").strip()
+            tested_source = "CANDIDATE"
+        else:
+            info = cls.get_effective_key_info(user_id, canon)
+            if info.get("decryption_error"):
+                err_msg = info.get("error_message") or "Không thể giải mã khóa cá nhân đã lưu."
+                if user_id:
+                    execute_commit(
+                        """
+                        UPDATE user_api_keys
+                        SET validation_status = 'INVALID', last_validated_at = CURRENT_TIMESTAMP, last_error_summary = ?
+                        WHERE user_id = ? AND provider = ?
+                        """,
+                        (err_msg, user_id, canon)
+                    )
+                raise ValueError(err_msg)
+            effective_key = (info.get("key") or "").strip()
+            tested_source = info.get("source") or "NONE"
 
         if not effective_key:
             raise ValueError(f"Chưa có cấu hình khóa API cho nhà cung cấp {SUPPORTED_PROVIDERS[canon]['name']}.")
@@ -410,9 +630,15 @@ class CredentialService:
         tested_at_str = datetime.now(timezone.utc).isoformat()
         status_result = "VALID"
         error_summary = None
+        key_fp = get_secret_fingerprint(effective_key)
 
         try:
-            if canon == "google":
+            if canon in cls._custom_validators:
+                validator_fn = cls._custom_validators[canon]
+                res_val = validator_fn(effective_key)
+                if inspect.isawaitable(res_val):
+                    await res_val
+            elif canon == "google":
                 from langchain_google_genai import ChatGoogleGenerativeAI
                 llm = ChatGoogleGenerativeAI(
                     model="gemini-3.5-flash-lite",
@@ -434,7 +660,6 @@ class CredentialService:
 
             elif canon == "anthropic":
                 import httpx
-                # Validate against Anthropic messages endpoint with max_tokens=1
                 headers = {
                     "x-api-key": effective_key,
                     "anthropic-version": "2023-06-01",
@@ -499,25 +724,30 @@ class CredentialService:
             error_summary = clean_err
             status_result = "INVALID" if any(w in raw_err.lower() for w in ["401", "403", "unauthorized", "invalid", "api_key_invalid"]) else "ERROR"
 
-        # Update validation record in DB if user personal key was tested
-        if user_id:
+        # Only update stored personal key status if we actually tested the saved PERSONAL key (not an unsaved candidate!)
+        if user_id and not is_candidate and tested_source == "PERSONAL":
             execute_commit(
                 """
                 UPDATE user_api_keys
-                SET validation_status = ?, last_validated_at = CURRENT_TIMESTAMP, last_error_summary = ?
+                SET validation_status = ?, last_validated_at = ?, last_error_summary = ?
                 WHERE user_id = ? AND provider = ?
                 """,
-                (status_result, error_summary, user_id, canon)
+                (status_result, tested_at_str, error_summary, user_id, canon)
             )
 
         provider_name = SUPPORTED_PROVIDERS[canon]["name"]
+        source_label = "khóa ứng viên (chưa lưu)" if is_candidate else (
+            "khóa cá nhân" if tested_source == "PERSONAL" else "khóa mặc định hệ thống (.env)"
+        )
         if status_result == "VALID":
             return {
                 "healthy": True,
                 "provider": canon,
                 "latency_ms": latency_ms,
                 "validation_status": "VALID",
-                "message": f"Kết nối thành công với {provider_name} (độ trễ {latency_ms}ms).",
+                "tested_source": tested_source,
+                "key_fingerprint": key_fp,
+                "message": f"Kết nối thành công với {provider_name} qua {source_label} (độ trễ {latency_ms}ms).",
                 "tested_at": tested_at_str
             }
         else:
@@ -526,16 +756,24 @@ class CredentialService:
                 "provider": canon,
                 "latency_ms": latency_ms,
                 "validation_status": status_result,
-                "message": f"Kiểm tra kết nối thất bại: {error_summary}",
+                "tested_source": tested_source,
+                "key_fingerprint": key_fp,
+                "message": f"Kiểm tra kết nối ({source_label}) thất bại: {error_summary}",
                 "tested_at": tested_at_str
             }
 
     @classmethod
-    def update_system_env_variable(cls, env_var: str, new_value: str) -> Dict[str, Any]:
+    def update_system_env_variable(
+        cls,
+        env_var: str,
+        new_value: str,
+        user_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Safely updates an allowlisted environment variable in the system .env file.
         Uses atomic file replacement with backup preservation.
         Strictly restricted to allowlisted variable names.
+        Reports whether a personal key override still shadows the system variable for the current user.
         """
         env_var_clean = (env_var or "").strip().upper()
         if env_var_clean not in ALLOWLISTED_SYSTEM_ENV_VARS:
@@ -547,12 +785,10 @@ class CredentialService:
         backend_dir = Path(__file__).resolve().parent.parent.parent
         env_file = backend_dir / ".env"
         if not env_file.exists():
-            # If not in backend, check root directory
             root_env = backend_dir.parent / ".env"
             if root_env.exists():
                 env_file = root_env
             else:
-                # Default to backend_dir / .env
                 env_file = backend_dir / ".env"
 
         # Backup existing file before write
@@ -594,14 +830,46 @@ class CredentialService:
                 except Exception:
                     pass
 
-        # Update in-memory settings if available
+        # Update in-memory settings and os.environ immediately
         if hasattr(settings, env_var_clean):
             setattr(settings, env_var_clean, val_clean)
         os.environ[env_var_clean] = val_clean
 
+        cls._clear_runtime_quota_cooldowns()
+
+        # Check if user has a PERSONAL override for this provider
+        target_provider = None
+        for p_id, meta in SUPPORTED_PROVIDERS.items():
+            if meta["env_var"] == env_var_clean:
+                target_provider = p_id
+                break
+
+        has_personal_override = False
+        effective_source = "SYSTEM" if val_clean else "NONE"
+        if user_id and target_provider:
+            info = cls.get_effective_key_info(user_id, target_provider)
+            if info.get("has_personal_key"):
+                has_personal_override = True
+                effective_source = "PERSONAL"
+
+        base_msg = (
+            f"Đã cập nhật {env_var_clean} vào .env và đồng bộ cấu hình hệ thống thành công."
+        )
+        if has_personal_override:
+            base_msg += (
+                " Lưu ý: Tài khoản của bạn hiện đang bật Khóa cá nhân (PERSONAL) cho nhà cung cấp này "
+                "nên khóa cá nhân vẫn được ưu tiên sử dụng (PERSONAL > SYSTEM). "
+                "Hãy xóa khóa cá nhân nếu bạn muốn sử dụng khóa hệ thống vừa cập nhật."
+            )
+
         logger.info(f"System environment variable {env_var_clean} safely updated via atomic write.")
         return {
             "env_var": env_var_clean,
+            "provider": target_provider,
             "restart_required": True,
-            "message": f"Đã cập nhật {env_var_clean} vào .env thành công. Vui lòng khởi động lại dịch vụ backend/demo để áp dụng toàn diện cho các tiến trình phụ thuộc."
+            "has_personal_override": has_personal_override,
+            "effective_source": effective_source,
+            "masked_hint": mask_secret(val_clean) if val_clean else "",
+            "key_fingerprint": get_secret_fingerprint(val_clean) if val_clean else "",
+            "message": base_msg
         }

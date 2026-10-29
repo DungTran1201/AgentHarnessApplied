@@ -21,10 +21,18 @@ def _get_encryption_key() -> bytes:
     """Derives a deterministic 256-bit (32-byte) key for AES-GCM.
     
     Prefers AI_CHAN_SECRET_ENCRYPTION_KEY if set, otherwise derives from SECRET_KEY.
+    Checks os.environ and settings dynamically so runtime and packaged launcher keys remain consistent.
     """
-    raw_key = getattr(settings, "AI_CHAN_SECRET_ENCRYPTION_KEY", "") or os.environ.get("AI_CHAN_SECRET_ENCRYPTION_KEY", "")
+    raw_key = (
+        os.environ.get("AI_CHAN_SECRET_ENCRYPTION_KEY", "").strip()
+        or getattr(settings, "AI_CHAN_SECRET_ENCRYPTION_KEY", "").strip()
+    )
     if not raw_key:
-        raw_key = settings.SECRET_KEY or "ai-chan-default-secure-vault-key"
+        raw_key = (
+            os.environ.get("SECRET_KEY", "").strip()
+            or (settings.SECRET_KEY or "").strip()
+            or "ai-chan-default-secure-vault-key"
+        )
 
     hkdf = HKDF(
         algorithm=hashes.SHA256(),

@@ -82,7 +82,7 @@ async def list_models(
 ):
     """
     Lấy danh mục toàn bộ các mô hình Agent được cấu hình từ các nhà cung cấp bên ngoài.
-    Hỗ trợ lọc theo trạng thái (ALL, ACTIVE, INACTIVE, ARCHIVED) và tự động nhận diện khóa API từ .env.
+    Hỗ trợ lọc theo trạng thái (ALL, ACTIVE, INACTIVE, ARCHIVED) và tự động nhận diện khóa API từ CredentialService.
     """
     filter_upper = (status_filter or "ALL").upper().strip()
     if filter_upper in ("ACTIVE", "INACTIVE", "ARCHIVED", "DEGRADED"):
@@ -104,12 +104,7 @@ async def create_model(
 ):
     """
     Đăng ký mô hình LLM mới vào danh mục hệ thống (FR-035, OP-022).
-    Ràng buộc:
-    - ID là duy nhất toàn cục, cấm trùng lặp (BR-022).
-    - Provider thuộc danh mục hỗ trợ: google, anthropic, openai, groq, ollama.
-    - Giới hạn biên an toàn: context_window >= 1000, max_tokens >= 256, max_tokens <= context_window (BR-024).
     """
-    # BR-024: Kiểm tra ngưỡng biên an toàn
     if req.max_tokens > req.context_window:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -124,7 +119,6 @@ async def create_model(
             detail=f"Nhà cung cấp không hợp lệ '{req.provider}'. Phải là một trong: {', '.join(valid_providers)}."
         )
 
-    # BR-022: Kiểm tra tính duy nhất của ID mô hình
     existing = query_one("SELECT id FROM models WHERE id = ?", (req.id.strip(),))
     if existing:
         raise HTTPException(
@@ -148,14 +142,14 @@ async def create_model(
     )
 
     created_row = query_one("SELECT * FROM models WHERE id = ?", (req.id.strip(),))
-    record = format_model_record(created_row)
+    user_id = current_user.get("id") if isinstance(current_user, dict) else None
+    record = format_model_record(created_row, user_id=user_id)
     record["message"] = "Đăng ký mô hình mới thành công."
     return record
 
 
 # ------------------------------------------------------------------------------
 # 6.9 GET /api/v1/models/search (FR-037, FR-038, NFR-022, OP-024, UC-MOD-003)
-# Lưu ý: Đặt route này trước /{model_id} để tránh nhầm lẫn path parameter
 # ------------------------------------------------------------------------------
 @models_router.get("/search")
 async def search_models(
@@ -192,7 +186,6 @@ async def search_models(
         sql += " AND is_default = ?"
         params.append(1 if is_default else 0)
 
-    # Sắp xếp
     if sort == "latency_asc":
         sql += " ORDER BY CASE WHEN latency_ms IS NULL THEN 1 ELSE 0 END, latency_ms ASC, name ASC"
     elif sort == "context_desc":
@@ -203,7 +196,6 @@ async def search_models(
     rows = query_all(sql, tuple(params))
     items = [format_model_record(r, user_id=current_user.get("id") if isinstance(current_user, dict) else None) for r in rows]
 
-    # Lọc tiếp theo has_api_key nếu có
     if has_api_key is not None:
         items = [item for item in items if item["has_api_key"] == has_api_key]
 
@@ -224,10 +216,6 @@ async def set_default_model(
     req: SetDefaultModelRequest,
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Thiết lập mô hình mặc định cho các cuộc trò chuyện mới.
-    Ràng buộc: Mô hình chỉ định phải tồn tại và đang ở trạng thái ACTIVE (BR-013).
-    """
     model = query_one("SELECT * FROM models WHERE id = ?", (req.model_id,))
     if not model:
         raise HTTPException(
@@ -241,7 +229,6 @@ async def set_default_model(
             detail=f"Mô hình '{model['name']}' đang ở trạng thái {model['status']}. Chỉ có thể đặt mô hình ACTIVE làm mặc định (BR-013)."
         )
 
-    # Đặt tất cả mô hình về không mặc định, sau đó kích hoạt mô hình đích
     execute_commit("UPDATE models SET is_default = 0")
     execute_commit("UPDATE models SET is_default = 1 WHERE id = ?", (req.model_id,))
 
@@ -259,9 +246,6 @@ async def get_model_detail(
     model_id: str,
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Xem chi tiết thông số kỹ thuật, cấu hình và độ trễ của một mô hình cụ thể.
-    """
     model = query_one("SELECT * FROM models WHERE id = ?", (model_id,))
     if not model:
         raise HTTPException(
@@ -281,12 +265,6 @@ async def update_model(
     req: UpdateModelRequest,
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Cập nhật thông tin cấu hình mô hình hiện có (FR-036, OP-023).
-    Ràng buộc:
-    - ID và Provider là bất biến, không thể sửa đổi (BR-022).
-    - Giới hạn biên: context_window >= 1000, max_tokens >= 256, max_tokens <= context_window (BR-024).
-    """
     model = query_one("SELECT * FROM models WHERE id = ?", (model_id,))
     if not model:
         raise HTTPException(
@@ -299,7 +277,6 @@ async def update_model(
     new_mt = req.max_tokens if req.max_tokens is not None else model["max_tokens"]
     new_streaming = (1 if req.supports_streaming else 0) if req.supports_streaming is not None else model["supports_streaming"]
 
-    # BR-024: Kiểm tra ngưỡng biên an toàn
     if new_cw < 1000 or new_mt < 256:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -321,7 +298,8 @@ async def update_model(
     )
 
     updated_row = query_one("SELECT * FROM models WHERE id = ?", (model_id,))
-    record = format_model_record(updated_row)
+    user_id = current_user.get("id") if isinstance(current_user, dict) else None
+    record = format_model_record(updated_row, user_id=user_id)
     record["message"] = "Cập nhật cấu hình mô hình thành công."
     return record
 
@@ -334,12 +312,6 @@ async def archive_model(
     model_id: str,
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Xóa mềm (chuyển sang ARCHIVED) mô hình khỏi danh mục hoạt động (FR-039, OP-025).
-    Ràng buộc:
-    - Không xóa vật lý dữ liệu (BR-012).
-    - Cấm tuyệt đối xóa mềm mô hình đang giữ cờ mặc định is_default = 1 (BR-023).
-    """
     model = query_one("SELECT * FROM models WHERE id = ?", (model_id,))
     if not model:
         raise HTTPException(
@@ -347,7 +319,6 @@ async def archive_model(
             detail=f"Không tìm thấy mô hình với mã định danh '{model_id}'."
         )
 
-    # BR-023: Invariant Default Model Guard
     if bool(model["is_default"]):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -376,7 +347,7 @@ async def test_model_connection(
 ):
     """
     Kiểm tra trực tiếp kết nối (Ping / Health Check) tới API nhà cung cấp và đo lường độ trễ mạng.
-    Tự động cập nhật latency_ms và last_checked_at vào cơ sở dữ liệu.
+    Sử dụng khóa hiệu lực từ CredentialService (PERSONAL > SYSTEM > NONE) và redact toàn bộ bí mật.
     """
     model = query_one("SELECT * FROM models WHERE id = ?", (model_id,))
     if not model:
@@ -390,20 +361,19 @@ async def test_model_connection(
     if not check_provider_api_key(provider, user_id=user_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Chưa cấu hình API Key cho nhà cung cấp '{provider}' (BR-014)."
+            detail=f"Chưa cấu hình API Key hợp lệ cho nhà cung cấp '{provider}' (BR-014)."
         )
 
     start_time = time.perf_counter()
     tested_at_str = datetime.now(timezone.utc).isoformat()
+    effective_key: Optional[str] = None
 
     try:
         from src.services.credential_service import CredentialService, redact_secrets_from_text
-        effective_key = CredentialService.get_effective_key(user_id, provider)
+        effective_key = CredentialService.get_effective_key(user_id, provider, raise_on_decryption_error=True)
 
-        # Thực hiện ping kết nối thực tế hoặc đo độ trễ tới endpoint
         if provider in ("google", "gemini"):
             from langchain_google_genai import ChatGoogleGenerativeAI
-            # Google GenAI yêu cầu deadline tối thiểu 10s -> sử dụng timeout 15.0s
             llm = ChatGoogleGenerativeAI(model=model_id, google_api_key=effective_key, timeout=15.0)
             await llm.ainvoke("ping")
         elif provider == "openai":
@@ -417,19 +387,22 @@ async def test_model_connection(
                 resp = await client.get(endpoint)
                 if resp.status_code != 200:
                     raise ValueError(f"Ollama trả về HTTP {resp.status_code}")
+        elif provider in ("anthropic", "groq"):
+            val_res = await CredentialService.validate_connection(provider=provider, user_id=user_id)
+            if not val_res.get("healthy"):
+                raise ValueError(val_res.get("message") or f"Kiểm tra kết nối {provider} thất bại.")
         else:
             time.sleep(0.05)
 
         latency_ms = max(1, int((time.perf_counter() - start_time) * 1000))
     except Exception as exc:
         from src.services.credential_service import redact_secrets_from_text
-        err_msg = redact_secrets_from_text(str(exc))
+        err_msg = redact_secrets_from_text(str(exc), [effective_key])
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Lỗi kết nối tới nhà cung cấp {provider}: {err_msg}"
         )
 
-    # Cập nhật kết quả vào CSDL
     execute_commit(
         "UPDATE models SET latency_ms = ?, last_checked_at = CURRENT_TIMESTAMP WHERE id = ?",
         (latency_ms, model_id)
@@ -454,7 +427,7 @@ async def activate_model(
 ):
     """
     Kích hoạt trạng thái của mô hình sang ACTIVE để đưa vào giao diện chat.
-    Yêu cầu: Nhà cung cấp phải có API Key hợp lệ trong .env (BR-014).
+    Yêu cầu: Nhà cung cấp phải có API Key hợp lệ (khóa cá nhân PERSONAL hoặc hệ thống .env) (BR-014).
     """
     model = query_one("SELECT * FROM models WHERE id = ?", (model_id,))
     if not model:
@@ -464,10 +437,11 @@ async def activate_model(
         )
 
     provider = model["provider"]
-    if not check_provider_api_key(provider):
+    user_id = current_user.get("id") if isinstance(current_user, dict) else None
+    if not check_provider_api_key(provider, user_id=user_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Không thể kích hoạt mô hình: Chưa cấu hình API Key cho nhà cung cấp '{provider}' trong file .env (BR-014)."
+            detail=f"Không thể kích hoạt mô hình: Chưa cấu hình API Key cho nhà cung cấp '{provider}' trong Settings hoặc file .env (BR-014)."
         )
 
     execute_commit(
@@ -490,10 +464,6 @@ async def deactivate_model(
     model_id: str,
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Tạm dừng mô hình (chuyển sang INACTIVE) mà KHÔNG XÓA VẬT LÝ khỏi CSDL (BR-012).
-    Ràng buộc: Không được hủy kích hoạt mô hình đang được đặt làm mặc định hệ thống (BR-013).
-    """
     model = query_one("SELECT * FROM models WHERE id = ?", (model_id,))
     if not model:
         raise HTTPException(

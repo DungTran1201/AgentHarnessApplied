@@ -62,14 +62,18 @@ class ProviderKeyStatusResponse(BaseModel):
     is_secret: bool = Field(default=True, description="Khóa có phải là thông tin bí mật cần che giấu không")
     is_configured: bool = Field(..., description="Trạng thái đã được cấu hình hay chưa")
     source: str = Field(..., description="Nguồn cấu hình: PERSONAL (khóa riêng), SYSTEM (mặc định server), hoặc NONE")
+    effective_source: str = Field(default="NONE", description="Nguồn khóa thực tế đang có hiệu lực tại runtime")
     masked_hint: str = Field(default="", description="Gợi ý đã che giấu (ví dụ: '****abcd')")
+    key_fingerprint: str = Field(default="", description="Dấu vân tay SHA-256 rút gọn không thể đảo ngược (8 ký tự)")
     has_personal_key: bool = Field(..., description="Người dùng hiện tại có khóa cá nhân riêng hay không")
     has_system_key: bool = Field(..., description="Hệ thống có cấu hình mặc định .env hay không")
+    decryption_error: bool = Field(default=False, description="Khóa cá nhân bị lỗi giải mã cần nhập lại hoặc xóa")
     validation_status: str = Field(default="NOT_TESTED", description="Trạng thái kiểm tra: NOT_TESTED, VALID, INVALID, ERROR")
     last_validated_at: Optional[str] = Field(default=None, description="Thời điểm kiểm tra kết nối gần nhất")
     last_error_summary: Optional[str] = Field(default=None, description="Tóm tắt lỗi kiểm tra gần nhất (đã loại bỏ bí mật)")
     updated_at: Optional[str] = Field(default=None, description="Thời điểm cập nhật khóa cá nhân gần nhất")
     requires_restart: bool = Field(default=False, description="Có cần khởi động lại dịch vụ không (khóa user áp dụng runtime ngay)")
+    routing_supported: bool = Field(default=True, description="Nhà cung cấp đã được kết nối đầy đủ vào luồng runtime hay chưa")
 
 
 class SetApiKeyRequest(BaseModel):
@@ -85,6 +89,8 @@ class TestApiKeyResponse(BaseModel):
     provider: str = Field(..., description="Mã định danh nhà cung cấp")
     latency_ms: int = Field(..., description="Độ trễ phản hồi (ms)")
     validation_status: str = Field(..., description="VALID, INVALID, hoặc ERROR")
+    tested_source: str = Field(default="PERSONAL", description="Nguồn khóa vừa được kiểm tra: CANDIDATE, PERSONAL, hoặc SYSTEM")
+    key_fingerprint: str = Field(default="", description="Dấu vân tay SHA-256 rút gọn của khóa được kiểm tra")
     message: str = Field(..., description="Thông báo kết quả đã làm sạch bí mật")
     tested_at: str = Field(..., description="Thời điểm hoàn tất kiểm tra")
 
@@ -109,6 +115,25 @@ async def list_user_api_keys(
     """
     user_id = current_user["id"]
     return CredentialService.get_user_keys_status(user_id)
+
+
+@api_keys_router.get("/{provider}/diagnostics", response_model=Dict[str, Any], summary="Chẩn đoán nguồn khóa hiệu lực tại runtime")
+async def get_provider_key_diagnostics(
+    provider: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Trả về thông tin chẩn đoán an toàn (không chứa khóa bí mật) về nguồn khóa đang có hiệu lực
+    (PERSONAL > SYSTEM > NONE), dấu vân tay SHA-256 rút gọn, và trạng thái giải mã.
+    """
+    canon = canonicalize_provider(provider)
+    if not canon or canon not in SUPPORTED_PROVIDERS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Nhà cung cấp '{provider}' không nằm trong danh mục allowlist được hỗ trợ."
+        )
+    user_id = current_user["id"]
+    return CredentialService.get_provider_diagnostics(user_id, canon)
 
 
 @api_keys_router.put("/{provider}", response_model=Dict[str, Any], summary="Cập nhật hoặc lưu khóa API cá nhân")
@@ -136,14 +161,17 @@ async def save_user_api_key(
             "status": "success",
             "provider": canon,
             "source": "PERSONAL",
+            "effective_source": "PERSONAL",
             "masked_hint": res["masked_hint"],
+            "key_fingerprint": res["key_fingerprint"],
             "validation_status": res["validation_status"],
-            "message": f"Đã lưu khóa API cho nhà cung cấp {SUPPORTED_PROVIDERS[canon]['name']} thành công (áp dụng tức thì)."
+            "updated_at": res["updated_at"],
+            "message": f"Đã lưu khóa API cá nhân cho {SUPPORTED_PROVIDERS[canon]['name']} thành công (áp dụng tức thì ở runtime)."
         }
     except ValueError as val_err:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(val_err)
+            detail=redact_secrets_from_text(str(val_err), [req.api_key])
         )
     except Exception as exc:
         clean_msg = redact_secrets_from_text(str(exc), [req.api_key])
@@ -174,7 +202,7 @@ async def delete_user_api_key(
         res = CredentialService.delete_user_key(user_id, canon)
         p_name = SUPPORTED_PROVIDERS[canon]["name"]
         if res["has_system_key"]:
-            msg = f"Đã xóa khóa cá nhân cho {p_name}. Hệ thống sẽ sử dụng cấu hình mặc định server."
+            msg = f"Đã xóa khóa cá nhân cho {p_name}. Hệ thống đã hoàn tác về sử dụng cấu hình mặc định server (.env)."
         else:
             msg = f"Đã xóa khóa cá nhân cho {p_name}. Nhà cung cấp hiện đang ở trạng thái chưa cấu hình."
 
@@ -182,8 +210,10 @@ async def delete_user_api_key(
             "status": "success",
             "provider": canon,
             "source": res["source"],
+            "effective_source": res["effective_source"],
             "is_configured": res["is_configured"],
             "masked_hint": res["masked_hint"],
+            "key_fingerprint": res["key_fingerprint"],
             "message": msg
         }
     except Exception as exc:
@@ -226,6 +256,8 @@ async def test_provider_connection(
             provider=res["provider"],
             latency_ms=res["latency_ms"],
             validation_status=res["validation_status"],
+            tested_source=res.get("tested_source", "CANDIDATE" if candidate else "PERSONAL"),
+            key_fingerprint=res.get("key_fingerprint", ""),
             message=res["message"],
             tested_at=res["tested_at"]
         )
@@ -251,7 +283,7 @@ async def update_system_env(
     Cập nhật an toàn một biến môi trường toàn cục allowlisted trong file .env.
     Thao tác sử dụng cơ chế ghi file nguyên tử (Atomic Write) và sao lưu backup.
     Chỉ cho phép quản trị viên hoặc chế độ local development.
-    Yêu cầu khởi động lại tiến trình để biến có hiệu lực toàn diện.
+    Trả về cảnh báo rõ ràng nếu người dùng hiện tại đang có khóa cá nhân (PERSONAL) ghi đè biến hệ thống này.
     """
     user_email = (current_user.get("email") or "").lower()
     is_admin = ("admin" in user_email or settings.DEBUG or settings.APP_ENV == "development")
@@ -270,20 +302,27 @@ async def update_system_env(
         )
 
     try:
-        res = CredentialService.update_system_env_variable(var_name, req.value)
+        user_id = current_user.get("id")
+        res = CredentialService.update_system_env_variable(var_name, req.value, user_id=user_id)
         return {
             "status": "success",
             "env_var": res["env_var"],
+            "provider": res.get("provider"),
             "restart_required": res["restart_required"],
+            "has_personal_override": res.get("has_personal_override", False),
+            "effective_source": res.get("effective_source", "SYSTEM"),
+            "masked_hint": res.get("masked_hint", ""),
+            "key_fingerprint": res.get("key_fingerprint", ""),
             "message": res["message"]
         }
     except ValueError as v_err:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(v_err)
+            detail=redact_secrets_from_text(str(v_err), [req.value])
         )
     except Exception as exc:
+        clean_err = redact_secrets_from_text(str(exc), [req.value])
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Lỗi khi cập nhật an toàn file .env: {str(exc)}"
+            detail=f"Lỗi khi cập nhật an toàn file .env: {clean_err}"
         )
