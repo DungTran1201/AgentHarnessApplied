@@ -1,0 +1,104 @@
+name: Build Windows Installer
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build & Package AI-Chan (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: 'ai-backend/requirements.txt'
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: 'ai-frontend/package-lock.json'
+
+      - name: Install Inno Setup
+        shell: powershell
+        run: |
+          choco install innosetup -y --no-progress
+          $isccPath = "C:\Program Files (x86)\Inno Setup 6"
+          echo "$isccPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Install Python Dependencies & Toolchain
+        shell: powershell
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r ai-backend/requirements.txt
+          pip install pyinstaller pillow pystray pytest
+
+      - name: Install Frontend Dependencies
+        shell: powershell
+        run: |
+          cd ai-frontend
+          npm ci
+
+      - name: Run Backend Tests
+        shell: powershell
+        run: |
+          pytest ai-backend/tests
+
+      - name: Run Frontend Tests
+        shell: powershell
+        run: |
+          cd ai-frontend
+          npm test
+
+      - name: Execute End-to-End Packaging Pipeline
+        shell: powershell
+        run: |
+          python packaging/windows/build.py
+
+      - name: Smoke Check Installer Artifact
+        shell: powershell
+        run: |
+          $installer = Get-Item "dist\installer\AI-Chan-Setup.exe"
+          if (-not $installer) {
+            Write-Error "Installer executable not found in dist\installer"
+            exit 1
+          }
+          $sizeMb = [math]::Round($installer.Length / 1MB, 2)
+          Write-Host "Verified installer: $($installer.FullName) ($sizeMb MB)"
+          if ($installer.Length -lt 20MB) {
+            Write-Error "Installer size is unexpectedly small ($sizeMb MB)"
+            exit 1
+          }
+
+      - name: Upload Installer Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI-Chan-Setup
+          path: dist/installer/AI-Chan-Setup.exe
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/installer/AI-Chan-Setup.exe
+          generate_release_notes: true
